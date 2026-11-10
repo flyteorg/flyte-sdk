@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import copy
 import pathlib
 import shlex
 from dataclasses import dataclass, field
-from typing import Any, Tuple, Type, Union
+from typing import Any, Tuple, Type, Union, cast
 
 import flyte
 from flyte.extras._container import ContainerTask
@@ -136,6 +137,25 @@ class _Shell:
             self._task = _ShellContainerTask(self)
         return self._task
 
+    def override(self, **kwargs: Any) -> _Shell:
+        """Return a copy of this shell task that runs with `kwargs` overridden.
+
+        Takes the same arguments as `TaskTemplate.override` (resources, retries, timeout, ...).
+        Calling the copy still applies `defaults` and unpacks `Glob` outputs, which calling
+        `as_task().override(...)` directly skips. The original shell task is unchanged.
+
+        ```python
+        try:
+            out = await bwa_mem(reads=reads)
+        except flyte.errors.OOMError:
+            out = await bwa_mem.override(resources=flyte.Resources(memory="32Gi"))(reads=reads)
+        ```
+        """
+        new = copy.copy(self)
+        # `override` is typed as returning a TaskTemplate; for a shell task it's a `_ShellContainerTask`.
+        new._task = cast(_ShellContainerTask, self.as_task().override(**kwargs))
+        return new
+
     async def _resolve_image_uri(self) -> str:
         if self._resolved_image_uri is not None:
             return self._resolved_image_uri
@@ -157,8 +177,15 @@ class _Shell:
 
     @property
     def env(self) -> "flyte.TaskEnvironment":
+        """The environment this shell task's task belongs to, created for it if it has none.
+
+        A task already attached elsewhere (e.g. with `TaskEnvironment.from_task`) keeps that
+        environment. So does an `override()` copy, whose task keeps its original's.
+        """
         if self._env is None:
-            self._env = flyte.TaskEnvironment.from_task(self.name, self.as_task())
+            task = self.as_task()
+            parent = task.parent_env() if task.parent_env is not None else None
+            self._env = parent if parent is not None else flyte.TaskEnvironment.from_task(self.name, task)
         return self._env
 
     async def __call__(self, **kwargs) -> Any:

@@ -4,7 +4,9 @@
 ///   _UNION_EAGER_API_KEY=your_api_key cargo run --bin try_list_tasks
 use std::sync::Arc;
 
-use flyte_controller_base::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
+use flyte_controller_base::auth::{
+    AuthConfig, AuthLayer, Authenticator, ClientCredentialsAuthenticator,
+};
 use flyteidl2::flyteidl::{
     common::{ListRequest, ProjectIdentifier},
     task::{list_tasks_request, task_service_client::TaskServiceClient, ListTasksRequest},
@@ -29,7 +31,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let static_endpoint = endpoint.clone().leak();
     let channel = flyte_controller_base::core::create_tls_channel(static_endpoint).await?;
 
-    let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config));
+    let authenticator = Arc::new(Authenticator::from(ClientCredentialsAuthenticator::new(
+        auth_config,
+    )));
 
     let auth_handling_channel = ServiceBuilder::new()
         .layer(AuthLayer::new(authenticator, channel.clone()))

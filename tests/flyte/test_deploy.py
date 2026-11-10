@@ -425,6 +425,50 @@ async def test_build_images_no_build_run_urls_for_local_build():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("override", "expected"), [(None, {"gpu": "shared-gpu", "cpu": None}), ("q", {"gpu": "q", "cpu": "q"})]
+)
+async def test_build_images_builds_each_env_for_its_queue(override, expected):
+    """A deployed environment's image is built for the queue its tasks run on (its own, unless the
+    deploy overrides every queue), so a pool with its own registry finds and builds it there."""
+    flyte.init()
+    gpu_image = flyte.Image.from_debian_base().with_pip_packages("a")
+    cpu_image = flyte.Image.from_debian_base().with_pip_packages("b")
+    plan = DeploymentPlan(
+        envs={
+            "gpu": flyte.TaskEnvironment(name="gpu", image=gpu_image, queue="shared-gpu"),
+            "cpu": flyte.TaskEnvironment(name="cpu", image=cpu_image),
+        }
+    )
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=ImageBuild(uri="registry/my-image:sha256abc", remote_run=None))
+        await _build_images(plan, queue=override)
+
+    by_image = {c.args[0]: c.kwargs["queue"] for c in mock_build.aio.call_args_list}
+    assert by_image[gpu_image] == expected["gpu"]
+    assert by_image[cpu_image] == expected["cpu"]
+
+
+def test_image_queue_of_an_env_whose_tasks_run_elsewhere():
+    """An environment with a task on another queue keeps the default: its one image cannot be in both
+    pools' registries."""
+    from flyte._deploy import _image_queue
+
+    env = flyte.TaskEnvironment(name="mixed", queue="a")
+
+    @env.task
+    async def on_a() -> None: ...
+
+    assert _image_queue(env, None) == "a"
+
+    @env.task(queue="b")
+    async def on_b() -> None: ...
+
+    assert _image_queue(env, None) is None
+    assert _image_queue(env, "override") == "override"
+
+
+@pytest.mark.asyncio
 async def test_build_image_bg_uses_build_run_on_cache_hit():
     """On a cache hit (no remote_run), the build run learned by the existence check is used."""
     from flyte._internal.imagebuild.image_builder import RunIdentifierData
@@ -1007,7 +1051,7 @@ async def test_build_images_forwards_queue_to_remote_builder():
     image = flyte.Image.from_debian_base().with_pip_packages("requests")
     env = flyte.TaskEnvironment(name="queued-build", image=image)
     builder = RemoteImageBuilder()
-    ImageBuildEngine.build.cache_clear()
+    ImageBuildEngine._build.cache_clear()
     with (
         patch.object(ImageBuildEngine, "_get_builder", return_value=builder),
         patch.object(ImageBuildEngine, "image_exists", new=AsyncMock(return_value=None)),
@@ -1018,4 +1062,4 @@ async def test_build_images_forwards_queue_to_remote_builder():
     ):
         await build_images.aio(env, queue="union-serverless")
         assert build.await_args.kwargs["queue"] == "union-serverless"
-    ImageBuildEngine.build.cache_clear()
+    ImageBuildEngine._build.cache_clear()

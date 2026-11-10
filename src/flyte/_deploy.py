@@ -478,7 +478,10 @@ async def _build_images(
     connectors, run) don't each need to duplicate that step.
 
     Args:
-        queue: Queue for remote image build runs. None uses the build task default.
+        queue: Queue the images are for (a deploy-wide override). Each environment's image is
+            otherwise built for the queue its tasks run on (see `_image_queue`), else the current
+            run's: a remote build is looked up, uploaded, run and cached for that queue's cluster
+            pool, whose registry may differ from the project default's.
         seed_cache: Optional ImageCache of environments already built by a prior deploy
             (e.g. the parent run that launched the current task pod, transported in via the task
             context). Environments found in the seed reuse the recorded URI directly — skipping
@@ -530,7 +533,7 @@ async def _build_images(
                     image_identifier_map[env_name] = image_uri
                     continue
             logger.debug(f"Building Image for environment {env_name}, image: {env.image}")
-            images.append(_build_image_bg(env_name, env.image, queue=queue))
+            images.append(_build_image_bg(env_name, env.image, queue=_image_queue(env, queue)))
 
         elif env.image == "auto" and "auto" not in image_identifier_map:
             if _DEFAULT_IMAGE_REF_NAME in image_refs:
@@ -539,7 +542,7 @@ async def _build_images(
                 image_identifier_map[env_name] = image_uri
                 continue
             auto_image = Image.from_debian_base(python_version=_detect_python_version())
-            images.append(_build_image_bg(env_name, auto_image, queue=queue))
+            images.append(_build_image_bg(env_name, auto_image, queue=_image_queue(env, queue)))
 
     if images:
         with status.group(f"Building {len(images)} image{'s' if len(images) > 1 else ''}..."):
@@ -576,6 +579,19 @@ async def _deploy_task_env(context: DeploymentContext) -> DeployedTaskEnvironmen
     for t in deployed_task_vals:
         deployed_tasks.append(t)
     return DeployedTaskEnvironment(env=env, deployed_entities=deployed_tasks)
+
+
+def _image_queue(env: Environment, queue: Optional[str]) -> Optional[str]:
+    """The queue an environment's image is built for: the deploy-wide override, else the queue all of
+    its tasks run on. An environment whose tasks run on different queues gets no queue (the build's
+    default, as before): its one image cannot be in each of those pools' registries, and the image
+    cache holds one image per environment."""
+    if queue:
+        return queue
+    env_queue = getattr(env, "queue", None) or None
+    if isinstance(env, TaskEnvironment) and any((t.queue or None) != env_queue for t in env.tasks.values()):
+        return None
+    return env_queue
 
 
 def _effective_queues(deployment_plan: DeploymentPlan, queue: Optional[str]) -> List[Optional[str]]:
@@ -622,7 +638,7 @@ async def apply(
     cfg = get_init_config()
 
     if image_cache is None:
-        image_cache = await _build_images(deployment_plan, cfg.images, copy_style)
+        image_cache = await _build_images(deployment_plan, cfg.images, copy_style, queue=queue)
 
     # Collect all `Environment.include` files across envs in the plan. They are
     # resolved to absolute paths anchored at each env's declaring file and
@@ -852,7 +868,7 @@ async def deploy(
     # container args. A per-plan cache leaves the sibling env missing from that lookup, which
     # silently falls back to the default image (flyteorg/flyte:...) instead of the env's real image
     # -- notably dropping a `flyte deploy --image <uri>` override on every env but the first.
-    image_cache = await _build_images_for_plans(deployment_plans, cfg.images, copy_style)
+    image_cache = await _build_images_for_plans(deployment_plans, cfg.images, copy_style, queue=queue)
     deployments = []
     for deployment_plan in deployment_plans:
         deployments.append(
@@ -878,7 +894,8 @@ async def build_images(
         copy_style: Copy style that the eventual deploy will use. Must match the deploy's
             `--copy-style` so the image content hashes — and therefore the registry tags — line
             up, letting deploy reuse the pre-built image.
-        queue: Queue for remote image build runs. None uses the build task default.
+        queue: Queue the images are for (see `_build_images`); None builds each environment's for
+            its own queue.
         seed_cache: Optional ImageCache of environments already built by a prior deploy.
             Seeded environments reuse the recorded URI and skip the build pipeline entirely; see
             `_build_images` for details.

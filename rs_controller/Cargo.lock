@@ -239,11 +239,12 @@ checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "flyte_core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bytes",
+ "fastrand",
  "flyteidl2",
  "futures",
  "http",
@@ -269,9 +270,9 @@ dependencies = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.53"
+version = "2.0.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "873bed1cbd901302ee39d8a6ab88b4448c4d88b6bd816981265b2bb34b1a9ade"
+checksum = "a90c998b4098266956f73b85d10f41c54c62901cc3a76bd3aaae22551d15fba2"
 dependencies = [
  "async-trait",
  "futures",

@@ -1598,3 +1598,101 @@ def test_shell_task_cache_version_changes_with_script():
 
     assert version("echo {inputs.x} > {outputs.out}") == version("echo {inputs.x} > {outputs.out}")
     assert version("echo {inputs.x} > {outputs.out}") != version("cat {inputs.x} > {outputs.out}")
+
+
+def test_shell_task_override_stays_a_shell_task():
+    task = shell.create(
+        name="override_shell", image="alpine:3.19", inputs={"x": str}, outputs={"out": File}, script="echo {inputs.x}"
+    ).as_task()
+
+    overridden = task.override(env_vars={"A": "1"})
+
+    assert type(overridden) is type(task)
+    assert overridden.env_vars == {"A": "1"}
+    assert overridden._shell_spec is task._shell_spec
+    assert overridden.container_args(None) == task.container_args(None)
+
+
+def test_shell_override_runs_the_overridden_task(monkeypatch, tmp_path):
+    from flyte.extras.shell._runtime import _ShellContainerTask
+
+    (tmp_path / "a.txt").write_text("a")
+    (tmp_path / "b.log").write_text("b")
+    hog = shell.create(
+        name="override_call_shell",
+        image="alpine:3.19",
+        inputs={"n": int, "tag": str},
+        defaults={"tag": "default"},
+        outputs={"files": Glob("*.txt")},
+        script="echo {inputs.n} {inputs.tag} > {outputs.files}/a.txt",
+    )
+    calls = []
+
+    async def fake_call(self, **kwargs):
+        calls.append((self, kwargs))
+        return Dir(path=str(tmp_path))
+
+    monkeypatch.setattr(_ShellContainerTask, "__call__", fake_call)
+    flyte.init()
+    big = flyte.Resources(cpu=2, memory="2Gi")
+    overridden = hog.override(resources=big, retries=2)
+
+    files = asyncio.run(overridden(n=1))
+
+    ((task, kwargs),) = calls
+    assert task is overridden.as_task()
+    assert task.resources == big
+    assert task.retries.count == 2
+    # The shell wrapper still applies defaults and unpacks Glob outputs.
+    assert kwargs == {"n": 1, "tag": "default"}
+    assert [pathlib.Path(f.path).name for f in files] == ["a.txt"]
+
+
+def test_shell_override_leaves_the_original_unchanged():
+    hog = shell.create(
+        name="override_original_shell",
+        image="alpine:3.19",
+        inputs={"x": str},
+        outputs={"out": File},
+        resources=flyte.Resources(cpu=1, memory="1Gi"),
+        script="echo {inputs.x} > {outputs.out}",
+    )
+    original = hog.as_task()
+
+    overridden = hog.override(resources=flyte.Resources(cpu=4, memory="8Gi"))
+
+    assert hog.as_task() is original
+    assert original.resources == flyte.Resources(cpu=1, memory="1Gi")
+    assert overridden.as_task() is not original
+    assert overridden.name == hog.name
+    assert overridden.as_task().container_args(None) == original.container_args(None)
+
+
+def test_shell_override_rejects_image():
+    hog = shell.create(
+        name="override_image_shell", image="alpine:3.19", inputs={"x": str}, outputs={"out": File}, script="echo"
+    )
+    with pytest.raises(ValueError, match="Image cannot be overridden"):
+        hog.override(image="ubuntu:24.04")
+
+
+def test_shell_env_is_the_environment_the_task_was_attached_to():
+    hog = shell.create(
+        name="attached_env_shell", image="alpine:3.19", inputs={"x": str}, outputs={"out": File}, script="echo"
+    )
+    attached = flyte.TaskEnvironment.from_task("attached_env", hog.as_task())
+
+    assert hog.env is attached
+    assert hog.override(resources=flyte.Resources(cpu=2)).env is attached
+
+
+def test_shell_override_shares_the_original_env():
+    hog = shell.create(
+        name="shared_env_shell", image="alpine:3.19", inputs={"x": str}, outputs={"out": File}, script="echo"
+    )
+    original = hog.env
+
+    overridden = hog.override(resources=flyte.Resources(cpu=2))
+
+    assert overridden.env is original
+    assert overridden.as_task().parent_env_name == original.name

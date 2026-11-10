@@ -1844,6 +1844,59 @@ def test_ListTransformer_get_sub_type_as_none():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "lv",
+    [
+        Literal(scalar=Scalar(none_type=literals_pb2.Void())),
+        Literal(scalar=Scalar(primitive=Primitive(string_value="hi"))),
+        Literal(scalar=Scalar(primitive=Primitive(integer=5))),
+        Literal(map=LiteralMap(literals={})),
+    ],
+)
+async def test_list_transformer_rejects_non_collection(lv):
+    """ListTransformer must fail on a literal that is not a collection.
+
+    `lv.collection` on a non-collection Literal returns a default-empty sub-message
+    instead of raising, so without an explicit HasField check these literals silently
+    decoded to [] -- which also made every union containing a list variant ambiguous.
+    """
+    with pytest.raises(TypeTransformerFailedError, match="is not a collection"):
+        await TypeEngine.to_python_value(lv, typing.List[str])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "python_type,lv,expected",
+    [
+        (
+            typing.Optional[typing.List[str]],
+            Literal(scalar=Scalar(none_type=literals_pb2.Void())),
+            None,
+        ),
+        (
+            typing.Union[typing.List[str], str],
+            Literal(scalar=Scalar(primitive=Primitive(string_value="hi"))),
+            "hi",
+        ),
+        (
+            typing.Union[typing.List[int], int],
+            Literal(scalar=Scalar(primitive=Primitive(integer=5))),
+            5,
+        ),
+    ],
+)
+async def test_untagged_literal_in_union_with_list(python_type, lv, expected):
+    """An untagged literal must still resolve against a union containing a list variant.
+
+    Regression test for "Ambiguous choice of variant for union type. Both Typed List
+    and none transformers match", hit by trigger inputs that serialized without a
+    union structure tag. ListTransformer used to accept these literals and return [],
+    so it tied with the correct variant and the union was reported as ambiguous.
+    """
+    assert await TypeEngine.to_python_value(lv, python_type) == expected
+
+
+@pytest.mark.asyncio
 async def test_bare_list_uses_pickle_transformer():
     """A bare `list` (no generics) should fall back to pickle, not raise."""
     transformer = TypeEngine.get_transformer(list)

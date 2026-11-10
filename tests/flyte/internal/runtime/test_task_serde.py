@@ -14,6 +14,7 @@ from kubernetes.client import (
     V1EnvVar,
     V1LocalObjectReference,
     V1PodResourceClaim,
+    V1PodSecurityContext,
     V1PodSpec,
     V1ResourceRequirements,
 )
@@ -34,6 +35,7 @@ from flyte._internal.runtime.task_serde import (
 from flyte._retry import Backoff, RetryStrategy
 from flyte._secret import Secret
 from flyte._timeout import Timeout
+from flyte.extras import ContainerTask
 from flyte.models import SerializationContext
 
 
@@ -254,6 +256,74 @@ def test_get_proto_task_ignored_cache_inputs():
     # Verify the proto task properties
     assert isinstance(proto_task, tasks_pb2.TaskTemplate)
     assert proto_task.metadata.cache_ignore_input_vars == ["my_ignored_input"]
+
+
+def _container_task(**kwargs) -> ContainerTask:
+    task = ContainerTask(
+        name="pod_template_container_task",
+        image="python:3.10",
+        command=["/bin/sh", "-c", "cat /var/inputs/a > /var/outputs/b"],
+        inputs={"a": str},
+        outputs={"b": str},
+        **kwargs,
+    )
+    flyte.TaskEnvironment.from_task("pod_template_container_env", task)
+    return task
+
+
+def _context() -> SerializationContext:
+    return SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+
+def test_get_proto_k8s_pod_task_keeps_the_container_tasks_data_config():
+    """Copilot stages a raw container's inputs and outputs only when the backend finds `data_config`,
+    which for a task with a pod template it reads from `K8sPod`, not from a `Container`."""
+    pod_template = PodTemplate(
+        pod_spec=V1PodSpec(
+            containers=[V1Container(name="primary")],
+            security_context=V1PodSecurityContext(fs_group=7000),
+        ),
+    )
+
+    proto_task = get_proto_task(_container_task(pod_template=pod_template), _context())
+
+    assert proto_task.WhichOneof("target") == "k8s_pod"
+    assert proto_task.k8s_pod.pod_spec["securityContext"]["fsGroup"] == 7000
+    data_config = proto_task.k8s_pod.data_config
+    assert data_config.enabled
+    assert data_config.input_path == "/var/inputs"
+    assert data_config.output_path == "/var/outputs"
+
+
+def test_get_proto_k8s_pod_task_data_config_matches_the_plain_container():
+    pod_template = PodTemplate(pod_spec=V1PodSpec(containers=[V1Container(name="primary")]))
+
+    with_pod = get_proto_task(_container_task(pod_template=pod_template), _context())
+    without_pod = get_proto_task(_container_task(), _context())
+
+    assert with_pod.k8s_pod.data_config == without_pod.container.data_config
+
+
+def test_get_proto_k8s_pod_task_without_data_config_leaves_it_unset():
+    """A Python task has nothing for copilot to do: the field stays absent, not enabled-and-empty."""
+    pod_template = PodTemplate(pod_spec=V1PodSpec(containers=[V1Container(name="primary")]))
+    env = flyte.TaskEnvironment(name="no_data_config_env", image="python:3.10", pod_template=pod_template)
+
+    @env.task
+    async def t1(a: int) -> int:
+        return a
+
+    assert not get_proto_task(t1, _context()).k8s_pod.HasField("data_config")
 
 
 def test_get_proto_k8s_pod_task():

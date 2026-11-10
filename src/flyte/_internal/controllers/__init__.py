@@ -173,11 +173,21 @@ def create_controller(
 
             # Extract endpoint if provided, otherwise Rust controller will use API key from env var
             endpoint = kwargs.get("endpoint")
+            # Task pods with workload identity authenticate with their own service-account token.
+            workload_token = kwargs.get("auth_type") == "WorkloadToken"
             # Rust requires scheme prefix (http:// or https://)
             if endpoint and not endpoint.startswith(("http://", "https://")):
-                # Default to http:// for local endpoints
-                endpoint = f"http://{endpoint}"
-            controller = RemoteController(endpoint=endpoint, workers=10, max_system_retries=5)
+                if workload_token and endpoint.startswith("dns:///"):
+                    # The platform names the control plane as dns:///<host>: TLS unless the
+                    # pod was told it is insecure, as the Python client decides.
+                    scheme = "http" if kwargs.get("insecure") else "https"
+                    endpoint = f"{scheme}://{endpoint.removeprefix('dns:///')}"
+                else:
+                    # Default to http:// for local endpoints (a bare host:port).
+                    endpoint = f"http://{endpoint}"
+            controller = RemoteController(
+                endpoint=endpoint, workers=10, max_system_retries=5, workload_token=workload_token
+            )
         case _:
             raise ValueError(f"{ct} is not a valid controller type.")
 

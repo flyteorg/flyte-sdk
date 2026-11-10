@@ -121,3 +121,30 @@ def test_string_operations():
     assert "def greet" in code
     assert "return" in code
     assert code.endswith("greet(name)")
+
+
+def test_module_imports_cover_the_monty_modules_the_function_uses():
+    import inspect
+    import math as m
+
+    from flyte.sandbox import _source
+
+    namespace = {"asyncio": __import__("asyncio"), "m": m, "inspect": inspect, "json": __import__("json")}
+    exec("async def f(x):\n    await asyncio.sleep(0)\n    inspect.isclass(x)\n    return m.floor(x)\n", namespace)
+
+    # json is a global but unused; inspect is not a module Monty implements.
+    assert _source.module_imports(namespace["f"]) == "import asyncio\nimport math as m\n"
+
+
+def test_referenced_names_include_nested_code():
+    from flyte.sandbox._source import referenced_names
+
+    def outer(n):
+        def helper(i):
+            return in_helper(i)  # noqa: F821
+
+        values = [in_comprehension(i) for i in range(n)]  # noqa: F821
+        later = lambda: in_lambda  # noqa: E731, F821
+        return values, later, helper
+
+    assert {"in_helper", "in_comprehension", "in_lambda"} <= referenced_names(outer)

@@ -73,10 +73,21 @@ async def process_default_inputs(
             )
         else:
             literal_type = variables_dict[k].type
-            # Runtime container types lose their element annotations (e.g. list[int] becomes list).
-            python_type = (
-                flyte.types.TypeEngine.guess_python_type(literal_type) if isinstance(v, (list, dict)) else type(v)
-            )
+            # The runtime type of the value is not always enough to convert it faithfully:
+            #   - container types lose their element annotations (e.g. list[int] becomes list)
+            #   - None carries no information about which union variant it inhabits, so it
+            #     would serialize to a bare NONE scalar with no union tag, which cannot be
+            #     read back unambiguously (e.g. for `list[str] | None`).
+            # In both cases the declared type, recovered from the literal type, is authoritative.
+            python_type = type(v)
+            if isinstance(v, (list, dict)) or literal_type.HasField("union_type"):
+                try:
+                    python_type = flyte.types.TypeEngine.guess_python_type(literal_type)
+                except ValueError:
+                    # TypeEngine.guess_python_type raises ValueError when no transformer can
+                    # reverse the literal type. Fall back to the runtime type so such an input
+                    # keeps converting exactly as it does today instead of failing the deploy.
+                    python_type = type(v)
             literal_coros.append(flyte.types.TypeEngine.to_literal(v, python_type, literal_type))
             keys.append(k)
 
