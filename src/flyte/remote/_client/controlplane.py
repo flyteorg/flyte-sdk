@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import weakref
 from typing import Any, AsyncIterator, Awaitable, Callable, ClassVar, cast
 from urllib.parse import quote, urlparse
 
@@ -301,8 +300,6 @@ class _ClusterAwareService:
         # One threadsafe cache per service: it is shared by every event loop and thread
         # that drives this service during a process, but stays isolated between sessions.
         self._client_cache: ThreadSafeCache[Any, Any] = ThreadSafeCache()
-        # The endpoint each per-cluster client was built for (the default client has none).
-        self._client_endpoints: weakref.WeakKeyDictionary[Any, str] = weakref.WeakKeyDictionary()
 
     def _new_client(self, **connect_kwargs: Any) -> Any:
         """Construct a per-cluster connectrpc client. Overridden per service."""
@@ -412,9 +409,7 @@ class _ClusterAwareService:
             raise RuntimeError(f"Failed to create session for cluster endpoint '{endpoint}': {e}") from e
 
         logger.debug(f"Created {self._label} client for cluster endpoint: {endpoint}")
-        client = self._new_client(**new_cfg.connect_kwargs())
-        self._client_endpoints[client] = endpoint
-        return client, resp.cluster
+        return self._new_client(**new_cfg.connect_kwargs()), resp.cluster
 
 
 def _set_upload_inputs_queue(request: dataproxy_service_pb2.UploadInputsRequest) -> None:
@@ -460,17 +455,6 @@ class ClusterAwareDataProxy(_ClusterAwareService):
             request.domain,
         )
         return await client.create_upload_location(request)
-
-    async def upload_destination(self, org: str, project: str, domain: str) -> str:
-        """The cluster endpoint `create_upload_location` would route to now ("" for the control plane).
-        The code bundle cache keys on it, so a bundle is not reused once uploads go elsewhere."""
-        client = await self._resolve_for_upload(
-            int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_CREATE_UPLOAD_LOCATION),
-            org,
-            project,
-            domain,
-        )
-        return self._client_endpoints.get(client, "")
 
     async def upload_inputs(
         self, request: dataproxy_service_pb2.UploadInputsRequest

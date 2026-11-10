@@ -1026,13 +1026,55 @@ def test_bundle_cache_is_scoped_per_queue(tmp_path, monkeypatch):
         LocalDB.close_sync()
 
 
-def test_bundle_cache_scoped_by_upload_destination(tmp_path, monkeypatch):
-    """A queue whose uploads now route elsewhere (its pool moved, a shared queue was enabled) must
-    not reuse a bundle left in the storage it used to route to: the new cluster cannot read it."""
+@pytest.mark.asyncio
+async def test_cached_bundle_reused_only_in_the_bucket_uploads_go_to_now(monkeypatch):
+    """A queue whose uploads now land in another bucket (its pool moved, a queue became routable)
+    must not reuse a bundle left in the old one. Another path in the same bucket is fine: several
+    clusters can share a bucket."""
     import flyte._code_bundle.bundle as bundle
+    import flyte.remote._data as data
+
+    asked = []
+
+    async def location(md5_hex, fname):
+        asked.append((md5_hex, fname))
+        return current
+
+    monkeypatch.setattr(data, "upload_location", location)
+
+    current = "s3://shared-bucket/org/p/d/OTHERPREFIX/fastabc.tar.gz"
+    assert await bundle._cached_bundle_still_valid("abc123", "s3://shared-bucket/org/p/d/PREFIX/fastabc.tar.gz")
+    assert asked == [("abc123", "fastabc.tar.gz")]
+
+    current = "s3://new-bucket/org/p/d/PREFIX/fastabc.tar.gz"
+    assert not await bundle._cached_bundle_still_valid("abc123", "s3://old-bucket/org/p/d/PREFIX/fastabc.tar.gz")
+
+    current = "abfs://container@account.dfs.core.windows.net/p/fastabc.tar.gz"
+    assert not await bundle._cached_bundle_still_valid("abc123", "s3://old-bucket/p/fastabc.tar.gz")
+
+
+@pytest.mark.asyncio
+async def test_cached_bundle_lookup_failure_uploads_again(monkeypatch):
+    import flyte._code_bundle.bundle as bundle
+    import flyte.remote._data as data
+
+    async def boom(*_):
+        raise RuntimeError("SelectCluster failed")
+
+    monkeypatch.setattr(data, "upload_location", boom)
+    assert not await bundle._cached_bundle_still_valid("abc123", "s3://bucket/fastabc.tar.gz")
+
+
+@pytest.mark.asyncio
+async def test_build_code_bundle_reuploads_once_uploads_move_bucket(tmp_path, monkeypatch):
+    """Through the public entry point: a cached bundle is reused while uploads still land in its
+    bucket, and uploaded again once they land in another."""
+    from types import SimpleNamespace
+
     import flyte._persistence._db as db
+    import flyte.remote as remote
+    import flyte.remote._data as data
     from flyte._persistence._db import LocalDB
-    from flyte._upload_queue import upload_queue
 
     monkeypatch.setattr(db, "_cache_scope", lambda: "test-scope")
     monkeypatch.setattr(LocalDB, "_get_db_path", staticmethod(lambda: str(tmp_path / "cache.db")))
@@ -1041,33 +1083,28 @@ def test_bundle_cache_scoped_by_upload_destination(tmp_path, monkeypatch):
     monkeypatch.setattr(LocalDB, "_conn", None)
     LocalDB.initialize_sync()
 
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "main.py").write_text("print('hi')\n")
+    uploads = []
+    bucket = {"now": "s3://old-bucket"}
+
+    async def fake_upload(path):
+        uploads.append(bucket["now"])
+        return "h1", f"{bucket['now']}/p/d/PREFIX/{pathlib.Path(path).name}"
+
+    async def fake_location(md5_hex, fname):
+        return f"{bucket['now']}/p/d/PREFIX/{fname}"
+
+    monkeypatch.setattr(remote, "upload_file", SimpleNamespace(aio=fake_upload))
+    monkeypatch.setattr(data, "upload_location", fake_location)
     try:
-        with upload_queue("shared-q"):
-            bundle._write_bundle_cache("abc", "hash-1", "s3://own-bucket/b.tar.gz", "dns:///own.dp:443")
-            assert bundle._read_bundle_cache("abc", "dns:///own.dp:443") == ("hash-1", "s3://own-bucket/b.tar.gz")
-            assert bundle._read_bundle_cache("abc", "dns:///shared.dp:443") is None
-        # An unknown destination keeps the queue-only key.
-        assert bundle._scoped_digest("abc", "") == bundle._scoped_digest("abc")
+        first = await build_code_bundle(from_dir=src, copy_style="all")
+        again = await build_code_bundle(from_dir=src, copy_style="all")
+        assert again.tgz == first.tgz and uploads == ["s3://old-bucket"]
+
+        bucket["now"] = "s3://new-bucket"
+        moved = await build_code_bundle(from_dir=src, copy_style="all")
+        assert moved.tgz.startswith("s3://new-bucket/") and uploads == ["s3://old-bucket", "s3://new-bucket"]
     finally:
         LocalDB.close_sync()
-
-
-@pytest.mark.asyncio
-async def test_upload_destination_without_cluster_routing(monkeypatch):
-    """A dataproxy client without cluster routing (or a failed lookup) yields no destination."""
-    from types import SimpleNamespace
-
-    import flyte._code_bundle.bundle as bundle
-    import flyte._initialize as init
-
-    monkeypatch.setattr(init, "get_client", lambda: SimpleNamespace(dataproxy_service=object()))
-    assert await bundle._upload_destination() == ""
-
-    async def boom(*_):
-        raise RuntimeError("SelectCluster failed")
-
-    monkeypatch.setattr(
-        init, "get_client", lambda: SimpleNamespace(dataproxy_service=SimpleNamespace(upload_destination=boom))
-    )
-    monkeypatch.setattr(init, "get_init_config", lambda: SimpleNamespace(org="o", project="p", domain="d"))
-    assert await bundle._upload_destination() == ""

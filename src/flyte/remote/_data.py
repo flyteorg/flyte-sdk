@@ -512,6 +512,28 @@ async def upload_file(
     return await _upload_single_file(cfg, fp, verify=verify, fname=fname, content_type=content_type)
 
 
+async def upload_location(md5_hex: str, fname: str) -> str:
+    """The native URL an upload of content with this MD5, named `fname`, would get now, without
+    uploading it. Routed like `upload_file` (including the current upload queue), so it names the
+    storage an upload made now would land in."""
+    ensure_client()
+    cfg = get_init_config()
+    expires_in_pb = duration_pb2.Duration()  # ty: ignore[unresolved-attribute]
+    expires_in_pb.FromTimedelta(_UPLOAD_EXPIRES_IN)
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(
+        project=cfg.project,
+        domain=cfg.domain,
+        org=cfg.org or "",
+        content_md5=bytes.fromhex(md5_hex),
+        filename=fname,
+        expires_in=expires_in_pb,
+        add_content_md5_metadata=True,
+    )
+    _set_upload_queue(req)
+    resp = await get_client().dataproxy_service.create_upload_location(req)  # type: ignore
+    return resp.native_url
+
+
 @syncify
 async def upload_dir(dir_path: Path, verify: bool = True, prefix: str | None = None) -> str:
     """
