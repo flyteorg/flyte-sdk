@@ -447,17 +447,24 @@ def test_amd_gpu_with_quantity():
     assert Resources(gpu=device).get_device() == device
 
 
-@pytest.mark.parametrize("quantity", [0, -1, 9, 16])
+@pytest.mark.parametrize("quantity", [0, -1, 2, 4, 7, 9, 16])
 def test_amd_gpu_invalid_quantity(quantity):
-    """AMD_GPU rejects a quantity outside 1..8"""
-    with pytest.raises(ValueError, match="Invalid AMD GPU quantity"):
+    """AMD_GPU takes only 1 or a full 8-GPU node"""
+    with pytest.raises(ValueError, match=r"Invalid AMD GPU quantity.*1 or a full 8-GPU node"):
         AMD_GPU("MI355X", quantity)  # type: ignore
 
 
+def test_amd_gpu_device_quantity_is_unrestricted():
+    """Device(...) still takes any AMD GPU count"""
+    device = Resources(gpu=Device(quantity=4, device_class="AMD_GPU", device="MI355X")).get_device()
+    assert device is not None
+    assert device.quantity == 4
+
+
 @pytest.mark.parametrize("amd_gpu_type", list(get_args(AMD_GPUType)))
-@pytest.mark.parametrize("quantity", range(1, 9))
-def test_amd_gpu_strings_accept_one_to_eight(amd_gpu_type, quantity):
-    """Every AMD GPU type takes the "<type>:1" .. "<type>:8" string forms"""
+@pytest.mark.parametrize("quantity", [1, 8])
+def test_amd_gpu_strings_accept_one_and_eight(amd_gpu_type, quantity):
+    """Every AMD GPU type takes the "<type>:1" and "<type>:8" string forms"""
     device = Resources(gpu=f"{amd_gpu_type}:{quantity}").get_device()  # type: ignore
     assert device == Device(quantity=quantity, device_class="AMD_GPU", device=amd_gpu_type)
 
@@ -467,10 +474,11 @@ def test_amd_gpu_string_matches_helper():
     assert Resources(gpu="MI355X:8").get_device() == AMD_GPU("MI355X", 8)
 
 
-def test_amd_gpu_string_rejects_more_than_eight():
-    """A single pod cannot ask for more AMD GPUs than a node has"""
+@pytest.mark.parametrize("gpu", ["MI250X:4", "MI355X:3", "MI355X:16"])
+def test_amd_gpu_string_rejects_other_counts(gpu):
+    """AMD GPU strings take only 1 or a full 8-GPU node"""
     with pytest.raises(ValueError, match="gpu must be one of"):
-        Resources(gpu="MI355X:16")  # type: ignore
+        Resources(gpu=gpu)  # type: ignore
 
 
 # Habana Gaudi Accelerator Tests
