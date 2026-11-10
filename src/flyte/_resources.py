@@ -278,22 +278,85 @@ Accelerators = Literal[
     "Inf2:12",
     # MI100
     "MI100:1",
+    "MI100:2",
+    "MI100:3",
+    "MI100:4",
+    "MI100:5",
+    "MI100:6",
+    "MI100:7",
+    "MI100:8",
     # MI210
     "MI210:1",
+    "MI210:2",
+    "MI210:3",
+    "MI210:4",
+    "MI210:5",
+    "MI210:6",
+    "MI210:7",
+    "MI210:8",
     # MI250
     "MI250:1",
+    "MI250:2",
+    "MI250:3",
+    "MI250:4",
+    "MI250:5",
+    "MI250:6",
+    "MI250:7",
+    "MI250:8",
     # MI250X
     "MI250X:1",
+    "MI250X:2",
+    "MI250X:3",
+    "MI250X:4",
+    "MI250X:5",
+    "MI250X:6",
+    "MI250X:7",
+    "MI250X:8",
     # MI300A
     "MI300A:1",
+    "MI300A:2",
+    "MI300A:3",
+    "MI300A:4",
+    "MI300A:5",
+    "MI300A:6",
+    "MI300A:7",
+    "MI300A:8",
     # MI300X
     "MI300X:1",
+    "MI300X:2",
+    "MI300X:3",
+    "MI300X:4",
+    "MI300X:5",
+    "MI300X:6",
+    "MI300X:7",
+    "MI300X:8",
     # MI325X
     "MI325X:1",
+    "MI325X:2",
+    "MI325X:3",
+    "MI325X:4",
+    "MI325X:5",
+    "MI325X:6",
+    "MI325X:7",
+    "MI325X:8",
     # MI350X
     "MI350X:1",
+    "MI350X:2",
+    "MI350X:3",
+    "MI350X:4",
+    "MI350X:5",
+    "MI350X:6",
+    "MI350X:7",
+    "MI350X:8",
     # MI355X
     "MI355X:1",
+    "MI355X:2",
+    "MI355X:3",
+    "MI355X:4",
+    "MI355X:5",
+    "MI355X:6",
+    "MI355X:7",
+    "MI355X:8",
     # Habana Gaudi
     "Gaudi1:1",
     # Apple Silicon (devbox-local)
@@ -451,20 +514,25 @@ def Neuron(device: NeuronType) -> Device:
     return Device(device=device, quantity=1, device_class="NEURON")
 
 
-def AMD_GPU(device: AMD_GPUType) -> Device:
+def AMD_GPU(device: AMD_GPUType, quantity: GPUQuantity = 1) -> Device:
     """
     Create an AMD GPU device instance.
+
+    The same as the `gpu="<device>:<quantity>"` string form, e.g. `AMD_GPU("MI355X", 8)` is `gpu="MI355X:8"`.
 
     Args:
         device: Device type (e.g., "MI100", "MI210", "MI250", "MI250X", "MI300A", "MI300X", "MI325X", "MI350X",
             "MI355X").
+        quantity: The number of AMD GPUs of this type, from 1 to 8. Defaults to 1.
 
     Returns:
         Device instance.
     """
     if device not in get_args(AMD_GPUType):
         raise ValueError(f"Invalid AMD GPU type: {device}. Must be one of {get_args(AMD_GPUType)}")
-    return Device(device=device, quantity=1, device_class="AMD_GPU")
+    if quantity not in get_args(GPUQuantity):
+        raise ValueError(f"Invalid AMD GPU quantity: {quantity}. Must be one of {get_args(GPUQuantity)}")
+    return Device(device=device, quantity=quantity, device_class="AMD_GPU")
 
 
 def HABANA_GAUDI(device: HABANA_GAUDIType) -> Device:
@@ -613,6 +681,8 @@ class Resources:
 
             Supported GPU types include A2, T4, L4, L40s, A10, A10G, A100, A100_80G, B200, H100, H200, V100,
             RTX_PRO_4500, RTX_PRO_6000, and GB10.
+            AMD GPUs (MI100, MI210, MI250, MI250X, MI300A, MI300X, MI325X, MI350X, MI355X) take 1 to 8,
+            e.g. `"MI355X:8"` or `AMD_GPU("MI355X", 8)`.
             GPU partitioning (MIG) is available on A100, A100_80G, H100, H200, and RTX_PRO_6000.
             Time-sliced (or MPS) shares come from `GPU("T4 shared", 1)` and the other
             `SharedGPUType` devices.

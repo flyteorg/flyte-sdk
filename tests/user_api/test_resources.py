@@ -434,6 +434,45 @@ def test_amd_gpu_invalid_device():
         AMD_GPU(device="InvalidAMD")  # type: ignore
 
 
+def test_amd_gpu_default_quantity_is_one():
+    """AMD_GPU without a quantity keeps requesting a single GPU"""
+    device = AMD_GPU("MI300X")
+    assert device == Device(quantity=1, device_class="AMD_GPU", device="MI300X")
+
+
+def test_amd_gpu_with_quantity():
+    """AMD_GPU takes a quantity and matches the equivalent Device"""
+    device = AMD_GPU("MI355X", 8)
+    assert device == Device(quantity=8, device_class="AMD_GPU", device="MI355X")
+    assert Resources(gpu=device).get_device() == device
+
+
+@pytest.mark.parametrize("quantity", [0, -1, 9, 16])
+def test_amd_gpu_invalid_quantity(quantity):
+    """AMD_GPU rejects a quantity outside 1..8"""
+    with pytest.raises(ValueError, match="Invalid AMD GPU quantity"):
+        AMD_GPU("MI355X", quantity)  # type: ignore
+
+
+@pytest.mark.parametrize("amd_gpu_type", list(get_args(AMD_GPUType)))
+@pytest.mark.parametrize("quantity", range(1, 9))
+def test_amd_gpu_strings_accept_one_to_eight(amd_gpu_type, quantity):
+    """Every AMD GPU type takes the "<type>:1" .. "<type>:8" string forms"""
+    device = Resources(gpu=f"{amd_gpu_type}:{quantity}").get_device()  # type: ignore
+    assert device == Device(quantity=quantity, device_class="AMD_GPU", device=amd_gpu_type)
+
+
+def test_amd_gpu_string_matches_helper():
+    """gpu="MI355X:8" is the same device as AMD_GPU("MI355X", 8)"""
+    assert Resources(gpu="MI355X:8").get_device() == AMD_GPU("MI355X", 8)
+
+
+def test_amd_gpu_string_rejects_more_than_eight():
+    """A single pod cannot ask for more AMD GPUs than a node has"""
+    with pytest.raises(ValueError, match="gpu must be one of"):
+        Resources(gpu="MI355X:16")  # type: ignore
+
+
 # Habana Gaudi Accelerator Tests
 @pytest.mark.parametrize(
     "gaudi_type",
@@ -471,6 +510,7 @@ def test_habana_gaudi_invalid_device():
         ("Trn1:1", "Trn1", 1, "NEURON"),
         ("Inf2:1", "Inf2", 1, "NEURON"),
         ("MI300X:1", "MI300X", 1, "AMD_GPU"),
+        ("MI355X:8", "MI355X", 8, "AMD_GPU"),
         ("Gaudi1:1", "Gaudi1", 1, "HABANA_GAUDI"),
     ],
 )
