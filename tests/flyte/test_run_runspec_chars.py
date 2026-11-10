@@ -416,6 +416,45 @@ async def test_apply_overrides_recover_stamps_relation():
     assert out.relation.relation_type == common_run_pb2.RELATION_TYPE_RECOVER
 
 
+@pytest.mark.asyncio
+async def test_apply_overrides_action_input_overrides_and_env_not_inherited():
+    """Fork overrides land on RunSpec.recover; a prior fork's reserved env var is never inherited."""
+    from flyteidl2.common import identifier_pb2
+    from flyteidl2.core import literals_pb2
+    from flyteidl2.task import run_pb2
+
+    from flyte._constants import ACTION_INPUT_OVERRIDES_ENV_VAR
+    from flyte._run import _Runner
+
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+    if "action_input_overrides" not in run_pb2.Recover.DESCRIPTOR.fields_by_name:
+        pytest.skip("flyteidl2 build without Recover.action_input_overrides")
+
+    ref = identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="r1")
+    base = run_pb2.RunSpec(
+        envs=run_pb2.Envs(
+            values=[
+                literals_pb2.KeyValuePair(key="KEEP", value="1"),
+                literals_pb2.KeyValuePair(key=ACTION_INPUT_OVERRIDES_ENV_VAR, value="s3://b/old.pb"),
+            ]
+        ),
+        recover=run_pb2.Recover(
+            action_input_overrides=run_pb2.ActionInputOverrides(action_names=["old"], uri="s3://b/old.pb"),
+            implied_rerun_actions=["p"],
+        ),
+    )
+    out = _Runner(force_mode="remote")._apply_overrides(
+        base, relation=(ref, "recover"), action_input_overrides=(["n1", "n2"], "s3://b/new.pb")
+    )
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert envs["KEEP"] == "1"
+    assert ACTION_INPUT_OVERRIDES_ENV_VAR not in envs
+    assert list(out.recover.action_input_overrides.action_names) == ["n1", "n2"]
+    assert out.recover.action_input_overrides.uri == "s3://b/new.pb"
+    assert not out.recover.implied_rerun_actions
+
+
 def test_run_context_has_no_rerun_only_options():
     """Every rerun-only option lives on rerun(), not on the run context (SDK-16)."""
     import inspect

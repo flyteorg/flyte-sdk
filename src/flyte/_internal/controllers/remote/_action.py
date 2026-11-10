@@ -77,6 +77,8 @@ class Action:
     # replaces it, and the server clears it when the action goes terminal.
     address: address_pb2.ActionAddress | None = None
     resource_exhausted_retries: int = 0
+    # Set when the controller overrode this task action's inputs from the run's action input overrides.
+    input_override_applied: bool = False
 
     @property
     def name(self) -> str:
@@ -143,6 +145,7 @@ class Action:
             self.task = action.task
 
         self.cache_key = action.cache_key
+        self.input_override_applied = action.input_override_applied
 
     def set_client_error(self, exc: Exception):
         self.client_err = exc
@@ -180,6 +183,7 @@ class Action:
         run_output_base: str,
         cache_key: str | None = None,
         queue: Optional[str] = None,
+        input_override_applied: bool = False,
     ) -> Action:
         return cls(
             action_id=sub_action_id,
@@ -191,6 +195,7 @@ class Action:
             run_output_base=run_output_base,
             cache_key=cache_key,
             queue=queue,
+            input_override_applied=input_override_applied,
         )
 
     @classmethod

@@ -23,7 +23,13 @@ from flyte._utils.helpers import jittered
 
 from ._action import Action
 from ._informer import InformerCache
-from ._service_protocol import ActionsService, ClientSet, QueueService, StateService
+from ._service_protocol import (
+    ACTIONS_SERVICE_CHECK_ENV_VAR,
+    ActionsService,
+    ClientSet,
+    QueueService,
+    StateService,
+)
 
 # A request that dies at its client-side deadline may be riding a dead pooled connection
 # (a severed NAT/conntrack flow drops packets without RST, so the transport keeps reusing
@@ -473,12 +479,24 @@ class Controller:
                                     input_uri=action.inputs_uri,
                                     run_output_base=action.run_output_base,
                                     group=action.group.name if action.group else None,
+                                    # Only set when true, so a flyteidl2 build without the field
+                                    # keeps working for every run without overrides.
+                                    **({"input_override_applied": True} if action.input_override_applied else {}),
                                 ),
                             ),
                             timeout_ms=int(self._enqueue_timeout * 1000),
                             headers=_actions_metadata(action),
                         )
                     else:
+                        if action.input_override_applied:
+                            # EnqueueActionRequest has no field for the flag, and the server rejects
+                            # an overridden action enqueued without it, so fail with the reason now.
+                            raise flyte.errors.RuntimeSystemError(
+                                "ActionInputOverrideUnsupportedError",
+                                f"Action {action.name} has an input or code override, but this controller "
+                                f"enqueues through the queue service, which cannot carry it. Overrides need the "
+                                f"actions service ({ACTIONS_SERVICE_CHECK_ENV_VAR}=1).",
+                            )
                         await self._queue_service.enqueue_action(
                             queue_service_pb2.EnqueueActionRequest(
                                 action_id=action.action_id,
