@@ -390,7 +390,11 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
     """
     # The sibling modules take ToolError, MCPContext and friends from this one, so they can only be
     # imported once this module is fully loaded.
-    from flyte.ai.mcp import _diagnose, _secret_tools
+    from flyte.ai.mcp import _diagnose, _operate_tools, _secret_tools
+
+    # `run_task` and `rerun_run` have a parameter called `env` (the new run's environment
+    # variables), which hides the server environment closed over here; keep a second name for it.
+    tool_env = env
 
     # ------------------------------
     # task
@@ -402,6 +406,16 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         name: str,
         inputs: dict,
         version: str | None = None,
+        run_name: str | None = None,
+        labels: dict[str, str] | None = None,
+        env: dict[str, str] | None = None,
+        queue: str | None = None,
+        service_account: str | None = None,
+        max_action_concurrency: int | None = None,
+        raw_data_path: str | None = None,
+        custom_context: dict[str, str] | None = None,
+        run_project: str | None = None,
+        run_domain: str | None = None,
         ctx: MCPContext | None = None,
     ) -> dict:
         """Launch a registered task and return immediately with the new run's name and URL.
@@ -409,10 +423,34 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         Use this to start work; poll `get_run` or block with `wait_for_run` to see the
         outcome. `inputs` is a dict of the task's input names to values. Omit `version` to
         use the latest registered version.
+
+        Optional run settings, each applied only when given (otherwise the task's and the
+        platform's defaults apply): `run_name` names the run (random if omitted); `labels`
+        attaches key/value labels; `env` sets environment variables for the run's actions;
+        `queue` picks the execution queue; `service_account` the Kubernetes service account;
+        `max_action_concurrency` caps how many of the run's actions execute at once (0 is the
+        platform default, otherwise at least 2); `raw_data_path` is the storage prefix for
+        offloaded data, e.g. "s3://bucket/"; `custom_context` is key/value metadata every
+        task in the run can read. `project` and `domain` say where the *task* is registered;
+        set `run_project` / `run_domain` to create the run in a different project or domain.
         """
-        if not _is_task_allowed(env.task_allowlist, domain, project, name):
+        if not _is_task_allowed(tool_env.task_allowlist, domain, project, name):
             raise ToolError(f"Task {domain}/{project}/{name} is not allowlisted.")
-        with env._scoped(project, domain):
+
+        runner = _operate_tools.run_context(
+            run_name,
+            labels,
+            env,
+            queue,
+            service_account,
+            max_action_concurrency,
+            raw_data_path,
+            custom_context,
+            run_project,
+            run_domain,
+        )
+
+        with tool_env._scoped(project, domain):
             tk = flyte.remote.Task.get(
                 project=project,
                 domain=domain,
@@ -420,7 +458,10 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
                 version=version,
                 auto_version="latest" if version is None else None,
             )  # type: ignore[arg-type]
-            r = await flyte.run.aio(tk, **inputs)
+            if runner is None:
+                r = await flyte.run.aio(tk, **inputs)
+            else:
+                r = await runner.run.aio(tk, **inputs)
             return {"url": r.url, "name": r.name}
 
     async def get_task(
@@ -469,18 +510,23 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         domain: str | None = None,
         limit: int = 100,
         entrypoint: bool | None = None,
+        name: str | None = None,
         ctx: MCPContext | None = None,
     ) -> list[dict]:
         """List the tasks registered in a project/domain.
 
         Use this to discover what can be run. Set `entrypoint=True` to see only top-level
-        tasks (the ones normally launched directly) rather than every sub-task. Only
-        allowlisted tasks are listed, so this matches what `run_task` will accept.
+        tasks (the ones normally launched directly) rather than every sub-task. Pass `name`
+        to list every registered version of that one task, newest first, e.g. to pick a
+        `version` for `run_task` or to see what a rollback target is. Only allowlisted
+        tasks are listed, so this matches what `run_task` will accept.
         """
         allowlist = env.task_allowlist
         # The allowlist is applied here, not by the server, so ask for more than `limit` when one
         # is configured -- otherwise the server truncates first and allowed tasks disappear.
         scan_limit = limit if allowlist is None else max(limit, ALLOWLIST_SCAN_LIMIT)
+        # Only passed when set, so an unfiltered call reaches the SDK as it always did.
+        by_name: dict[str, Any] = {"by_task_name": name} if name else {}
         with env._scoped(project, domain) as (resolved_project, resolved_domain):
             tasks = cast(Any, flyte.remote.Task.listall).aio(
                 project=resolved_project,
@@ -488,16 +534,17 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
                 sort_by=("created_at", "desc"),
                 limit=scan_limit,
                 entrypoint=entrypoint,
+                **by_name,
             )
             out: list[dict] = []
             async for t in tasks:
-                name = getattr(t, "name", None)
-                if not _is_task_allowed(allowlist, resolved_domain, resolved_project, name or ""):
+                task_name = getattr(t, "name", None)
+                if not _is_task_allowed(allowlist, resolved_domain, resolved_project, task_name or ""):
                     continue
                 if hasattr(t, "to_dict"):
                     out.append(t.to_dict())
                 else:
-                    out.append({"name": name, "version": getattr(t, "version", None)})
+                    out.append({"name": task_name, "version": getattr(t, "version", None)})
                 if len(out) >= limit:
                     break
             return out
@@ -692,10 +739,6 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
                 if len(out) >= limit:
                     break
             return out
-
-    # `rerun_run` has a parameter called `env` (the new run's environment variables), which hides
-    # the server environment closed over here; keep a second name for it.
-    tool_env = env
 
     async def rerun_run(
         run_name: str,
@@ -923,26 +966,39 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
 
     async def list_apps(
         limit: int = 100,
+        only_mine: bool = False,
+        status: list[str] | None = None,
         project: str | None = None,
         domain: str | None = None,
         ctx: MCPContext | None = None,
     ) -> list[dict]:
         """List deployed apps with their deployment status and public endpoints.
 
-        Use this to find an app's name before calling `get_app`, `activate_app` or
-        `deactivate_app`.
+        Use this to find an app's name before calling `get_app`, `activate_app`,
+        `deactivate_app` or `delete_app`. `only_mine` keeps apps created by the identity this
+        server acts as (see `whoami`). `status` keeps apps in any of the given deployment
+        statuses (case-insensitive, e.g. ["active", "failed"]); an unknown status is an
+        error that lists the valid ones.
         """
         from flyteidl2.app import app_definition_pb2
+
+        statuses = _operate_tools.check_app_statuses(status)
+        # Only the filters actually set are passed, so an unfiltered call reaches the SDK as it always did.
+        filters: dict[str, Any] = {"in_status": statuses} if statuses else {}
 
         allowlist = env.app_allowlist
         # See list_tasks: the server truncates before the allowlist is applied, so scan wider.
         scan_limit = limit if allowlist is None else max(limit, ALLOWLIST_SCAN_LIMIT)
         with env._scoped(project, domain):
+            if only_mine:
+                await _diagnose.filter_to_caller(filters)
             out: list[dict] = []
-            async for app in cast(Any, flyte.remote.App.listall).aio(sort_by=("created_at", "desc"), limit=scan_limit):
+            async for app in cast(Any, flyte.remote.App.listall).aio(
+                sort_by=("created_at", "desc"), limit=scan_limit, **filters
+            ):
                 if not _is_app_allowed(allowlist, app.name):
                     continue
-                status = app_definition_pb2.Status.DeploymentStatus.Name(app.deployment_status)
+                deployment_status = app_definition_pb2.Status.DeploymentStatus.Name(app.deployment_status)
                 url = None
                 try:
                     url = app.url
@@ -951,7 +1007,7 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
                 out.append(
                     {
                         "name": app.name,
-                        "status": status.removeprefix("DEPLOYMENT_STATUS_"),
+                        "status": deployment_status.removeprefix("DEPLOYMENT_STATUS_"),
                         "endpoint": app.endpoint,
                         "url": url,
                     }
@@ -1337,6 +1393,7 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
 
     # The registration table: tool name -> handler. Paired with ``TOOL_REGISTRY`` (group +
     # annotations) in ``_flyte_mcp_app.py``, which is what decides what actually gets registered.
+    operate_tools = _operate_tools.build_operate_tools(env)
     tool_functions: dict[str, Any] = {
         "run_task": run_task,
         "get_task": get_task,
@@ -1355,10 +1412,13 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         "list_apps": list_apps,
         "activate_app": activate_app,
         "deactivate_app": deactivate_app,
+        "delete_app": operate_tools["delete_app"],
         "list_triggers": list_triggers,
         "get_trigger": get_trigger,
         "activate_trigger": activate_trigger,
         "deactivate_trigger": deactivate_trigger,
+        "create_trigger": operate_tools["create_trigger"],
+        "delete_trigger": operate_tools["delete_trigger"],
         "list_projects": list_projects,
         "get_project": get_project,
         "list_secrets": list_secrets,

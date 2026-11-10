@@ -100,11 +100,14 @@ MCPTool = Literal[
     "list_apps",
     "activate_app",
     "deactivate_app",
+    "delete_app",
     # trigger
     "list_triggers",
     "get_trigger",
     "activate_trigger",
     "deactivate_trigger",
+    "create_trigger",
+    "delete_trigger",
     # project
     "list_projects",
     "get_project",
@@ -204,11 +207,14 @@ TOOL_REGISTRY: dict[MCPTool, ToolInfo] = {
     "list_apps": ToolInfo("app", "List apps", read_only=True, idempotent=True),
     "activate_app": ToolInfo("app", "Activate an app", idempotent=True),
     "deactivate_app": ToolInfo("app", "Deactivate an app", destructive=True, idempotent=True),
+    "delete_app": ToolInfo("app", "Delete an app", destructive=True, idempotent=True),
     # ---- trigger ----
     "list_triggers": ToolInfo("trigger", "List triggers", read_only=True, idempotent=True),
     "get_trigger": ToolInfo("trigger", "Get a trigger", read_only=True, idempotent=True),
     "activate_trigger": ToolInfo("trigger", "Activate a trigger", idempotent=True),
     "deactivate_trigger": ToolInfo("trigger", "Deactivate a trigger", destructive=True, idempotent=True),
+    "create_trigger": ToolInfo("trigger", "Create a trigger", read_only=False),
+    "delete_trigger": ToolInfo("trigger", "Delete a trigger", destructive=True, idempotent=True),
     # ---- project ----
     "list_projects": ToolInfo("project", "List projects", read_only=True, idempotent=True),
     "get_project": ToolInfo("project", "Get a project", read_only=True, idempotent=True),

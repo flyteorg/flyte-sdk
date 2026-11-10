@@ -51,7 +51,15 @@ from flyte.ai.mcp._flyte_mcp_app import (
 from flyte.ai.mcp._tools import ALLOWLIST_SCAN_LIMIT, MAX_LOG_LINES, _collect_log_lines
 
 # Tools the spec pins to specific hints; asserted individually so a careless registry edit shows up.
-DESTRUCTIVE_TOOLS = {"abort_run", "abort_action", "delete_secret", "deactivate_app", "deactivate_trigger"}
+DESTRUCTIVE_TOOLS = {
+    "abort_run",
+    "abort_action",
+    "delete_secret",
+    "deactivate_app",
+    "deactivate_trigger",
+    "delete_app",
+    "delete_trigger",
+}
 WRITE_NON_DESTRUCTIVE_TOOLS = {
     "run_task",
     "rerun_run",
@@ -60,6 +68,7 @@ WRITE_NON_DESTRUCTIVE_TOOLS = {
     "generate_secret",
     "activate_app",
     "activate_trigger",
+    "create_trigger",
     "signal_condition",
 }
 
@@ -172,10 +181,26 @@ class TestGroups:
                 "run",
                 {"get_run", "get_run_io", "abort_run", "list_runs", "wait_for_run", "rerun_run"},
             ),
-            ("app", {"get_app", "list_apps", "activate_app", "deactivate_app"}),
+            (
+                "app",
+                {
+                    "get_app",
+                    "list_apps",
+                    "activate_app",
+                    "deactivate_app",
+                    "delete_app",
+                },
+            ),
             (
                 "trigger",
-                {"list_triggers", "get_trigger", "activate_trigger", "deactivate_trigger"},
+                {
+                    "list_triggers",
+                    "get_trigger",
+                    "activate_trigger",
+                    "deactivate_trigger",
+                    "create_trigger",
+                    "delete_trigger",
+                },
             ),
         ],
     )
@@ -641,10 +666,13 @@ class TestScopedToolSignatures:
         "list_apps",
         "activate_app",
         "deactivate_app",
+        "delete_app",
         "list_triggers",
         "get_trigger",
         "activate_trigger",
         "deactivate_trigger",
+        "create_trigger",
+        "delete_trigger",
         "list_secrets",
         "get_secret",
         "create_secret",
