@@ -367,6 +367,57 @@ Aborting the Flyte run runs `scancel`.
 
 ## Deployment
 
+### Running the connector
+
+None of this plugin runs in the Flyte backend. It runs inside a connector server, which the
+backend calls over gRPC, so the first step is having one with the plugin installed.
+
+For local work, run it as a host process. `c0` ships with the SDK and listens on 8000:
+
+```sh
+pip install 'flyte[connector]' flyteplugins-slurm
+c0 --modules flyteplugins.slurm
+```
+
+Install the `connector` extra rather than bare `flyte`: it carries
+`grpcio-health-checking`, without which the server starts but logs `Failed to start the
+health check servicer`.
+
+On startup `c0` prints what it will serve, and this is the check worth making:
+
+```
+│ Slurm Connector │ slurm (0) slurm_script (0)  │
+```
+
+In a cluster, the Flyte repo ships a `charts/flyteconnector` chart whose default image is
+`ghcr.io/flyteorg/flyte-connectors`. Published builds of that image include
+`flyteplugins-slurm` from v2.12.1 onwards -- but check the tag the chart pins, which may
+predate the plugin. An image without the plugin is not an error you will see; see below.
+
+### Routing task types to the connector
+
+The backend needs to know a connector exists. Two blocks, wherever your deployment keeps
+backend config:
+
+```yaml
+tasks:
+  task-plugins:
+    enabled-plugins:
+      - connector-service
+plugins:
+  connector-service:
+    defaultConnector:
+      endpoint: "localhost:8000"   # in-cluster: dns:///flyteconnector.<namespace>:8000
+```
+
+Nothing there names `slurm`. Task types are discovered at run time by calling the
+connector's `ListConnectors` and refreshed on a poll interval, which is why the startup
+table above matters: a connector without the plugin installed simply never advertises
+`slurm` or `slurm_script`, and a task using them sits unroutable instead of failing with
+anything that names the cause.
+
+`devbox` in the `unionai/cloud` repo has both blocks and a runbook in its `CLAUDE.md`.
+
 ### Two ways to configure the connection
 
 **In the task config, with Flyte secrets.** Nothing goes in the data plane's Helm values
