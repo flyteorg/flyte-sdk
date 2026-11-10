@@ -29,7 +29,7 @@ _LOAD_ATTEMPTS = 3
 _LOAD_BACKOFF_S = 0.5
 
 
-class ActionInputOverrides:
+class ActionOverrides:
     """Lazily loaded action input overrides for the current run.
 
     The file, which only names each overridden action's inputs path and code bundle, is read at
@@ -63,7 +63,7 @@ class ActionInputOverrides:
                     await asyncio.sleep(_LOAD_BACKOFF_S * attempt)
                     continue
                 raise flyte.errors.RuntimeSystemError(
-                    "ActionInputOverridesUnavailableError",
+                    "ActionOverridesUnavailableError",
                     f"Could not read {what} from {uri}: {e}. The run will not fall back to the original inputs.",
                 ) from e
         raise AssertionError("unreachable")
@@ -75,18 +75,18 @@ class ActionInputOverrides:
             return self._input_uris
         if self._uri is None:  # not enabled: apply() returns before loading
             return {}
-        if not hasattr(common_pb2, "ActionInputOverridesData"):
+        if not hasattr(common_pb2, "ActionOverridesData"):
             # Not transient, so fail now rather than through _read's retries.
             raise flyte.errors.RuntimeSystemError(
-                "ActionInputOverridesUnsupportedError",
+                "ActionOverridesUnsupportedError",
                 "This run has action overrides, but the flyteidl2 installed in this task's image predates "
                 "them. Upgrade flyte (and flyteidl2) in the image to fork this run with overrides.",
             )
-        # ActionInputOverridesData is newer than the pinned flyteidl2 stubs.
+        # ActionOverridesData is newer than the pinned flyteidl2 stubs.
         parsed = await self._read(
             self._uri,
             "the action input overrides for this run",
-            lambda: cast(Any, common_pb2).ActionInputOverridesData(),
+            lambda: cast(Any, common_pb2).ActionOverridesData(),
         )
         self._code_bundles = dict(getattr(parsed, "code_bundles", {}))
         self._input_uris = dict(parsed.input_uris)
@@ -150,13 +150,13 @@ class ActionInputOverrides:
         for lit in override.literals:
             if lit.name not in types:
                 raise flyte.errors.RuntimeUserError(
-                    "ActionInputOverrideMismatchError",
+                    "ActionOverrideMismatchError",
                     f"Override for action {action_name} sets input '{lit.name}', which task {task_name} "
                     f"no longer has. Inputs: {', '.join(types) or '<none>'}.",
                 )
             if not literal_matches_type(lit.value, types[lit.name]):
                 raise flyte.errors.RuntimeUserError(
-                    "ActionInputOverrideMismatchError",
+                    "ActionOverrideMismatchError",
                     f"Override for action {action_name} sets input '{lit.name}' to a value that does not "
                     f"match its type in task {task_name}.",
                 )

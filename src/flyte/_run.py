@@ -587,7 +587,7 @@ class _Runner:
         force_rerun_actions: Sequence[str] | None = None,
         deployed_target: bool | None = None,
         task_spec: Any = None,
-        action_input_overrides: Tuple[Sequence[str], str] | None = None,
+        action_overrides: Tuple[Sequence[str], str] | None = None,
     ) -> Any:
         """Build the `RunSpec` for `create_run`.
 
@@ -598,7 +598,7 @@ class _Runner:
         link to record on `RunSpec.relation`: `(parent RunIdentifier, "rerun" | "recover" | "spawn")`,
         or None. The identifier must be fully qualified (org/project/domain/name) — the server rejects
         partial ones. `force_rerun_actions` (recover only) lands on `RunSpec.recover`, as does
-        `action_input_overrides`: `(action names, URI of the uploaded ActionInputOverridesData)`.
+        `action_overrides`: `(action names, URI of the uploaded ActionOverridesData)`.
         `deployed_target` says whether the run executes a registered (deployed) task spec rather than
         one built in this process; None derives it from `task` / `base`, consulting `task_spec` (the wire
         spec the run will execute) only when `base.task_spec_source` is unspecified.
@@ -758,15 +758,15 @@ class _Runner:
                     cast(Any, run_spec).recover.CopyFrom(
                         cast(Any, run_pb2).Recover(force_rerun_actions=list(force_rerun_actions))
                     )
-                if kind == "recover" and action_input_overrides:
-                    if "action_input_overrides" not in cast(Any, run_pb2).Recover.DESCRIPTOR.fields_by_name:
+                if kind == "recover" and action_overrides:
+                    if "action_overrides" not in cast(Any, run_pb2).Recover.DESCRIPTOR.fields_by_name:
                         raise NotImplementedError(
                             "action input overrides are not supported by this flyteidl2 build "
-                            "(Recover.action_input_overrides is unavailable)."
+                            "(Recover.action_overrides is unavailable)."
                         )
-                    names, uri = action_input_overrides
-                    cast(Any, run_spec).recover.action_input_overrides.CopyFrom(
-                        cast(Any, run_pb2).ActionInputOverrides(action_names=list(names), uri=uri)
+                    names, uri = action_overrides
+                    cast(Any, run_spec).recover.action_overrides.CopyFrom(
+                        cast(Any, run_pb2).ActionOverrides(action_names=list(names), uri=uri)
                     )
 
         return run_spec

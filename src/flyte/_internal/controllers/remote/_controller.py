@@ -36,7 +36,7 @@ from flyte._utils.helpers import _selector_policy, jittered
 from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext, TaskContext
 
 if TYPE_CHECKING:
-    from flyte._internal.controllers.remote._input_overrides import ActionInputOverrides
+    from flyte._internal.controllers.remote._input_overrides import ActionOverrides
     from flyte.remote._task import TaskDetails
 
 R = TypeVar("R")
@@ -192,11 +192,11 @@ class RemoteController(Controller):
         # Fork: overrides for the inputs of some child actions, from the run's env (see
         # _input_overrides). Only a fork with overrides sets the env var, so other runs never load
         # the module.
-        self._input_overrides: Optional[ActionInputOverrides] = None
+        self._input_overrides: Optional[ActionOverrides] = None
         if os.environ.get(ACTION_INPUT_OVERRIDES_ENV_VAR):
-            from flyte._internal.controllers.remote._input_overrides import ActionInputOverrides
+            from flyte._internal.controllers.remote._input_overrides import ActionOverrides
 
-            self._input_overrides = ActionInputOverrides()
+            self._input_overrides = ActionOverrides()
 
         # Running sessions, by action name.
         self._sessions: dict[str, Action] = {}
@@ -353,7 +353,7 @@ class RemoteController(Controller):
             run_output_base=tctx.run_base_dir,
             cache_key=cache_key,
             queue=_task.queue,
-            input_override_applied=overridden is not None or code_override is not None,
+            override_applied=overridden is not None or code_override is not None,
         )
 
         try:
@@ -746,7 +746,7 @@ class RemoteController(Controller):
             run_output_base=tctx.run_base_dir,
             cache_key=cache_key,
             queue=None,
-            input_override_applied=overridden is not None,
+            override_applied=overridden is not None,
         )
 
         try:

@@ -1221,7 +1221,7 @@ async def test_enqueue_aborted_raises_system_error_without_retry():
 
 @pytest.mark.asyncio
 async def test_queue_service_rejects_overridden_action_without_enqueuing():
-    """EnqueueActionRequest cannot carry input_override_applied, so the controller fails the
+    """EnqueueActionRequest cannot carry override_applied, so the controller fails the
     action with the reason instead of enqueuing it without the flag."""
     phases = {"subrun-1": [(phase_pb2.ACTION_PHASE_SUCCEEDED, None, None)]}
 
@@ -1241,7 +1241,7 @@ async def test_queue_service_rejects_overridden_action_without_enqueuing():
 
     run_id = _ce_make_run_id()
     action = _ce_make_action("subrun-1", run_id)
-    action.input_override_applied = True
+    action.override_applied = True
     c = Controller(client_coro=create_service(), workers=2, max_system_retries=2, min_backoff_on_err_sec=0.01)
 
     final_node = await c.submit_action(action)

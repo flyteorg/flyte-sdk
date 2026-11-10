@@ -417,7 +417,7 @@ async def test_apply_overrides_recover_stamps_relation():
 
 
 @pytest.mark.asyncio
-async def test_apply_overrides_action_input_overrides_and_env_not_inherited():
+async def test_apply_overrides_action_overrides_and_env_not_inherited():
     """Fork overrides land on RunSpec.recover; a prior fork's reserved env var is never inherited."""
     from flyteidl2.common import identifier_pb2
     from flyteidl2.core import literals_pb2
@@ -428,8 +428,8 @@ async def test_apply_overrides_action_input_overrides_and_env_not_inherited():
 
     mock_client, _ = _make_mock_client()
     await _init_for_testing(client=mock_client, project="test", domain="test")
-    if "action_input_overrides" not in run_pb2.Recover.DESCRIPTOR.fields_by_name:
-        pytest.skip("flyteidl2 build without Recover.action_input_overrides")
+    if "action_overrides" not in run_pb2.Recover.DESCRIPTOR.fields_by_name:
+        pytest.skip("flyteidl2 build without Recover.action_overrides")
 
     ref = identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="r1")
     base = run_pb2.RunSpec(
@@ -440,18 +440,18 @@ async def test_apply_overrides_action_input_overrides_and_env_not_inherited():
             ]
         ),
         recover=run_pb2.Recover(
-            action_input_overrides=run_pb2.ActionInputOverrides(action_names=["old"], uri="s3://b/old.pb"),
+            action_overrides=run_pb2.ActionOverrides(action_names=["old"], uri="s3://b/old.pb"),
             implied_rerun_actions=["p"],
         ),
     )
     out = _Runner(force_mode="remote")._apply_overrides(
-        base, relation=(ref, "recover"), action_input_overrides=(["n1", "n2"], "s3://b/new.pb")
+        base, relation=(ref, "recover"), action_overrides=(["n1", "n2"], "s3://b/new.pb")
     )
     envs = {kv.key: kv.value for kv in out.envs.values}
     assert envs["KEEP"] == "1"
     assert ACTION_INPUT_OVERRIDES_ENV_VAR not in envs
-    assert list(out.recover.action_input_overrides.action_names) == ["n1", "n2"]
-    assert out.recover.action_input_overrides.uri == "s3://b/new.pb"
+    assert list(out.recover.action_overrides.action_names) == ["n1", "n2"]
+    assert out.recover.action_overrides.uri == "s3://b/new.pb"
     assert not out.recover.implied_rerun_actions
 
 

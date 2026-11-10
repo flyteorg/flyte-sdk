@@ -13,7 +13,7 @@ import flyte.report
 from flyte._context import internal_ctx
 from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._controller import RemoteController
-from flyte._internal.controllers.remote._input_overrides import ActionInputOverrides, literal_matches_type
+from flyte._internal.controllers.remote._input_overrides import ActionOverrides, literal_matches_type
 from flyte._internal.controllers.remote._service_protocol import ClientSet
 from flyte.models import ActionID, CodeBundle, RawDataPath, TaskContext
 
@@ -49,9 +49,9 @@ def _iface(**types: int) -> interface_pb2.TypedInterface:
     )
 
 
-def _overrides(**by_action: dict) -> ActionInputOverrides:
+def _overrides(**by_action: dict) -> ActionOverrides:
     """Overrides already loaded from the file, with each action's inputs served from its own path."""
-    o = ActionInputOverrides(uri="s3://bucket/overrides.pb")
+    o = ActionOverrides(uri="s3://bucket/overrides.pb")
     o._input_uris = {name: f"s3://bucket/{name}/inputs.pb" for name in by_action}
     stored = {
         f"s3://bucket/{name}/inputs.pb": common_pb2.Inputs(
@@ -81,7 +81,7 @@ def _stream(by_uri: dict):
     return get_stream
 
 
-def _with_code(o: ActionInputOverrides, **by_action: str) -> ActionInputOverrides:
+def _with_code(o: ActionOverrides, **by_action: str) -> ActionOverrides:
     """Give actions a replacement code bundle (an ActionCodeBundle stand-in: the pinned flyteidl2 predates it)."""
     o._code_bundles = {name: SimpleNamespace(tgz=tgz, version="v-patched") for name, tgz in by_action.items()}
     return o
@@ -123,15 +123,15 @@ async def test_apply_rejects_unknown_input_and_wrong_type():
 @pytest.mark.asyncio
 async def test_disabled_without_uri(monkeypatch):
     monkeypatch.delenv("_U_ACTION_INPUT_OVERRIDES", raising=False)
-    o = ActionInputOverrides()
+    o = ActionOverrides()
     assert not o.enabled
     assert await o.apply("child", "add", _inputs(x=_int(1)), _iface(x=types_pb2.INTEGER)) is None
 
 
 @pytest.mark.asyncio
 async def test_flyteidl2_without_overrides_fails_without_reading(monkeypatch):
-    monkeypatch.delattr(common_pb2, "ActionInputOverridesData", raising=False)
-    o = ActionInputOverrides(uri="s3://bucket/overrides.pb")
+    monkeypatch.delattr(common_pb2, "ActionOverridesData", raising=False)
+    o = ActionOverrides(uri="s3://bucket/overrides.pb")
     with patch("flyte.storage.get_stream") as stream:
         with pytest.raises(flyte.errors.RuntimeSystemError, match="predates"):
             await o.apply("child", "add", _inputs(x=_int(1)), _iface(x=types_pb2.INTEGER))
@@ -140,11 +140,11 @@ async def test_flyteidl2_without_overrides_fails_without_reading(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(
-    not hasattr(common_pb2, "ActionInputOverridesData"),
-    reason="needs a flyteidl2 build with ActionInputOverridesData",
+    not hasattr(common_pb2, "ActionOverridesData"),
+    reason="needs a flyteidl2 build with ActionOverridesData",
 )
 async def test_unreadable_file_is_a_system_error():
-    o = ActionInputOverrides(uri="s3://bucket/missing.pb")
+    o = ActionOverrides(uri="s3://bucket/missing.pb")
     get_stream = patch("flyte.storage.get_stream", side_effect=FileNotFoundError("nope"))
     with get_stream as stream, patch("asyncio.sleep", new=AsyncMock()):
         with pytest.raises(flyte.errors.RuntimeSystemError, match="action input overrides"):
@@ -154,11 +154,11 @@ async def test_unreadable_file_is_a_system_error():
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(
-    not hasattr(common_pb2, "ActionInputOverridesData"),
-    reason="needs a flyteidl2 build with ActionInputOverridesData",
+    not hasattr(common_pb2, "ActionOverridesData"),
+    reason="needs a flyteidl2 build with ActionOverridesData",
 )
 async def test_transient_read_error_is_retried():
-    data = common_pb2.ActionInputOverridesData()
+    data = common_pb2.ActionOverridesData()
     data.input_uris["child"] = "s3://bucket/child/inputs.pb"
     serve = _stream({"s3://bucket/overrides.pb": data, "s3://bucket/child/inputs.pb": _inputs(x=_int(7))})
     blips = {"s3://bucket/overrides.pb": 1, "s3://bucket/child/inputs.pb": 1}
@@ -169,7 +169,7 @@ async def test_transient_read_error_is_retried():
             raise ConnectionError("blip")
         return serve(uri)
 
-    o = ActionInputOverrides(uri="s3://bucket/overrides.pb")
+    o = ActionOverrides(uri="s3://bucket/overrides.pb")
     with patch("flyte.storage.get_stream", side_effect=get_stream), patch("asyncio.sleep", new=AsyncMock()):
         out = await o.apply("child", "add", _inputs(x=_int(1)), _iface(x=types_pb2.INTEGER))
     assert out.literals[0].value.scalar.primitive.integer == 7
@@ -177,16 +177,16 @@ async def test_transient_read_error_is_retried():
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(
-    not hasattr(common_pb2, "ActionInputOverridesData"),
-    reason="needs a flyteidl2 build with ActionInputOverridesData",
+    not hasattr(common_pb2, "ActionOverridesData"),
+    reason="needs a flyteidl2 build with ActionOverridesData",
 )
 async def test_inputs_are_read_from_each_actions_path_only_when_it_is_enqueued():
-    data = common_pb2.ActionInputOverridesData()
+    data = common_pb2.ActionOverridesData()
     data.input_uris["child"] = "s3://bucket/child/inputs.pb"
     data.input_uris["other"] = "s3://bucket/other/inputs.pb"
     serve = _stream({"s3://bucket/overrides.pb": data, "s3://bucket/child/inputs.pb": _inputs(x=_int(7))})
 
-    o = ActionInputOverrides(uri="s3://bucket/overrides.pb")
+    o = ActionOverrides(uri="s3://bucket/overrides.pb")
     with patch("flyte.storage.get_stream", side_effect=serve) as stream:
         out = await o.apply("child", "add", _inputs(x=_int(1)), _iface(x=types_pb2.INTEGER))
         assert await o.apply("unrelated", "add", _inputs(x=_int(1)), _iface(x=types_pb2.INTEGER)) is None
@@ -263,7 +263,7 @@ async def test_controller_applies_override_and_flags_action():
             controller = RemoteController(client_coro=make_client(), workers=2, max_system_retries=2)
             await controller.submit(add, 1, 2)
         name = mock_submit.call_args.args[0].name
-        assert mock_submit.call_args.args[0].input_override_applied is False
+        assert mock_submit.call_args.args[0].override_applied is False
 
         # A re-run parent starts with a fresh task context, so the call sequence (and name) repeat.
         with ctx.replace_task_context(new_tctx()):
@@ -273,7 +273,7 @@ async def test_controller_applies_override_and_flags_action():
 
         submitted = mock_submit.call_args.args[0]
         assert submitted.name == name, "the name stays the one computed from the original inputs"
-        assert submitted.input_override_applied is True
+        assert submitted.override_applied is True
         uploaded = common_pb2.Inputs()
         uploaded.ParseFromString(mock_upload.call_args.args[0])
         assert {lit.name: lit.value.scalar.primitive.integer for lit in uploaded.literals} == {"x": 1, "y": 40}
@@ -309,14 +309,14 @@ async def test_code_bundle_needs_a_source_bundle_to_replace():
     reason="needs a flyteidl2 build with ActionCodeBundle",
 )
 async def test_code_bundles_are_read_from_the_file():
-    data = common_pb2.ActionInputOverridesData()
+    data = common_pb2.ActionOverridesData()
     data.code_bundles["child"].tgz = "s3://bucket/fastpatched.tar.gz"
     data.code_bundles["child"].version = "abc"
 
     async def chunks():
         yield data.SerializeToString()
 
-    o = ActionInputOverrides(uri="s3://bucket/overrides.pb")
+    o = ActionOverrides(uri="s3://bucket/overrides.pb")
     parent = CodeBundle(computed_version="v", destination=".", tgz="s3://bucket/fastsrc.tar.gz")
     with patch("flyte.storage.get_stream", return_value=chunks()):
         bundle = await o.code_bundle("child", "add", parent)
@@ -376,7 +376,7 @@ async def test_controller_runs_code_override_from_its_bundle_without_cache():
 
         submitted = mock_submit.call_args.args[0]
         assert submitted.name == original.name, "the name stays the one computed from the parent's code"
-        assert submitted.input_override_applied is True
+        assert submitted.override_applied is True
         assert submitted.cache_key is None, "a cache hit would return the original code's result"
         args = submitted.task.task_template.container.args
         assert _arg(args, "--tgz") == "s3://bucket/fastpatched.tar.gz"

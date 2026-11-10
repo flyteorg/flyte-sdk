@@ -481,18 +481,18 @@ class Controller:
                                     group=action.group.name if action.group else None,
                                     # Only set when true, so a flyteidl2 build without the field
                                     # keeps working for every run without overrides.
-                                    **({"input_override_applied": True} if action.input_override_applied else {}),
+                                    **({"override_applied": True} if action.override_applied else {}),
                                 ),
                             ),
                             timeout_ms=int(self._enqueue_timeout * 1000),
                             headers=_actions_metadata(action),
                         )
                     else:
-                        if action.input_override_applied:
+                        if action.override_applied:
                             # EnqueueActionRequest has no field for the flag, and the server rejects
                             # an overridden action enqueued without it, so fail with the reason now.
                             raise flyte.errors.RuntimeSystemError(
-                                "ActionInputOverrideUnsupportedError",
+                                "ActionOverrideUnsupportedError",
                                 f"Action {action.name} has an input or code override, but this controller "
                                 f"enqueues through the queue service, which cannot carry it. Overrides need the "
                                 f"actions service ({ACTIONS_SERVICE_CHECK_ENV_VAR}=1).",
