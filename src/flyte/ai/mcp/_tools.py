@@ -390,7 +390,7 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
     """
     # The sibling modules take ToolError, MCPContext and friends from this one, so they can only be
     # imported once this module is fully loaded.
-    from flyte.ai.mcp import _secret_tools
+    from flyte.ai.mcp import _diagnose, _secret_tools
 
     # ------------------------------
     # task
@@ -512,11 +512,22 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         """Get a run's current phase plus its console URL.
 
         This is the cheap status check — it does not fetch inputs, outputs or logs. Use
-        `get_run_io` for data and `get_logs` for output.
+        `get_run_io` for data and `get_logs` for output. It also reports the root task's
+        `task_name`, `started_at`/`ended_at`, `duration_s` (elapsed so far while running),
+        the run's `labels`, and for a failed run `error` (`kind`, `message` cut at 2000
+        characters) — usually enough to say why it failed without a second call. For the
+        failing step inside a multi-step run, use `list_actions` with `in_phase=["failed"]`.
         """
         with env._scoped(project, domain):
             run = await flyte.remote.Run.get.aio(name=name)
-            return {"name": run.name, "phase": _phase_str(run.phase), "url": run.url, "done": run.done()}
+            result: dict[str, Any] = {
+                "name": run.name,
+                "phase": _phase_str(run.phase),
+                "url": run.url,
+                "done": run.done(),
+            }
+            await _diagnose.add_run_details(run, result)
+            return result
 
     async def wait_for_run(
         name: str,
@@ -558,22 +569,34 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
             return result
 
     async def get_run_io(
-        name: str, project: str | None = None, domain: str | None = None, ctx: MCPContext | None = None
+        name: str,
+        action_name: str | None = None,
+        inputs_only: bool = False,
+        outputs_only: bool = False,
+        project: str | None = None,
+        domain: str | None = None,
+        ctx: MCPContext | None = None,
     ) -> dict:
         """Get a run's inputs, and its outputs once it has finished.
 
         `outputs` is null while the run is still going. If the outputs exist but cannot be
         decoded (an unreconstructable output type, for example), `outputs_error` explains
         why instead of the outputs silently coming back null.
+
+        Pass `action_name` (from `list_actions`) for a nested action's data instead of the
+        root's — a failure is usually in a child, and its inputs are what you need to
+        reproduce it. Set `inputs_only` or `outputs_only` (not both) to leave the other
+        out of the response when it is large.
         """
+        _diagnose.check_io_selection(inputs_only, outputs_only)
         with env._scoped(project, domain):
-            run = await flyte.remote.Run.get.aio(name=name)
-            inputs = await run.inputs.aio()
+            target, run_name = await _diagnose.io_target(name, action_name)
+            inputs: Any = None if outputs_only else await target.inputs.aio()
             outputs = None
             outputs_error: str | None = None
-            if run.done():
+            if not inputs_only and target.done():
                 try:
-                    outputs = await run.outputs.aio()
+                    outputs = await target.outputs.aio()
                 except Exception as e:
                     outputs_error = f"{type(e).__name__}: {e}"
             inputs_dict = (
@@ -588,7 +611,7 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
                     if hasattr(outputs, "named_outputs")
                     else (outputs.to_dict() if hasattr(outputs, "to_dict") else list(outputs))
                 )
-            result = {"name": run.name, "inputs": inputs_dict, "outputs": outputs_dict}
+            result = _diagnose.io_result(run_name, action_name, inputs_only, outputs_only, inputs_dict, outputs_dict)
             if outputs_error is not None:
                 result["outputs_error"] = outputs_error
             return result
@@ -615,6 +638,16 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
     async def list_runs(
         task_name: str | None = None,
         limit: int = 100,
+        in_phase: list[str] | None = None,
+        only_mine: bool = False,
+        paused_only: bool = False,
+        task_version: str | None = None,
+        created_after: str | None = None,
+        created_before: str | None = None,
+        updated_after: str | None = None,
+        updated_before: str | None = None,
+        with_labels: dict[str, str] | None = None,
+        with_label_keys: list[str] | None = None,
         project: str | None = None,
         domain: str | None = None,
         ctx: MCPContext | None = None,
@@ -622,49 +655,83 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         """List recent runs in a project/domain, newest first.
 
         Pass `task_name` to see only the runs of one task — useful for "did my last run of
-        X succeed?" questions.
+        X succeed?" questions. To answer "what failed in the last hour?" narrow server-side
+        instead of scanning: `in_phase` (e.g. ["failed", "timed_out"]), `created_after` /
+        `created_before` / `updated_after` / `updated_before` (ISO-8601, e.g.
+        "2025-01-31T12:00:00Z"; no zone means UTC), and `task_version`. `only_mine` keeps
+        runs started by the identity this server acts as (see `whoami`). `paused_only` keeps
+        runs waiting on a condition — follow up with `list_conditions`. `with_labels` needs
+        every key=value pair to match; `with_label_keys` needs every key to be present.
+        Each entry also carries `task_name`, `started_at` and `ended_at` when known.
         """
+        filters = _diagnose.run_filters(
+            in_phase,
+            paused_only,
+            task_version,
+            created_after,
+            created_before,
+            updated_after,
+            updated_before,
+            with_labels,
+            with_label_keys,
+        )
         with env._scoped(project, domain) as (resolved_project, resolved_domain):
+            if only_mine:
+                await _diagnose.filter_to_caller(filters)
             runs = cast(Any, flyte.remote.Run.listall).aio(
                 task_name=task_name,
                 sort_by=("created_at", "desc"),
                 limit=limit,
                 project=resolved_project,
                 domain=resolved_domain,
+                **filters,
             )
             out: list[dict] = []
             async for r in runs:
-                if hasattr(r, "to_dict"):
-                    out.append(r.to_dict())
-                else:
-                    out.append({"name": getattr(r, "name", None), "url": getattr(r, "url", None)})
+                out.append(_diagnose.run_entry(r))
                 if len(out) >= limit:
                     break
             return out
 
+    # `rerun_run` has a parameter called `env` (the new run's environment variables), which hides
+    # the server environment closed over here; keep a second name for it.
+    tool_env = env
+
     async def rerun_run(
-        run_name: str, project: str | None = None, domain: str | None = None, ctx: MCPContext | None = None
+        run_name: str,
+        recover: bool = False,
+        action_name: str | None = None,
+        force_rerun_actions: list[str] | None = None,
+        allow_missing_outputs: bool = False,
+        name: str | None = None,
+        labels: dict[str, str] | None = None,
+        env: dict[str, str] | None = None,
+        project: str | None = None,
+        domain: str | None = None,
+        ctx: MCPContext | None = None,
     ) -> dict:
         """Re-run a previous run's root action with exactly the same inputs and code.
 
         Use this to retry a failed run without knowing its inputs or having the source
         locally. Returns the *new* run's name and URL; the original is untouched. The task
         behind the run must be allowlisted, exactly as it would be for `run_task`.
+
+        Options, for after you have diagnosed a failure: `recover=true` reuses the actions
+        that already succeeded and re-executes only what failed or never ran (the usual
+        way to resume a failed pipeline); `force_rerun_actions` (needs `recover`) names
+        succeeded actions to re-execute anyway, children included. `action_name` re-runs
+        just that one action as a new run with the inputs it received (cannot be combined
+        with `recover`). `allow_missing_outputs` proceeds when the source run's outputs
+        were cleaned up; the new run fails if its inputs are gone too. `name`, `labels` and
+        `env` set the new run's name, labels and environment variables. Per-input overrides
+        are not supported; the inputs are always the original run's.
         """
-        with env._scoped(project, domain) as (resolved_project, resolved_domain):
-            # A rerun launches the prior run's task, so it has to clear the same gate as run_task.
-            # Only pay for the lookup when there is an allowlist to check against.
-            if env.task_allowlist is not None:
-                prior = await flyte.remote.Run.get.aio(name=run_name)
-                task_name = getattr(prior.action, "task_name", None)
-                if task_name is None:
-                    raise ToolError(
-                        f"Cannot determine which task run '{run_name}' launched, so it cannot be "
-                        f"checked against the task allowlist."
-                    )
-                if not _is_task_allowed(env.task_allowlist, resolved_domain, resolved_project, task_name):
-                    raise ToolError(f"Task {resolved_domain}/{resolved_project}/{task_name} is not allowlisted.")
-            r = await flyte.rerun.aio(run_name)
+        new_labels, env_vars = _diagnose.check_rerun_args(recover, action_name, force_rerun_actions, labels, env)
+        with tool_env._scoped(project, domain) as (resolved_project, resolved_domain):
+            await _diagnose.check_rerun_allowed(tool_env, run_name, action_name, resolved_domain, resolved_project)
+            r = await _diagnose.rerun(
+                run_name, recover, action_name, force_rerun_actions, allow_missing_outputs, name, new_labels, env_vars
+            )
             return {"url": r.url, "name": r.name}
 
     # ------------------------------
@@ -674,6 +741,7 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
     async def list_actions(
         run_name: str,
         limit: int = 100,
+        in_phase: list[str] | None = None,
         project: str | None = None,
         domain: str | None = None,
         ctx: MCPContext | None = None,
@@ -681,11 +749,15 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         """List the actions (individual task executions) inside a run.
 
         This is how you find which step of a multi-step run failed: scan the phases, then
-        call `get_action` or `get_logs` on the interesting one.
+        call `get_action` or `get_logs` on the interesting one. Pass `in_phase` (e.g.
+        ["failed", "timed_out"]) to have the server return only those, which is much
+        shorter for a run with hundreds of actions.
         """
+        phases = _diagnose.parse_phases(in_phase)
         with env._scoped(project, domain):
             out: list[dict] = []
-            async for a in cast(Any, flyte.remote.Action.listall).aio(for_run_name=run_name):
+            filters = {"in_phase": phases} if phases else {}
+            async for a in cast(Any, flyte.remote.Action.listall).aio(for_run_name=run_name, **filters):
                 started_at = _ts(a.pb2.status, "start_time")
                 ended_at = _ts(a.pb2.status, "end_time")
                 out.append(
@@ -794,6 +866,7 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         attempt: int | None = None,
         max_lines: int = 200,
         filter_system: bool = True,
+        show_ts: bool = False,
         wait_for_logs: bool = False,
         project: str | None = None,
         domain: str | None = None,
@@ -804,7 +877,9 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         Returns at most `max_lines` lines (hard cap 2000) and gives up after ~30s, marking
         the output when it was cut short. If the logs are not up yet this returns a short
         status string right away rather than blocking; pass `wait_for_logs=True` only when
-        you actually want to wait for a queued action to start.
+        you actually want to wait for a queued action to start. Set `show_ts=true` to prefix
+        each line with its timestamp, for working out what happened when or how long a step
+        took.
         """
         bounded_lines = max(1, min(int(max_lines), MAX_LOG_LINES))
         with env._scoped(project, domain):
@@ -823,7 +898,9 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
                     f"Call get_logs again once it is running, or pass wait_for_logs=true to block."
                 )
 
-            source = cast(Any, target.get_logs).aio(attempt=attempt, filter_system=filter_system)
+            # Only passed when set, so the default call to the SDK is unchanged.
+            ts_args = {"show_ts": True} if show_ts else {}
+            source = cast(Any, target.get_logs).aio(attempt=attempt, filter_system=filter_system, **ts_args)
             return await _collect_log_lines(source, bounded_lines, LOG_COLLECT_TIMEOUT_S)
 
     # ------------------------------
@@ -1108,6 +1185,7 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
     async def list_conditions(
         run_name: str,
         limit: int = 50,
+        action_name: str | None = None,
         project: str | None = None,
         domain: str | None = None,
         ctx: MCPContext | None = None,
@@ -1115,23 +1193,28 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         """List the conditions of a run — the points where it is paused for external input.
 
         `expected_type` is the payload type `signal_condition` will coerce to. A run stuck in
-        a paused phase usually has an unsignalled condition here.
+        a paused phase usually has an unsignalled condition here. `prompt` is the question the
+        run's author wrote for the person who signals it (`prompt_type` is "text" or
+        "markdown"): read it before deciding what value to send. Pass `action_name` to list
+        only the conditions under one action. `prompt` costs one extra lookup per condition;
+        if that lookup fails the entry has `prompt_error` instead.
         """
         from flyte.remote._condition import resolve_condition_expected_type
 
         with env._scoped(project, domain):
             out: list[dict] = []
-            async for c in cast(Any, flyte.remote.Condition.listall).aio(run_name=run_name, limit=limit):
+            scope = {"action_name": action_name} if action_name is not None else {}
+            async for c in cast(Any, flyte.remote.Condition.listall).aio(run_name=run_name, limit=limit, **scope):
                 expected = resolve_condition_expected_type(c.pb2)
-                out.append(
-                    {
-                        "name": c.name,
-                        "action_name": c.action_name,
-                        "run_name": c.run_name,
-                        "phase": c.phase,
-                        "expected_type": expected.__name__ if expected is not None else None,
-                    }
-                )
+                entry = {
+                    "name": c.name,
+                    "action_name": c.action_name,
+                    "run_name": c.run_name,
+                    "phase": c.phase,
+                    "expected_type": expected.__name__ if expected is not None else None,
+                }
+                await _diagnose.add_condition_prompt(entry, c.run_name, c.action_name)
+                out.append(entry)
                 if len(out) >= limit:
                     break
             return out
