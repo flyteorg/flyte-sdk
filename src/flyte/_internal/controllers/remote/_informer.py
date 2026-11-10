@@ -17,6 +17,10 @@ from ._action import TERMINAL_PHASES, Action
 from ._service_protocol import ActionsService, StateService
 
 
+class _WatchIdleError(Exception):
+    """A synced watch delivered nothing within the idle timeout."""
+
+
 class ActionCache:
     """
     Cache for actions, used to store the state of all sub-actions, launched by this parent action.
@@ -168,6 +172,8 @@ class Informer:
         watch_conn_timeout_sec: float = 5.0,
         # Consecutive failures; ~20+ min at the 30s backoff cap, same rationale as max_system_retries.
         max_watch_retries: int = 40,
+        # Reconnect a synced watch silent this long; keep it well under the executor's TaskAction GC TTL.
+        watch_idle_timeout_sec: Optional[float] = 300.0,
     ):
         self.name = self.mkname(run_name=run_id.name, parent_action_name=parent_action_name)
         self.parent_action_name = parent_action_name
@@ -183,6 +189,7 @@ class Informer:
         self._max_watch_backoff = max_watch_backoff
         self._watch_conn_timeout_sec = watch_conn_timeout_sec
         self._max_watch_retries = max_watch_retries
+        self._watch_idle_timeout_sec = watch_idle_timeout_sec
 
     @classmethod
     def mkname(cls, *, run_name: str, parent_action_name: str) -> str:
@@ -293,7 +300,7 @@ class Informer:
                             parent_action_id=parent_action_id,
                         ),
                     )
-                async for resp in cast(AsyncIterator, watcher):
+                async for resp in self._with_idle_timeout(cast(AsyncIterator, watcher)):
                     retries = 0
                     if resp is None:
                         # gRPC deserialization failure: _transform() caught an
@@ -313,6 +320,10 @@ class Informer:
             except asyncio.CancelledError:
                 logger.info(f"Watch cancelled: {self.name}")
                 return
+            except _WatchIdleError:
+                # Not a failure: reconnect at once and let the snapshot re-sync the children.
+                logger.info(f"Watch for {self.name} idle for {self._watch_idle_timeout_sec}s, reconnecting")
+                continue
             except asyncio.TimeoutError as e:
                 logger.error(f"Watch timeout: {self.name}, {e}", exc_info=False)
                 last_exc = e
@@ -335,6 +346,22 @@ class Informer:
             backoff = jittered(min(self._min_watch_backoff * (2 ** min(retries, 20)), self._max_watch_backoff))
             logger.warning(f"Watch for {self.name} failed, retrying in {backoff:.2f} seconds...")
             await asyncio.sleep(backoff)
+
+    async def _with_idle_timeout(self, watcher: AsyncIterator) -> AsyncIterator:
+        """Yields the watch's responses, raising _WatchIdleError once synced if none arrives in time."""
+        stream = watcher.__aiter__()
+        synced = False
+        while True:
+            timeout = self._watch_idle_timeout_sec if synced else None
+            try:
+                resp = await asyncio.wait_for(stream.__anext__(), timeout=timeout)
+            except StopAsyncIteration:
+                return
+            except asyncio.TimeoutError:
+                raise _WatchIdleError from None
+            if resp is not None and resp.control_message is not None and resp.control_message.sentinel:
+                synced = True
+            yield resp
 
     @log
     async def start(self, timeout: Optional[float] = None) -> asyncio.Task:
