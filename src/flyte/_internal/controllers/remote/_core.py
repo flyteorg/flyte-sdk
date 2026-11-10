@@ -22,6 +22,7 @@ from flyte._logging import log, logger
 
 from ._action import Action
 from ._informer import InformerCache
+from ._org_limits import org_limit_exceeded
 from ._service_protocol import ActionsService, ClientSet, QueueService, StateService
 
 # A request that dies at its client-side deadline may be riding a dead pooled connection
@@ -524,6 +525,9 @@ class Controller:
                         logger.info(f"Action {action.name} already exists, continuing to monitor.")
                         action.mark_started()
                         return
+                    if (org_limit := org_limit_exceeded(e)) is not None:
+                        # The org is at a limit (e.g. max_actions_per_run): no retry can clear it.
+                        raise org_limit from e
                     if e.code == Code.RESOURCE_EXHAUSTED:
                         raise flyte.errors.ResourceExhaustedError(e.message) from e
                     if e.code == Code.ABORTED:
@@ -616,16 +620,21 @@ class Controller:
                     await self._shared_queue.put(action)
             except Exception as e:
                 logger.error(f"[{worker_id}] Error in controller loop for {action.name}: {e}")
-                if isinstance(e, flyte.errors.SlowDownError):
-                    reason = f"retries {action.retries} / {self._max_retries} exhausted"
+                if isinstance(e, flyte.errors.OrgLimitExceededError):
+                    # A user error the parent can catch, not a controller failure: wrapping it as a system error
+                    # would make the platform retry the whole parent.
+                    err: Exception = e
                 else:
-                    reason = f"non-retryable {type(e).__name__}"
-                err = flyte.errors.RuntimeSystemError(
-                    code=type(e).__name__,
-                    message=f"Controller failed for action {action.name} ({reason}): {e}",
-                    worker=worker_id,
-                )
-                err.__cause__ = e
+                    if isinstance(e, flyte.errors.SlowDownError):
+                        reason = f"retries {action.retries} / {self._max_retries} exhausted"
+                    else:
+                        reason = f"non-retryable {type(e).__name__}"
+                    err = flyte.errors.RuntimeSystemError(
+                        code=type(e).__name__,
+                        message=f"Controller failed for action {action.name} ({reason}): {e}",
+                        worker=worker_id,
+                    )
+                    err.__cause__ = e
                 action.set_client_error(err)
                 informer = await self._informers.get(
                     run_name=action.run_name,

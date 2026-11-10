@@ -39,7 +39,7 @@ use tracing::{debug, error, info, warn};
 use crate::{
     action::{Action, ActionType},
     auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator},
-    error::{ControllerError, InformerError},
+    error::{org_limit_message, ControllerError, InformerError},
     informer::{Informer, InformerCache},
 };
 
@@ -845,7 +845,10 @@ impl CoreBaseController {
     /// Map a tonic Status from an enqueue RPC into a ControllerError, applying the same
     /// retry/non-retry policy regardless of which underlying service was called.
     fn map_enqueue_error(action_name: &str, e: tonic::Status) -> Result<(), ControllerError> {
-        if e.code() == tonic::Code::AlreadyExists {
+        if let Some(msg) = org_limit_message(&e) {
+            // The org is at a limit (e.g. max_actions_per_run): no retry can clear it.
+            Err(ControllerError::OrgLimitExceeded(msg))
+        } else if e.code() == tonic::Code::AlreadyExists {
             info!(
                 "Action {} already exists, continuing to monitor.",
                 action_name
@@ -1185,5 +1188,45 @@ impl CoreBaseController {
                 "watch_for_errors already called or resources not available".to_string(),
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod map_enqueue_error_tests {
+    use prost::Message;
+
+    use super::*;
+    use crate::error::RpcStatus;
+
+    #[test]
+    fn org_limit_refusal_is_not_retried_as_a_precondition_failure() {
+        let details = RpcStatus {
+            code: tonic::Code::FailedPrecondition as i32,
+            message: "over".to_string(),
+            details: vec![prost_types::Any {
+                type_url: "type.googleapis.com/cloudidl.common.OrgLimitExceeded".to_string(),
+                value: vec![],
+            }],
+        }
+        .encode_to_vec();
+        let status = tonic::Status::with_details(
+            tonic::Code::FailedPrecondition,
+            "over the cap",
+            details.into(),
+        );
+
+        let err = CoreBaseController::map_enqueue_error("a1", status).unwrap_err();
+
+        assert!(matches!(err, ControllerError::OrgLimitExceeded(ref m) if m == "over the cap"));
+    }
+
+    #[test]
+    fn plain_precondition_failure_is_unchanged() {
+        let err = CoreBaseController::map_enqueue_error(
+            "a1",
+            tonic::Status::failed_precondition("wrong shard"),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ControllerError::RuntimeError(_)));
     }
 }
