@@ -23,7 +23,6 @@ from flyte._utils.helpers import jittered
 
 from ._action import Action
 from ._informer import InformerCache
-from ._org_limits import CAPABILITIES_HEADER, CAPABILITY_ORG_LIMIT_EXCEEDED, org_limit_exceeded
 from ._service_protocol import ActionsService, ClientSet, QueueService, StateService
 
 # A request that dies at its client-side deadline may be riding a dead pooled connection
@@ -463,6 +462,8 @@ class Controller:
                 logger.debug(f"Attempting to launch action: {action.name}, actions? {bool(self._actions_service)}")
                 try:
                     if self._actions_service:
+                        from ._org_limits import CAPABILITIES_HEADER, CAPABILITY_ORG_LIMIT_EXCEEDED
+
                         await self._actions_service.enqueue(
                             actions_service_pb2.EnqueueRequest(
                                 action=actions_service_pb2.Action(
@@ -529,6 +530,8 @@ class Controller:
                         logger.info(f"Action {action.name} already exists, continuing to monitor.")
                         action.mark_started()
                         return
+                    from ._org_limits import org_limit_exceeded
+
                     if (org_limit := org_limit_exceeded(e)) is not None:
                         # The org is at a limit (e.g. max_actions_per_run): no retry can clear it.
                         raise org_limit from e
@@ -625,7 +628,11 @@ class Controller:
                     logger.warning(f"[{worker_id}] Retrying action {action.name} after backoff")
                     await self._shared_queue.put(action)
             except Exception as e:
-                logger.error(f"[{worker_id}] Error in controller loop for {action.name}: {e}")
+                if isinstance(e, flyte.errors.OrgLimitExceededError):
+                    # Expected when a run fans out past its org's limit: one per refused child, so not an error.
+                    logger.warning(f"[{worker_id}] Action {action.name} refused at an org limit: {e}")
+                else:
+                    logger.error(f"[{worker_id}] Error in controller loop for {action.name}: {e}")
                 if isinstance(e, flyte.errors.OrgLimitExceededError):
                     # A user error the parent can catch, not a controller failure: wrapping it as a system error
                     # would make the platform retry the whole parent.

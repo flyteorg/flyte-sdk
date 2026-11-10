@@ -85,6 +85,36 @@ async def test_failed_precondition_without_org_limit_detail_still_retries():
         await controller._bg_launch(_action())
 
 
+@pytest.mark.asyncio
+async def test_resource_exhausted_with_org_limit_detail_is_retried():
+    # max_concurrent_runs sends the detail with RESOURCE_EXHAUSTED, which means "later", not "never".
+    controller = _controller()
+    controller._actions_service.enqueue.side_effect = ConnectError(
+        Code.RESOURCE_EXHAUSTED, "org is at its max_concurrent_runs limit (2)", details=[_org_limit_detail()]
+    )
+
+    with pytest.raises(flyte.errors.ResourceExhaustedError):
+        await controller._bg_launch(_action())
+
+
+@pytest.mark.asyncio
+async def test_org_limit_refusal_is_logged_as_a_warning_not_an_error():
+    controller = _controller()
+    await controller._shared_queue.put(_action())
+
+    async def enqueue(*_args, **_kwargs):
+        controller._running = False
+        raise ConnectError(Code.FAILED_PRECONDITION, _MSG, details=[_org_limit_detail()])
+
+    controller._actions_service.enqueue.side_effect = enqueue
+
+    with patch("flyte._internal.controllers.remote._core.logger") as log:
+        await controller._bg_run(worker_id="w1")
+
+    log.error.assert_not_called()
+    assert any("max_actions_per_run" in str(c) for c in log.warning.call_args_list)
+
+
 class _RustAction:
     """The fields handle_action_failure reads from a Rust controller action."""
 

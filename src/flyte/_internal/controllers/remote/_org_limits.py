@@ -7,6 +7,7 @@ numbers.
 
 from __future__ import annotations
 
+from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 
 import flyte.errors
@@ -25,7 +26,10 @@ RUST_ORG_LIMIT_PREFIX = "Org limit exceeded: "
 
 
 def org_limit_exceeded(e: ConnectError) -> flyte.errors.OrgLimitExceededError | None:
-    """Return the user error for e when it is an org limit refusal, else None."""
+    """Return the user error for e when it is an org limit refusal, else None. Only FAILED_PRECONDITION is one:
+    the same detail with RESOURCE_EXHAUSTED (max_concurrent_runs) means "later", not "never"."""
+    if e.code != Code.FAILED_PRECONDITION:
+        return None
     for detail in e.details:
         if detail.type_url.rsplit("/", 1)[-1] == ORG_LIMIT_EXCEEDED_TYPE:
             return flyte.errors.OrgLimitExceededError(e.message)

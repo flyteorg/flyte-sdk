@@ -39,10 +39,11 @@ pub(crate) struct RpcStatus {
 const ORG_LIMIT_EXCEEDED_TYPE: &str = "cloudidl.common.OrgLimitExceeded";
 
 /// Returns the server's message when `status` is an org limit refusal: a `cloudidl.common.OrgLimitExceeded`
-/// detail, recognized by its type URL since the SDK has no cloudidl protos.
+/// detail, recognized by its type URL since the SDK has no cloudidl protos, on a `FailedPrecondition`. The same
+/// detail with `ResourceExhausted` (max_concurrent_runs) means "later", not "never", and is retried.
 pub fn org_limit_message(status: &tonic::Status) -> Option<String> {
     use prost::Message;
-    if status.details().is_empty() {
+    if status.code() != tonic::Code::FailedPrecondition || status.details().is_empty() {
         return None;
     }
     let rpc_status = RpcStatus::decode(status.details()).ok()?;
@@ -93,8 +94,9 @@ impl From<tonic::Status> for InformerError {
 
 #[cfg(test)]
 mod org_limit_tests {
-    use super::*;
     use prost::Message;
+
+    use super::*;
 
     fn status_with_detail(type_url: &str) -> tonic::Status {
         let details = RpcStatus {
@@ -118,6 +120,20 @@ mod org_limit_tests {
         let s = status_with_detail("type.googleapis.com/cloudidl.common.OrgLimitExceeded");
         let msg = org_limit_message(&s).expect("org limit refusal");
         assert!(msg.contains("max_actions_per_run"));
+    }
+
+    #[test]
+    fn org_limit_detail_with_another_code_is_not_a_refusal() {
+        // max_concurrent_runs sends the detail with RESOURCE_EXHAUSTED: "later", not "never".
+        let s = tonic::Status::with_details(
+            tonic::Code::ResourceExhausted,
+            "org is at its max_concurrent_runs limit (2)",
+            status_with_detail("type.googleapis.com/cloudidl.common.OrgLimitExceeded")
+                .details()
+                .to_vec()
+                .into(),
+        );
+        assert!(org_limit_message(&s).is_none());
     }
 
     #[test]
