@@ -9,10 +9,12 @@ if TYPE_CHECKING:
     from flyte._image import Image
 
 ACCELERATOR_DEVICE_MAP = {
+    "A2": "nvidia-a2",
     "A100": "nvidia-tesla-a100",
     "A100_80G": "nvidia-a100-80gb",
     "A100 80G": "nvidia-a100-80gb",
     "H100": "nvidia-tesla-h100",
+    "H200": "nvidia-h200",
     "A10": "nvidia-a10",
     "A10G": "nvidia-a10g",
     "A100G": "nvidia-a100g",
@@ -28,7 +30,9 @@ ACCELERATOR_DEVICE_MAP = {
     "RTX PRO 6000": "nvidia-rtx-pro-6000",
     "T4": "nvidia-tesla-t4",
     "T4g": "nvidia-tesla-t4g",
+    "B200": "nvidia-b200",
     "B300": "nvidia-b300",
+    "GB10": "nvidia-gb10",
     "V100": "nvidia-tesla-v100",
     "V5E": "tpu-v5-lite-podslice",
     "V5P": "tpu-v5p-slice",
