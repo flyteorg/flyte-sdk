@@ -265,8 +265,8 @@ class File(BaseModel, Generic[T], SerializableType):
     @classmethod
     def pre_init(cls, data):
         """Internal: Pydantic validator to set default name from path. Not intended for direct use."""
-        if data.get("name") is None:
-            data["name"] = Path(data["path"]).name
+        if data.get("name") is None or data.get("name") == data.get("path"):
+            data["name"] = os.path.basename(str(data["path"]).replace("\\", "/"))
         return data
 
     def _serialize(self) -> Dict[str, Optional[str]]:
@@ -1146,7 +1146,7 @@ class FileTransformer(TypeTransformer[File]):
             )
 
         uri = lv.scalar.blob.uri
-        filename = Path(uri).name
+        filename = os.path.basename(uri.replace("\\", "/"))
         hash_value = lv.hash or None
         f: File = expected_python_type(
             path=uri, name=filename, format=lv.scalar.blob.metadata.type.format, hash=hash_value

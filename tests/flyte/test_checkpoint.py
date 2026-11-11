@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import pathlib
 import sys
 import tarfile
@@ -57,6 +58,10 @@ def test_latest_checkpoint_prefers_newest_mtime() -> None:
         new.parent.mkdir(parents=True)
         old.write_text("x", encoding="utf-8")
         new.write_text("y", encoding="utf-8")
+        # Windows filesystems can give two immediately-created files the same
+        # timestamp resolution; make the ordering the test cares about explicit.
+        os.utime(old, (1, 1))
+        os.utime(new, (2, 2))
         got = latest_checkpoint(root)
         assert got == new
 

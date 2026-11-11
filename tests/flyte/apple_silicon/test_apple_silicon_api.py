@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 from flyteidl2.core import execution_pb2
 
@@ -133,6 +135,9 @@ def test_devbox_container_env(monkeypatch, tmp_path):
     }
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="this test asserts POSIX permission bits, which Windows does not expose"
+)
 def test_secret_is_stable_and_private(tmp_path):
     first = _host.load_or_create_secret(tmp_path)
     assert _host.load_or_create_secret(tmp_path) == first

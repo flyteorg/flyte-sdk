@@ -1,4 +1,3 @@
-import os
 import typing
 from pathlib import Path
 from typing import TypeVar
@@ -67,9 +66,9 @@ class PandasToCSVEncodingHandler(DataFrameEncoder):
         path, filesystem = _get_pandas_path_and_filesystem(csv_file)
         if filesystem is not None:
             with filesystem.open(path, "wb") as f:
-                df.to_csv(f, index=False, mode="wb")
+                df.to_csv(f, index=False, mode="wb", lineterminator="\n")
         else:
-            df.to_csv(path, index=False)
+            df.to_csv(path, index=False, lineterminator="\n")
         structured_dataset_type.format = CSV
         return literals_pb2.StructuredDataset(
             uri=uri, metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type=structured_dataset_type)
@@ -136,7 +135,7 @@ class PandasToParquetEncodingHandler(DataFrameEncoder):
 
         if not storage.is_remote(uri):
             Path(uri).mkdir(parents=True, exist_ok=True)
-        path, filesystem = _get_pandas_path_and_filesystem(os.path.join(uri, f"{0:05}"))
+        path, filesystem = _get_pandas_path_and_filesystem(storage.join(uri, f"{0:05}"))
         df = typing.cast(pd.DataFrame, dataframe.val)
         df.to_parquet(
             path,
@@ -197,7 +196,7 @@ class ArrowToParquetEncodingHandler(DataFrameEncoder):
 
         if not storage.is_remote(uri):
             Path(uri).mkdir(parents=True, exist_ok=True)
-        path = os.path.join(uri, f"{0:05}")
+        path = storage.join(uri, f"{0:05}")
         filesystem = storage.get_underlying_filesystem(path=path)
         pq.write_table(dataframe.val, strip_protocol(path), filesystem=filesystem)
         return literals_pb2.StructuredDataset(

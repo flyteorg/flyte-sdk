@@ -308,6 +308,7 @@ def test_run_remote_from_home_directory_warns(runner, monkeypatch, tmp_path):
     resolve relative to the real process cwd.
     """
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
     captured = {}
     _patch_with_runcontext(monkeypatch, captured)

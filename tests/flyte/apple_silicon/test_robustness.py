@@ -22,6 +22,10 @@ from flyte._internal.apple_silicon._hostexec import safe_name, validate_pip_args
 from flyte._internal.apple_silicon._token import mint_token
 
 SECRET = "robustness-secret-" + "0" * 40
+_POSIX_HOST_PROCESS = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Apple Silicon host process tests require POSIX executable and process-group behavior",
+)
 
 FAKE_A0 = """#!{python}
 import os, signal, sys, time
@@ -113,6 +117,7 @@ def wait_state(bridge, workload, states, timeout=10.0):
 # Apps: one host process per revision, shared by its replicas, torn down when the last pod lets go.
 
 
+@_POSIX_HOST_PROCESS
 def test_app_replicas_share_one_host_process_until_the_last_lets_go(bridge):
     spec = {"entrypoint": "fserve", "argv": [], "env": {}, "packages": []}
     status, _ = call(bridge, "POST", "/apple-silicon/v1/workloads/app-x/exec", "app-x", spec, instance="pod-a")
@@ -126,6 +131,7 @@ def test_app_replicas_share_one_host_process_until_the_last_lets_go(bridge):
     assert bridge.get("app-x") is None
 
 
+@_POSIX_HOST_PROCESS
 def test_a_second_pod_cannot_take_over_a_tasks_run(bridge):
     spec = {"entrypoint": "a0", "argv": [], "env": {"RUN_SECONDS": "30"}, "packages": []}
     assert call(bridge, "POST", "/apple-silicon/v1/workloads/t/exec", "t", spec, instance="pod-a")[0] == 200
@@ -136,6 +142,7 @@ def test_a_second_pod_cannot_take_over_a_tasks_run(bridge):
     assert call(bridge, "POST", "/apple-silicon/v1/workloads/t/exec", "t", spec, instance="pod-a")[0] == 200
 
 
+@_POSIX_HOST_PROCESS
 def test_pods_that_stop_calling_let_go(bridge):
     spec = {"entrypoint": "fserve", "argv": [], "env": {}, "packages": []}
     call(bridge, "POST", "/apple-silicon/v1/workloads/app-y/exec", "app-y", spec, instance="pod-a")
@@ -149,21 +156,25 @@ def test_pods_that_stop_calling_let_go(bridge):
 # Host processes: failures are reported, never hangs; nothing outlives the run.
 
 
+@_POSIX_HOST_PROCESS
 def test_an_entrypoint_that_cannot_start_fails_instead_of_hanging(tmp_path, bridge):
     bridge.env_cache = FakeEnvCache(tmp_path / "empty", entrypoints=False)
     with pytest.raises(flyte.errors.AppleSiliconHostExecFailedError, match="could not start a0"):
         run_on_host("a0", [], env_for(bridge, "no-entrypoint"))
 
 
+@_POSIX_HOST_PROCESS
 def test_out_of_memory_kill_is_a_named_error(bridge):
     with pytest.raises(flyte.errors.AppleSiliconDaemonOOMError):
         run_on_host("a0", [], env_for(bridge, "oom", KILL_SELF="SIGKILL"))
 
 
+@_POSIX_HOST_PROCESS
 def test_a_signal_exit_is_reported_like_a_shell_would(bridge):
     assert run_on_host("a0", [], env_for(bridge, "term", KILL_SELF="SIGTERM")) == 128 + signal.SIGTERM
 
 
+@_POSIX_HOST_PROCESS
 def test_the_whole_log_reaches_the_container(bridge, capfd):
     # Far more than one 64 KB log read, printed just before exiting.
     assert run_on_host("a0", [], env_for(bridge, "chatty", PRINT_LINES="5000")) == 0
@@ -173,6 +184,7 @@ def test_the_whole_log_reaches_the_container(bridge, capfd):
     assert lines[-1].startswith("[apple-silicon] line 4999 ")
 
 
+@_POSIX_HOST_PROCESS
 def test_a_new_run_starts_a_new_log(bridge, capfd):
     run_on_host("a0", [], env_for(bridge, "rerun", PRINT_LINES="3"))
     capfd.readouterr()
@@ -187,6 +199,7 @@ def _gone(pid: int) -> bool:
     return out == "" or out.startswith("Z")
 
 
+@_POSIX_HOST_PROCESS
 def test_stopping_kills_the_whole_process_group():
     from flyte._internal.apple_silicon._daemon import kill_group
 
@@ -272,6 +285,9 @@ def test_log_reads_end_on_a_line(tmp_path):
 # The secret and the bridge process.
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="this test asserts POSIX permission bits, which Windows does not expose"
+)
 def test_an_empty_secret_file_is_replaced_not_trusted(tmp_path):
     (tmp_path / "secret").write_text("")
     secret = _host.load_or_create_secret(tmp_path)
@@ -293,6 +309,7 @@ def test_admin_route_refuses_a_bridge_without_a_secret(tmp_path):
         server.shutdown()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="stale bridge PID validation uses POSIX process inspection")
 def test_a_stale_pid_file_never_signals_another_process(tmp_path):
     bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
     try:
@@ -304,6 +321,7 @@ def test_a_stale_pid_file_never_signals_another_process(tmp_path):
         bystander.kill()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bridge shutdown targets POSIX process IDs and signals")
 def test_a_pid_owned_by_root_does_not_crash_stop(tmp_path):
     (tmp_path / "bridge.json").write_text(json.dumps({"pid": 1, "port": 1}))
     assert _host.stop_bridge(tmp_path, timeout=1) is False

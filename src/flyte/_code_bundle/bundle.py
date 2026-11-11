@@ -9,7 +9,6 @@ import os
 import pathlib
 import random
 import sqlite3
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -412,9 +411,6 @@ async def _extract_tar(archive: pathlib.Path, dest: pathlib.Path) -> None:
         "-C",
         str(dest),
     ]
-    if sys.platform != "darwin":
-        args.insert(0, "--overwrite")
-
     process = await asyncio.create_subprocess_exec(
         "tar",
         *args,

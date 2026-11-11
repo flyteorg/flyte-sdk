@@ -48,6 +48,7 @@ def workspace(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     repo = tmp_path / "repo"
     _write_config(repo / ".flyte" / "config.yaml", "dns:///repo-tenant.example.com")
     monkeypatch.chdir(repo)

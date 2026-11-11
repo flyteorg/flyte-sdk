@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 import flyte
@@ -164,7 +166,7 @@ def test_environment_include_populates_declaring_file():
     # must record that file so include paths can be anchored later.
     env = Environment(name="inc_declaring", include=("a.html",))
     assert env._declaring_file is not None
-    assert env._declaring_file.endswith("test_environment.py")
+    assert Path(env._declaring_file).name == "test_environment.py"
 
 
 def test_environment_include_in_get_kwargs_when_nonempty():

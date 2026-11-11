@@ -1,4 +1,5 @@
 import asyncio
+import os
 import pathlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -152,7 +153,7 @@ async def test_submit_with_outputs():
 
         mock_upload_inputs.assert_called_once()
         mock_submit_and_wait.assert_called_once()
-        mock_load_outputs.assert_called_with("/tmp/outputs/realized/outputs.pb", max_bytes=10485760)
+        mock_load_outputs.assert_called_with(os.path.join("/tmp/outputs/realized", "outputs.pb"), max_bytes=10485760)
         assert result == "test"
 
 

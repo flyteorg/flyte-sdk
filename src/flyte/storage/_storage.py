@@ -8,6 +8,7 @@ import random
 import tempfile
 import typing
 from typing import AsyncGenerator, Optional
+from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
 import fsspec
@@ -134,11 +135,17 @@ def is_remote(path: typing.Union[pathlib.Path | str]) -> bool:
 
 
 def strip_file_header(path: str) -> str:
-    """
-    Drops file:// if it exists from the file
-    """
+    """Convert a file URI to a local path, including Windows drive letters."""
     if path.startswith("file://"):
-        return path.replace("file://", "", 1)
+        parsed = urlsplit(path)
+        local_path = unquote(parsed.path)
+        if os.name == "nt":
+            if parsed.netloc and parsed.netloc != "localhost":
+                return "\\\\" + parsed.netloc + local_path.replace("/", "\\")
+            if len(local_path) >= 3 and local_path[0] == "/" and local_path[2] == ":":
+                local_path = local_path[1:]
+            return local_path.replace("/", "\\")
+        return local_path
     return path
 
 
@@ -299,8 +306,9 @@ async def _get_obstore_bypass(
 
     # if not recursive, we need to split out the file name from the prefix
     else:
-        path_for_reader = pathlib.Path(prefix).name
-        final_prefix = pathlib.Path(prefix).parent
+        remote_prefix = pathlib.PurePosixPath(prefix)
+        path_for_reader = remote_prefix.name
+        final_prefix = remote_prefix.parent
         logger.debug(f"Downloading single file {final_prefix=}, {path_for_reader=} to {target_path=}")
         await reader.download_files(
             final_prefix,
@@ -313,7 +321,7 @@ async def _get_obstore_bypass(
 
 async def get(from_path: str, to_path: Optional[str | pathlib.Path] = None, recursive: bool = False, **kwargs) -> str:
     if not to_path:
-        name = pathlib.Path(from_path).name  # may need to be adjusted for windows
+        name = pathlib.PurePosixPath(from_path).name if is_remote(from_path) else pathlib.Path(from_path).name
         to_path = get_random_local_path(file_path_or_file_name=name)
         logger.debug(f"Storing file from {from_path} to {to_path}")
     else:
@@ -326,7 +334,9 @@ async def get(from_path: str, to_path: Optional[str | pathlib.Path] = None, recu
 
             # If path ends with os.sep or is an existing directory, append source filename
             if ends_with_sep or (to_path_obj.exists() and to_path_obj.is_dir()):
-                source_filename = pathlib.Path(from_path).name  # may need to be adjusted for windows
+                source_filename = (
+                    pathlib.PurePosixPath(from_path).name if is_remote(from_path) else pathlib.Path(from_path).name
+                )
                 to_path = to_path_obj / source_filename
         # For recursive=True, keep to_path as-is (it's the destination directory for contents)
 

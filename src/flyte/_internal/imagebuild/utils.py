@@ -167,6 +167,8 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
         )
 
     if src.is_absolute() or ".." in str(src):
+        # Keep an absolute source under a relative context directory. Dropping
+        # the anchor preserves the established layout on Unix and Windows.
         rel_path = PurePath(*src.parts[1:])
         dst_path = context_path / "_flyte_abs_context" / rel_path
     else:
@@ -330,7 +332,7 @@ def get_uv_editable_install_mounts(
         editable_dep_within_context = copy_files_to_context(editable_dep, context_path, ignore_patterns=ignore_patterns)
         mounts.append(
             "--mount=type=bind,"
-            f"src={editable_dep_within_context.relative_to(context_path)},"
-            f"target={editable_dep.relative_to(project_root)},rw"
+            f"src={editable_dep_within_context.relative_to(context_path).as_posix()},"
+            f"target={editable_dep.relative_to(project_root).as_posix()},rw"
         )
     return " ".join(mounts)

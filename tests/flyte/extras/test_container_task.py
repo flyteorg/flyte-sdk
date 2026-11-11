@@ -386,8 +386,8 @@ def test_override_keeps_what_the_container_runs():
 
     assert overridden.env_vars == {"A": "1"}
     assert overridden.container_args(None) == ["/bin/sh", "-c", "true", "--flag"]
-    assert overridden._input_data_dir == pathlib.Path("/in")
-    assert overridden._output_data_dir == pathlib.Path("/out")
+    assert overridden._input_data_dir == pathlib.PurePosixPath("/in")
+    assert overridden._output_data_dir == pathlib.PurePosixPath("/out")
     assert overridden._metadata_format == "YAML"
 
 

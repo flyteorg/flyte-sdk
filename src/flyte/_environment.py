@@ -101,7 +101,10 @@ class Environment:
             if not os.path.exists(filename):
                 return False
             abs_path = os.path.abspath(filename)
-            return ("site-packages/flyte" not in abs_path and "/flyte/" not in abs_path) or "/examples/" in abs_path
+            normalized_path = abs_path.replace("\\", "/")
+            return (
+                "site-packages/flyte" not in normalized_path and "/flyte/" not in normalized_path
+            ) or "/examples/" in normalized_path
 
         frame = inspect.currentframe()
         while frame is not None:
