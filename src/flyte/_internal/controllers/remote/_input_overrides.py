@@ -98,11 +98,12 @@ class ActionOverrides:
         if self._uri is None:  # not enabled: apply() returns before loading
             return {}
         if not hasattr(common_pb2, "ActionOverridesData"):
-            # Not transient, so fail now rather than through _read's retries.
-            raise flyte.errors.RuntimeSystemError(
-                "ActionOverridesUnsupportedError",
+            # The image is fixed for every attempt, so fail without _read's retries or the
+            # action's own.
+            raise flyte.errors.NonRecoverableError(
                 "This run has action overrides, but the flyteidl2 installed in this task's image predates "
                 "them. Upgrade flyte (and flyteidl2) in the image to fork this run with overrides.",
+                code="ActionOverridesUnsupportedError",
             )
         # ActionOverridesData is newer than the pinned flyteidl2 stubs.
         parsed = await self._read(

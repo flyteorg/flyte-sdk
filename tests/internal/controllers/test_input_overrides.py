@@ -164,7 +164,7 @@ async def test_flyteidl2_without_overrides_fails_without_reading(monkeypatch):
     monkeypatch.delattr(common_pb2, "ActionOverridesData", raising=False)
     o = ActionOverrides(uri="s3://bucket/overrides.pb")
     with patch("flyte.storage.get_stream") as stream:
-        with pytest.raises(flyte.errors.RuntimeSystemError, match="predates"):
+        with pytest.raises(flyte.errors.NonRecoverableError, match="predates"):
             await o.apply("child", "add", _inputs(x=_int(1)), _iface(x=types_pb2.INTEGER))
     stream.assert_not_called()
 
