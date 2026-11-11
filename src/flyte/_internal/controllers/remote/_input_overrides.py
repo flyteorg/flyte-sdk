@@ -1,17 +1,19 @@
 """Action overrides for a fork (a recovery run with changed inputs or code on some task actions).
 
-The server points every task pod of such a run at a file of overrides through the reserved
-`_U_ACTION_INPUT_OVERRIDES` env var. When this pod's controller is about to enqueue a child whose
-name is a key in that file, it reads the child's override inputs from their path in the data
-plane, overlays them, by input name, on the inputs it computed for the child, and runs the child
-from its replacement code bundle, if it has one. The child keeps the name computed from the
-original inputs and code, so the key matches; the server re-runs it rather than recovering it.
+The fork's client points every action of such a run at a file of overrides through the reserved
+`_u_action_overrides` key of the root action's Inputs.context, which every descendant inherits
+(reusable containers included, since it travels with each action's inputs rather than the pod).
+When a controller is about to enqueue a child whose name is a key in that file, it reads the
+child's override inputs from their path in the data plane, overlays them, by input name, on the
+inputs it computed for the child, and runs the child from its replacement code bundle, if it has
+one. The child keeps the name computed from the original inputs and code, so the key matches; the
+client lists it in Recover.force_rerun_actions, so it re-runs rather than being recovered.
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
+from collections import OrderedDict
 from typing import Any, Callable, Optional, cast
 
 from flyteidl2.core import interface_pb2, literals_pb2, types_pb2
@@ -19,7 +21,6 @@ from flyteidl2.task import common_pb2
 
 import flyte.errors
 import flyte.storage as storage
-from flyte._constants import ACTION_INPUT_OVERRIDES_ENV_VAR as INPUT_OVERRIDES_ENV_VAR
 from flyte._logging import logger
 from flyte.models import CodeBundle
 
@@ -28,22 +29,43 @@ from flyte.models import CodeBundle
 _LOAD_ATTEMPTS = 3
 _LOAD_BACKOFF_S = 0.5
 
+#: Overrides files kept loaded per process. A reusable container serves actions of many runs, so
+#: the files are keyed by URI; each is small (it only names paths), so a few dozen is plenty.
+_MAX_CACHED_FILES = 32
+_by_uri: "OrderedDict[str, ActionOverrides]" = OrderedDict()
+
+
+def overrides_for(uri: Optional[str]) -> Optional["ActionOverrides"]:
+    """The overrides of the run whose actions carry uri in their context, or None without one."""
+    if not uri:
+        return None
+    overrides = _by_uri.get(uri)
+    if overrides is None:
+        overrides = _by_uri[uri] = ActionOverrides(uri)
+        while len(_by_uri) > _MAX_CACHED_FILES:
+            _by_uri.popitem(last=False)
+    else:
+        _by_uri.move_to_end(uri)
+    return overrides
+
 
 class ActionOverrides:
-    """Lazily loaded action input overrides for the current run.
+    """Lazily loaded action overrides of one fork, from the overrides file at uri.
 
-    The file, which only names each overridden action's inputs path and code bundle, is read at
-    most once per pod, on the first child this pod enqueues, and only when the env var is set (a
-    fork with overrides). An action's override inputs are read from their path when this pod
-    enqueues that action, so a pod only reads the inputs of the actions it launches.
+    The file, which only names each overridden action's inputs path and code bundle and the
+    overridden actions' ancestors, is read on the first child enqueued under it. An action's
+    override inputs are read from their path when that action is enqueued, so a pod only reads the
+    inputs of the actions it launches.
     """
 
     def __init__(self, uri: Optional[str] = None):
-        self._uri = uri if uri is not None else os.environ.get(INPUT_OVERRIDES_ENV_VAR) or None
+        self._uri = uri or None
         # Action name -> URI of its serialized override Inputs; None until the file is read.
         self._input_uris: Optional[dict[str, str]] = None
         # Action name -> ActionCodeBundle; loaded with _input_uris.
         self._code_bundles: dict[str, Any] = {}
+        # Ancestors of the overridden actions (excluding a0); loaded with _input_uris.
+        self._ancestors: frozenset[str] = frozenset()
 
     @property
     def enabled(self) -> bool:
@@ -89,11 +111,24 @@ class ActionOverrides:
             lambda: cast(Any, common_pb2).ActionOverridesData(),
         )
         self._code_bundles = dict(getattr(parsed, "code_bundles", {}))
+        self._ancestors = frozenset(getattr(parsed, "ancestor_actions", ()))
         self._input_uris = dict(parsed.input_uris)
         logger.info(
-            f"Loaded action overrides: inputs for {sorted(self._input_uris)}, code for {sorted(self._code_bundles)}"
+            f"Loaded action overrides from {self._uri}: inputs for {sorted(self._input_uris)}, "
+            f"code for {sorted(self._code_bundles)}, ancestors {sorted(self._ancestors)}"
         )
         return self._input_uris
+
+    async def is_ancestor(self, action_name: str) -> bool:
+        """Whether action_name is an ancestor of an overridden action.
+
+        Its inputs are unchanged, so it must run without a cache key: a cache hit would skip the
+        subtree that holds the override, and a write would store the new result under the old key.
+        """
+        if not self.enabled:
+            return False
+        await self._load()
+        return action_name in self._ancestors
 
     async def has_code_bundle(self, action_name: str) -> bool:
         """Whether action_name runs from a replacement code bundle."""

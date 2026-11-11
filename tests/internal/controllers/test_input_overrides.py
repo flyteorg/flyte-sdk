@@ -10,14 +10,46 @@ from flyteidl2.task import common_pb2
 import flyte
 import flyte.errors
 import flyte.report
+from flyte._constants import ACTION_OVERRIDES_CONTEXT_KEY
 from flyte._context import internal_ctx
+from flyte._internal.controllers.remote import _input_overrides
 from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._controller import RemoteController
-from flyte._internal.controllers.remote._input_overrides import ActionOverrides, literal_matches_type
+from flyte._internal.controllers.remote._input_overrides import ActionOverrides, literal_matches_type, overrides_for
 from flyte._internal.controllers.remote._service_protocol import ClientSet
 from flyte.models import ActionID, CodeBundle, RawDataPath, TaskContext
 
 env = flyte.TaskEnvironment("test-overrides")
+
+URI = "s3://bucket/overrides.pb"
+
+
+@pytest.fixture(autouse=True)
+def _fresh_overrides_cache():
+    _input_overrides._by_uri.clear()
+    yield
+    _input_overrides._by_uri.clear()
+
+
+def _install(o: ActionOverrides, uri: str = URI) -> ActionOverrides:
+    """Make o the loaded overrides of the run whose actions carry uri in their context."""
+    _input_overrides._by_uri[uri] = o
+    return o
+
+
+def _new_tctx(context: dict | None = None, tgz: str = "d.tgz", version: str = "v") -> TaskContext:
+    return TaskContext(
+        action=ActionID(name="a0"),
+        raw_data_path=RawDataPath(path="test"),
+        output_path="/tmp",
+        version="v1",
+        run_base_dir="/tmp/outputs/base",
+        report=flyte.report.Report(name="r"),
+        code_bundle=CodeBundle(
+            computed_version=version, destination=str(pathlib.Path(__file__).parent.absolute()), tgz=tgz
+        ),
+        custom_context=dict(context or {}),
+    )
 
 
 @env.task
@@ -49,9 +81,9 @@ def _iface(**types: int) -> interface_pb2.TypedInterface:
     )
 
 
-def _overrides(**by_action: dict) -> ActionOverrides:
+def _overrides(uri: str = URI, **by_action: dict) -> ActionOverrides:
     """Overrides already loaded from the file, with each action's inputs served from its own path."""
-    o = ActionOverrides(uri="s3://bucket/overrides.pb")
+    o = ActionOverrides(uri=uri)
     o._input_uris = {name: f"s3://bucket/{name}/inputs.pb" for name in by_action}
     stored = {
         f"s3://bucket/{name}/inputs.pb": common_pb2.Inputs(
@@ -121,8 +153,7 @@ async def test_apply_rejects_unknown_input_and_wrong_type():
 
 
 @pytest.mark.asyncio
-async def test_disabled_without_uri(monkeypatch):
-    monkeypatch.delenv("_U_ACTION_INPUT_OVERRIDES", raising=False)
+async def test_disabled_without_uri():
     o = ActionOverrides()
     assert not o.enabled
     assert await o.apply("child", "add", _inputs(x=_int(1)), _iface(x=types_pb2.INTEGER)) is None
@@ -245,18 +276,8 @@ async def test_controller_applies_override_and_flags_action():
         mock_submit.return_value = done
         ctx = internal_ctx()
 
-        def new_tctx() -> TaskContext:
-            return TaskContext(
-                action=ActionID(name="a0"),
-                raw_data_path=RawDataPath(path="test"),
-                output_path="/tmp",
-                version="v1",
-                run_base_dir="/tmp/outputs/base",
-                report=flyte.report.Report(name="r"),
-                code_bundle=CodeBundle(
-                    computed_version="v", destination=str(pathlib.Path(__file__).parent.absolute()), tgz="d.tgz"
-                ),
-            )
+        def new_tctx(context: dict | None = None) -> TaskContext:
+            return _new_tctx(context)
 
         # First learn the name the controller computes for add(1, 2), then override that name.
         with ctx.replace_task_context(new_tctx()):
@@ -266,9 +287,9 @@ async def test_controller_applies_override_and_flags_action():
         assert mock_submit.call_args.args[0].override_applied is False
 
         # A re-run parent starts with a fresh task context, so the call sequence (and name) repeat.
-        with ctx.replace_task_context(new_tctx()):
+        _install(_overrides(**{name: {"y": _int(40)}}))
+        with ctx.replace_task_context(new_tctx({ACTION_OVERRIDES_CONTEXT_KEY: URI})):
             controller = RemoteController(client_coro=make_client(), workers=2, max_system_retries=2)
-            controller._input_overrides = _overrides(**{name: {"y": _int(40)}})
             await controller.submit(add, 1, 2)
 
         submitted = mock_submit.call_args.args[0]
@@ -347,20 +368,8 @@ async def test_controller_runs_code_override_from_its_bundle_without_cache():
         mock_submit.return_value = done
         ctx = internal_ctx()
 
-        def new_tctx() -> TaskContext:
-            return TaskContext(
-                action=ActionID(name="a0"),
-                raw_data_path=RawDataPath(path="test"),
-                output_path="/tmp",
-                version="v1",
-                run_base_dir="/tmp/outputs/base",
-                report=flyte.report.Report(name="r"),
-                code_bundle=CodeBundle(
-                    computed_version="v-src",
-                    destination=str(pathlib.Path(__file__).parent.absolute()),
-                    tgz="s3://bucket/fastsrc.tar.gz",
-                ),
-            )
+        def new_tctx(context: dict | None = None) -> TaskContext:
+            return _new_tctx(context, tgz="s3://bucket/fastsrc.tar.gz", version="v-src")
 
         with ctx.replace_task_context(new_tctx()):
             controller = RemoteController(client_coro=make_client(), workers=2, max_system_retries=2)
@@ -369,9 +378,9 @@ async def test_controller_runs_code_override_from_its_bundle_without_cache():
         assert original.cache_key, "the task is cached without an override"
         assert _arg(original.task.task_template.container.args, "--tgz") == "s3://bucket/fastsrc.tar.gz"
 
-        with ctx.replace_task_context(new_tctx()):
+        _install(_with_code(_overrides(), **{original.name: "s3://bucket/fastpatched.tar.gz"}))
+        with ctx.replace_task_context(new_tctx({ACTION_OVERRIDES_CONTEXT_KEY: URI})):
             controller = RemoteController(client_coro=make_client(), workers=2, max_system_retries=2)
-            controller._input_overrides = _with_code(_overrides(), **{original.name: "s3://bucket/fastpatched.tar.gz"})
             await controller.submit(cached_add, 1, 2)
 
         submitted = mock_submit.call_args.args[0]
@@ -381,3 +390,140 @@ async def test_controller_runs_code_override_from_its_bundle_without_cache():
         args = submitted.task.task_template.container.args
         assert _arg(args, "--tgz") == "s3://bucket/fastpatched.tar.gz"
         assert _arg(args, "--dest") == _arg(original.task.task_template.container.args, "--dest")
+
+
+class _Harness:
+    """A RemoteController whose uploads and enqueues are captured instead of sent."""
+
+    def __init__(self):
+        self.uploads: list[common_pb2.Inputs] = []
+        self.submitted: list[Action] = []
+
+    async def submit(self, tctx: TaskContext, task, *args, controller: RemoteController | None = None):
+        async def make_client() -> ClientSet:
+            return AsyncMock()  # type: ignore
+
+        async def upload(data: bytes, uri: str, max_bytes=None):
+            inputs = common_pb2.Inputs()
+            inputs.ParseFromString(data)
+            self.uploads.append(inputs)
+
+        async def submit_and_wait(_self, action: Action):
+            self.submitted.append(action)
+            return Action(
+                parent_action_name="a0",
+                action_id=identifier_pb2.ActionIdentifier(name=action.name),
+                phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+            )
+
+        with (
+            patch("flyte._internal.controllers.remote._controller.upload_inputs_with_retry", new=upload),
+            patch(
+                "flyte._internal.controllers.remote._controller.RemoteController.submit_and_wait_for_action",
+                new=submit_and_wait,
+            ),
+            patch("flyte._initialize.get_init_config") as mock_cfg,
+        ):
+            mock_cfg.return_value.root_dir = pathlib.Path(__file__).parent
+            with internal_ctx().replace_task_context(tctx):
+                controller = controller or RemoteController(client_coro=make_client(), workers=2, max_system_retries=2)
+                await controller.submit(task, *args)
+        return controller
+
+
+def _context(inputs: common_pb2.Inputs) -> dict[str, str]:
+    return {kv.key: kv.value for kv in inputs.context}
+
+
+def test_overrides_are_cached_by_uri():
+    assert overrides_for(None) is None and overrides_for("") is None
+    a = overrides_for("s3://bucket/a.pb")
+    assert overrides_for("s3://bucket/a.pb") is a
+    assert overrides_for("s3://bucket/b.pb") is not a
+
+
+@pytest.mark.asyncio
+async def test_key_reaches_a_grandchild_through_a_custom_context_block():
+    from flyte._internal.runtime.convert import Inputs
+
+    h = _Harness()
+    tctx = _new_tctx({ACTION_OVERRIDES_CONTEXT_KEY: URI, "team": "ml"})
+    _install(_overrides())  # no override for these actions: only the key's propagation matters
+
+    async def in_block():
+        with internal_ctx().replace_task_context(tctx):
+            with flyte.custom_context(extra="1"):
+                assert flyte.get_custom_context() == {"team": "ml", "extra": "1"}
+                return internal_ctx().data.task_context
+
+    await h.submit(await in_block(), add, 1, 2)
+    child_inputs = h.uploads[-1]
+    assert _context(child_inputs) == {ACTION_OVERRIDES_CONTEXT_KEY: URI, "team": "ml", "extra": "1"}
+
+    # The child's task context is seeded from its Inputs.context (as taskrunner does), so the key
+    # reaches the actions it launches in turn.
+    child_context = Inputs(proto_inputs=child_inputs).context
+    assert child_context[ACTION_OVERRIDES_CONTEXT_KEY] == URI
+    await h.submit(_new_tctx(child_context), add, 3, 4)
+    assert _context(h.uploads[-1])[ACTION_OVERRIDES_CONTEXT_KEY] == URI
+
+
+@pytest.mark.asyncio
+async def test_custom_context_cannot_set_the_key():
+    with internal_ctx().replace_task_context(_new_tctx({ACTION_OVERRIDES_CONTEXT_KEY: URI})):
+        with pytest.raises(ValueError, match="reserved for internal use"):
+            with flyte.custom_context(**{ACTION_OVERRIDES_CONTEXT_KEY: "s3://elsewhere.pb"}):
+                pass
+        assert flyte.get_custom_context() == {}
+        assert internal_ctx().data.task_context.custom_context[ACTION_OVERRIDES_CONTEXT_KEY] == URI
+
+
+@pytest.mark.asyncio
+async def test_two_runs_through_one_controller_apply_their_own_overrides():
+    h = _Harness()
+    controller = await h.submit(_new_tctx(), add, 1, 2)
+    name = h.submitted[-1].name
+    _install(_overrides(uri="s3://bucket/run-a.pb", **{name: {"y": _int(10)}}), "s3://bucket/run-a.pb")
+    _install(_overrides(uri="s3://bucket/run-b.pb", **{name: {"y": _int(20)}}), "s3://bucket/run-b.pb")
+
+    for uri, y in (("s3://bucket/run-a.pb", 10), ("s3://bucket/run-b.pb", 20), (None, 2)):
+        context = {ACTION_OVERRIDES_CONTEXT_KEY: uri} if uri else {}
+        await h.submit(_new_tctx(context), add, 1, 2, controller=controller)
+        assert {lit.name: lit.value.scalar.primitive.integer for lit in h.uploads[-1].literals} == {"x": 1, "y": y}
+        assert h.submitted[-1].override_applied is (uri is not None)
+
+
+@pytest.mark.asyncio
+async def test_ancestor_is_enqueued_without_a_cache_key():
+    h = _Harness()
+    await h.submit(_new_tctx(), cached_add, 1, 2)
+    original = h.submitted[-1]
+    assert original.cache_key
+
+    o = _overrides()
+    o._ancestors = frozenset({original.name})
+    _install(o)
+    await h.submit(_new_tctx({ACTION_OVERRIDES_CONTEXT_KEY: URI}), cached_add, 1, 2)
+    ancestor = h.submitted[-1]
+    assert ancestor.name == original.name
+    assert ancestor.cache_key is None, "a cache hit would skip the override beneath it"
+    assert ancestor.override_applied is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not hasattr(common_pb2, "ActionOverridesData")
+    or "ancestor_actions" not in common_pb2.ActionOverridesData.DESCRIPTOR.fields_by_name,
+    reason="needs a flyteidl2 build with ActionOverridesData.ancestor_actions",
+)
+async def test_ancestors_are_read_from_the_file():
+    data = common_pb2.ActionOverridesData()
+    data.ancestor_actions.extend(["parent"])
+
+    async def chunks():
+        yield data.SerializeToString()
+
+    o = ActionOverrides(uri=URI)
+    with patch("flyte.storage.get_stream", return_value=chunks()):
+        assert await o.is_ancestor("parent")
+    assert not await o.is_ancestor("child")

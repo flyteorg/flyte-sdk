@@ -489,8 +489,8 @@ class Controller:
                         )
                     else:
                         if action.override_applied:
-                            # EnqueueActionRequest has no field for the flag, and the server rejects
-                            # an overridden action enqueued without it, so fail with the reason now.
+                            # EnqueueActionRequest has no field for the flag, so the fork would run
+                            # the override without recording it on the action; fail with the reason.
                             raise flyte.errors.RuntimeSystemError(
                                 "ActionOverrideUnsupportedError",
                                 f"Action {action.name} has an input or code override, but this controller "

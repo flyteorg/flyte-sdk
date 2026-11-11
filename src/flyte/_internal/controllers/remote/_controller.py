@@ -20,7 +20,7 @@ import flyte
 import flyte.errors
 import flyte.storage as storage
 from flyte._code_bundle import build_pkl_bundle
-from flyte._constants import ACTION_INPUT_OVERRIDES_ENV_VAR
+from flyte._constants import ACTION_OVERRIDES_CONTEXT_KEY
 from flyte._context import internal_ctx
 from flyte._internal.controllers import TraceInfo
 from flyte._internal.controllers.remote._action import Action
@@ -42,6 +42,21 @@ if TYPE_CHECKING:
 R = TypeVar("R")
 
 MAX_TRACE_BYTES = MAX_INLINE_IO_BYTES
+
+
+def _action_overrides(tctx: TaskContext) -> Optional[ActionOverrides]:
+    """The fork overrides of the run tctx belongs to, from its context, or None outside a fork.
+
+    Read per call, not per controller: the controller is process-wide, and a reusable container
+    serves actions of many runs. Only a fork with overrides sets the key, so other runs never load
+    the module.
+    """
+    uri = (tctx.custom_context or {}).get(ACTION_OVERRIDES_CONTEXT_KEY)
+    if not uri:
+        return None
+    from flyte._internal.controllers.remote._input_overrides import overrides_for
+
+    return overrides_for(uri)
 
 
 def _trace_error_is_recoverable(err: execution_pb2.ExecutionError | None) -> bool:
@@ -189,15 +204,6 @@ class RemoteController(Controller):
         self._submit_thread: threading.Thread | None = None
         self._submit_init_lock = threading.Lock()
         self._pending_conditions: dict[str, Action] = {}
-        # Fork: overrides for the inputs of some child actions, from the run's env (see
-        # _input_overrides). Only a fork with overrides sets the env var, so other runs never load
-        # the module.
-        self._input_overrides: Optional[ActionOverrides] = None
-        if os.environ.get(ACTION_INPUT_OVERRIDES_ENV_VAR):
-            from flyte._internal.controllers.remote._input_overrides import ActionOverrides
-
-            self._input_overrides = ActionOverrides()
-
         # Running sessions, by action name.
         self._sessions: dict[str, Action] = {}
 
@@ -290,11 +296,8 @@ class RemoteController(Controller):
         # Only the bundle changes: the rest of the child's TaskTemplate (interface, image,
         # resources, cache, retries) is still built from this pod's _task, so edits to the task's
         # decorator or signature do not apply. The fork client rejects a changed interface.
-        code_override = (
-            await self._input_overrides.code_bundle(sub_action_id.name, _task.name, code_bundle)
-            if self._input_overrides
-            else None
-        )
+        overrides = _action_overrides(tctx)
+        code_override = await overrides.code_bundle(sub_action_id.name, _task.name, code_bundle) if overrides else None
         if code_override is not None:
             task_spec = translate_task_to_wire(
                 _task, replace(new_serialization_context, code_bundle=code_override), task_context=tctx
@@ -304,10 +307,8 @@ class RemoteController(Controller):
         # cache key) uses the overridden ones.
         proto_inputs = inputs.proto_inputs
         overridden = (
-            await self._input_overrides.apply(
-                sub_action_id.name, _task.name, proto_inputs, task_spec.task_template.interface
-            )
-            if self._input_overrides
+            await overrides.apply(sub_action_id.name, _task.name, proto_inputs, task_spec.task_template.interface)
+            if overrides
             else None
         )
         if overridden is not None:
@@ -320,8 +321,15 @@ class RemoteController(Controller):
 
         cache_key = None
         # A code override changes the code but not the cache version, which comes from this pod's
-        # copy of the function, so a cache hit would return the original code's result.
-        if code_override is None and task_spec.task_template.metadata and task_spec.task_template.metadata.discoverable:
+        # copy of the function, so a cache hit would return the original code's result. An ancestor
+        # of an overridden action keeps its inputs, so a hit would skip the override beneath it.
+        ancestor = overrides is not None and await overrides.is_ancestor(sub_action_id.name)
+        if (
+            code_override is None
+            and not ancestor
+            and task_spec.task_template.metadata
+            and task_spec.task_template.metadata.discoverable
+        ):
             discovery_version = task_spec.task_template.metadata.discovery_version
             cache_key = convert.generate_cache_key_hash(
                 _task.name,
@@ -693,7 +701,8 @@ class RemoteController(Controller):
             tctx, task_identity, name_inputs_hash, invoke_seq_num
         )
 
-        if self._input_overrides and await self._input_overrides.has_code_bundle(sub_action_id.name):
+        overrides = _action_overrides(tctx)
+        if overrides and await overrides.has_code_bundle(sub_action_id.name):
             raise flyte.errors.RuntimeUserError(
                 "ActionCodeOverrideUnsupportedError",
                 f"Action {sub_action_id.name} runs the deployed task {task_name}, whose code is fixed by its "
@@ -701,9 +710,7 @@ class RemoteController(Controller):
             )
         proto_inputs = inputs.proto_inputs
         overridden = (
-            await self._input_overrides.apply(sub_action_id.name, task_name, proto_inputs, pb_interface)
-            if self._input_overrides
-            else None
+            await overrides.apply(sub_action_id.name, task_name, proto_inputs, pb_interface) if overrides else None
         )
         if overridden is not None:
             proto_inputs = overridden
@@ -712,9 +719,10 @@ class RemoteController(Controller):
         serialized_inputs = proto_inputs.SerializeToString(deterministic=True)
         inputs_uri = io.inputs_path(sub_action_output_path)
         await upload_inputs_with_retry(serialized_inputs, inputs_uri, _task.max_inline_io_bytes)
-        # cache key - task name, task signature, inputs, cache version
+        # cache key - task name, task signature, inputs, cache version. None for an ancestor of an
+        # overridden action (see _submit).
         cache_key = None
-        if md and md.discoverable:
+        if md and md.discoverable and not (overrides and await overrides.is_ancestor(sub_action_id.name)):
             discovery_version = md.discovery_version
             cache_key = convert.generate_cache_key_hash(
                 task_name,

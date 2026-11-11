@@ -15,6 +15,7 @@ from flyteidl2.workflow import run_definition_pb2
 
 import flyte.errors
 import flyte.storage as storage
+from flyte._constants import ACTION_OVERRIDES_CONTEXT_KEY
 from flyte._context import ctx
 from flyte.models import ActionID, NativeInterface, TaskContext
 from flyte.types import TypeEngine, TypeTransformerFailedError
@@ -33,6 +34,24 @@ KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY = "_u_kickoff_time_input_arg"
 PRODUCED_ARTIFACTS_CONTEXT_KEY = "_u_produced_artifacts"
 
 RESERVED_CONTEXT_KEYS = frozenset({KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY, PRODUCED_ARTIFACTS_CONTEXT_KEY})
+
+# Internal keys that, unlike RESERVED_CONTEXT_KEYS, propagate to every descendant action. They stay
+# in the task context and in each child's Inputs.context, but are hidden from get_custom_context()
+# and cannot be set through flyte.custom_context(...) or the CLI.
+PROPAGATED_INTERNAL_CONTEXT_KEYS = frozenset({ACTION_OVERRIDES_CONTEXT_KEY})
+
+
+def set_action_overrides_uri(proto_inputs: common_pb2.Inputs, uri: Optional[str]) -> None:
+    """Point a run's root inputs at a fork's overrides file, or, with uri None, at none.
+
+    Replaces any key the inputs already carry (e.g. inherited from the run being forked or rerun).
+    """
+    kept = [kv for kv in proto_inputs.context if kv.key != ACTION_OVERRIDES_CONTEXT_KEY]
+    del proto_inputs.context[:]
+    proto_inputs.context.extend(kept)
+    if uri:
+        proto_inputs.context.append(literals_pb2.KeyValuePair(key=ACTION_OVERRIDES_CONTEXT_KEY, value=uri))
+
 
 # Name of the output slot currently being serialized (e.g. "o0"), scoped to
 # a single ``TypeEngine.to_literal`` call by ``convert_from_native_to_outputs``.

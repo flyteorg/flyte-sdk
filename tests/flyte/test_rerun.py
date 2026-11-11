@@ -628,3 +628,46 @@ async def test_rerun_uploads_inputs_via_the_effective_queue():
         await flyte.with_runcontext(mode="remote", queue="gpu").rerun.aio("r1")
 
     assert queues == ["orig", "gpu"]
+
+
+def _with_context(inputs: task_common_pb2.Inputs, **context: str) -> task_common_pb2.Inputs:
+    inputs.context.extend(literals_pb2.KeyValuePair(key=k, value=v) for k, v in context.items())
+    return inputs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recover", [False, True])
+async def test_rerun_of_a_fork_drops_the_overrides_key(recover):
+    """A fork's overrides belong to that fork: rerunning or recovering it does not carry them."""
+    from flyte._constants import ACTION_OVERRIDES_CONTEXT_KEY
+
+    mock_client, _mock_run_service, mock_dataproxy, prior_inputs = _mock_client_with_run()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+    forked = _with_context(prior_inputs, team="ml", **{ACTION_OVERRIDES_CONTEXT_KEY: "s3://b/fork.pb"})
+    mock_dataproxy.get_action_data.return_value = dataproxy_service_pb2.GetActionDataResponse(inputs=forked)
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=_fake_prior_run())
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", recover=recover)
+
+    context = {kv.key: kv.value for kv in mock_dataproxy.upload_inputs.call_args[0][0].inputs.context}
+    assert context == {"team": "ml"}
+
+
+@pytest.mark.asyncio
+async def test_fork_of_a_fork_carries_only_its_own_overrides_key():
+    from flyte._constants import ACTION_OVERRIDES_CONTEXT_KEY
+
+    mock_client, _mock_run_service, mock_dataproxy, prior_inputs = _mock_client_with_run()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+    forked = _with_context(prior_inputs, team="ml", **{ACTION_OVERRIDES_CONTEXT_KEY: "s3://b/fork.pb"})
+    mock_dataproxy.get_action_data.return_value = dataproxy_service_pb2.GetActionDataResponse(inputs=forked)
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=_fake_prior_run())
+        await flyte.with_runcontext(
+            mode="remote", custom_context={ACTION_OVERRIDES_CONTEXT_KEY: "s3://b/new.pb"}
+        ).rerun.aio("r1", recover=True)
+
+    context = [(kv.key, kv.value) for kv in mock_dataproxy.upload_inputs.call_args[0][0].inputs.context]
+    assert context == [("team", "ml"), (ACTION_OVERRIDES_CONTEXT_KEY, "s3://b/new.pb")]
