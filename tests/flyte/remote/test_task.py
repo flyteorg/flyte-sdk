@@ -90,13 +90,16 @@ class TestTaskDetailsReusableOverride:
         def key(deployed: TaskDetails) -> str:
             return deployed.override(reusable=policy).pb2.spec.task_template.custom["version"]
 
+        # Deployed by an SDK that predates reuse_policy.version: only custom["version"] names the pool.
         with_custom = self._deployed(flyte.ReusePolicy(replicas=(1, 2)))
+        with_custom.pb2.spec.task_template.reuse_policy.ClearField("version")
         with_policy_version = self._deployed(flyte.ReusePolicy(replicas=(1, 2)))
         with_policy_version.pb2.spec.task_template.reuse_policy.version = "pool-v9"
         not_reusable = self._deployed(None)
 
         # custom["version"] stands in for the code version, so changing the code version changes the pool
         other_custom = self._deployed(flyte.ReusePolicy(replicas=(1, 2)))
+        other_custom.pb2.spec.task_template.reuse_policy.ClearField("version")
         other_custom.pb2.spec.task_template.custom["version"] = "different"
         assert key(with_custom) != key(other_custom)
 
