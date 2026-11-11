@@ -8,7 +8,7 @@ from flyte._internal.runtime.resources_serde import (
     get_proto_extended_resources,
     get_proto_resources,
 )
-from flyte._resources import GPU, Resources
+from flyte._resources import AMD_GPU, GPU, Device, Resources
 
 
 def test_cpu_single():
@@ -202,3 +202,28 @@ def test_gpu_shared_accelerator_string():
     acc = _get_gpu_extended_resource_entry(Resources(gpu="T4 shared:1"))
     assert acc is not None
     assert acc.device == "T4 shared"
+
+
+@pytest.mark.parametrize(
+    "gpu",
+    [
+        "MI355X:8",
+        AMD_GPU("MI355X", 8),
+        Device(quantity=8, device_class="AMD_GPU", device="MI355X"),
+    ],
+)
+def test_amd_gpu_multi_quantity_to_proto(gpu):
+    """Every spelling of 8x MI355X serializes to an AMD accelerator with a GPU request of 8"""
+    res = Resources(gpu=gpu)
+
+    proto = get_proto_resources(res)
+    assert proto is not None
+    gpu_entries = [e for e in proto.requests if e.name == tasks_pb2.Resources.ResourceName.GPU]
+    assert len(gpu_entries) == 1
+    assert gpu_entries[0].value == "8"
+
+    ext = get_proto_extended_resources(res)
+    assert ext is not None
+    assert ext.gpu_accelerator.device == "MI355X"
+    assert ext.gpu_accelerator.device_class == tasks_pb2.GPUAccelerator.AMD_GPU
+    assert not ext.gpu_accelerator.partition_size
