@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, ClassVar, cast
+import asyncio
+from typing import Any, AsyncIterator, Awaitable, Callable, ClassVar, cast
 from urllib.parse import quote, urlparse
 
 from connectrpc.errors import ConnectError
@@ -227,6 +228,37 @@ class Console:
         return self._insecure
 
 
+def _connect_code(e: BaseException | None) -> Any:
+    """The gRPC code of a SelectCluster failure (possibly wrapped), or None when it carries none."""
+    seen = 0
+    while e is not None and seen < 8:
+        if isinstance(e, ConnectError):
+            return e.code
+        e = e.__cause__
+        seen += 1
+    return None
+
+
+def _queue_routing_policy(e: BaseException) -> str:
+    """What a failed queue-routed SelectCluster calls for: "fallback" when the backend cannot route
+    by this queue (it predates queue routing, or does not know the queue), "retry" for a transient
+    failure, else "raise" (unauthenticated, permission denied, anything unexpected): an
+    authorization failure is never silently rerouted to another pool."""
+    from connectrpc.code import Code
+
+    code = _connect_code(e)
+    if code in (Code.UNIMPLEMENTED, Code.INVALID_ARGUMENT, Code.NOT_FOUND, Code.FAILED_PRECONDITION):
+        return "fallback"
+    if code in (Code.UNAVAILABLE, Code.DEADLINE_EXCEEDED, Code.RESOURCE_EXHAUSTED, Code.ABORTED):
+        return "retry"
+    return "raise"
+
+
+# Waits before retrying a queue-routed SelectCluster that failed transiently; after the last one,
+# the lookup falls back to project routing (uncached) as it did before queue routing existed.
+_QUEUE_ROUTING_RETRY_DELAYS = (0.2, 0.8)
+
+
 class _ClusterAwareService:
     """Shared machinery for the cluster-aware service wrappers.
 
@@ -282,6 +314,50 @@ class _ClusterAwareService:
         """
         client, _ = await self._select_and_build_with_cluster(req)
         return client
+
+    async def _resolve_queue(
+        self,
+        operation: int,
+        org: str,
+        project: str,
+        domain: str,
+        queue: str,
+        fallback: Callable[[], Awaitable[Any]],
+    ) -> Any:
+        """Threadsafe cached SelectCluster lookup routed by QueueIdentifier: a cluster of the pool
+        `queue` runs in, which may keep its data or images apart from the project/domain default.
+
+        A backend that cannot route by this queue (UNIMPLEMENTED, INVALID_ARGUMENT, NOT_FOUND,
+        FAILED_PRECONDITION: it predates `SelectClusterRequest.queue_id`, or does not know the queue)
+        gets `fallback`. A transient failure is retried (`_QUEUE_ROUTING_RETRY_DELAYS`), then falls
+        back too, so an upload or image lookup keeps working the way it did before queue routing.
+        The fallback is never stored under the queue's key, so a later call asks by queue again.
+        Unauthenticated, permission-denied and unexpected failures propagate rather than silently
+        reaching another pool.
+        """
+        from flyte._logging import logger
+
+        key = ("queue", operation, org, project, domain, queue)
+        req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
+        req.queue_id.CopyFrom(
+            identifier_pb2.QueueIdentifier(organization=org, domain=domain, project=project, name=queue)
+        )
+        delays = iter(_QUEUE_ROUTING_RETRY_DELAYS)
+        while True:
+            try:
+                return await self._client_cache.get_or_compute(key, lambda: self._select_and_build(req))
+            except Exception as e:
+                policy = _queue_routing_policy(e)
+                if policy == "raise":
+                    raise
+                if policy == "retry":
+                    delay = next(delays, None)
+                    if delay is not None:
+                        logger.debug(f"SelectCluster by queue '{queue}' failed transiently, retrying: {e}")
+                        await asyncio.sleep(delay)
+                        continue
+                logger.debug(f"SelectCluster could not route by queue '{queue}', routing by project: {e}")
+                return await fallback()
 
     async def _select_and_build_with_cluster(self, req: cluster_payload_pb2.SelectClusterRequest) -> tuple[Any, str]:
         """SelectCluster + build the per-cluster client, returning `(client, cluster)`.
@@ -525,33 +601,16 @@ class ClusterAwareDataProxy(_ClusterAwareService):
 
     async def _resolve_for_upload(self, operation: int, org: str, project: str, domain: str) -> DataProxyService:
         """Threadsafe cached SelectCluster lookup for an upload, routed by QueueIdentifier when an
-        upload queue is set in the current context, else by ProjectIdentifier.
-
-        Falls back to project routing (today's behavior) when the backend can't route by queue,
-        e.g. it predates `SelectClusterRequest.queue_id`, so passing a queue never makes an
-        upload fail that would otherwise have succeeded.
+        upload queue is set in the current context (see `_resolve_queue`), else by ProjectIdentifier.
         """
-        from flyte._logging import logger
         from flyte._upload_queue import current_upload_queue
 
         queue = current_upload_queue()
         if not queue:
             return await self._resolve(operation, org, project, domain)
-
-        key = ("queue", operation, org, project, domain, queue)
-
-        async def build() -> DataProxyService:
-            req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
-            req.queue_id.CopyFrom(
-                identifier_pb2.QueueIdentifier(organization=org, domain=domain, project=project, name=queue)
-            )
-            try:
-                return await self._select_and_build(req)
-            except Exception as e:
-                logger.debug(f"SelectCluster by queue '{queue}' failed, falling back to project routing: {e}")
-                return await self._resolve(operation, org, project, domain)
-
-        return await self._client_cache.get_or_compute(key, build)
+        return await self._resolve_queue(
+            operation, org, project, domain, queue, lambda: self._resolve(operation, org, project, domain)
+        )
 
     async def _resolve_with_cluster(
         self, operation: int, org: str, project: str, domain: str
@@ -736,8 +795,25 @@ class ClusterAwareImageService(_ClusterAwareService):
         return cast(ImageService, ImageServiceClient(**connect_kwargs))
 
     async def get_image(self, request: image_payload_pb2.GetImageRequest) -> image_payload_pb2.GetImageResponse:
+        """Look an image up on a cluster of the pool the current run's queue runs in (see
+        `flyte._upload_queue`): that pool may push its builds to another registry than the
+        project/domain default. Without a queue, routed by project."""
+        from flyte._upload_queue import current_upload_queue
+
         org = request.project_id.organization or request.organization
-        client = await self._resolve(org, request.project_id.name, request.project_id.domain)
+        project, domain = request.project_id.name, request.project_id.domain
+        queue = current_upload_queue()
+        if queue and project and domain:
+            client = await self._resolve_queue(
+                int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_GET_IMAGE),
+                org,
+                project,
+                domain,
+                queue,
+                lambda: self._resolve(org, project, domain),
+            )
+        else:
+            client = await self._resolve(org, project, domain)
         return await client.get_image(request)
 
     async def _resolve(self, org: str, project: str, domain: str) -> ImageService:

@@ -156,3 +156,55 @@ def test_pandas_and_arrow_tasks_end_to_end(tmp_path, lib, annotation, make, same
         "back = asyncio.run(go())\n"
         f"assert {same}"
     )
+
+
+_REMOTE_LITERAL_TYPES = (
+    "from flyte.remote import Task\n"
+    "from flyte.types import TypeEngine, guess_interface\n"
+    "from flyteidl2.core import interface_pb2, types_pb2 as t\n"
+    "blob = t.BlobType.BlobDimensionality\n"
+    "single = t.LiteralType(blob=t.BlobType(dimensionality=blob.SINGLE))\n"
+    "multi = t.LiteralType(blob=t.BlobType(dimensionality=blob.MULTIPART))\n"
+    "frame = t.LiteralType(structured_dataset_type=t.StructuredDatasetType())\n"
+    "none = t.LiteralType(simple=t.SimpleType.NONE)\n"
+)
+
+
+@pytest.mark.parametrize(
+    "literal_type, expected",
+    [
+        ("single", "File"),
+        ("multi", "Dir"),
+        ("frame", "DataFrame"),
+        ("t.LiteralType(collection_type=single)", "typing.List[File]"),
+        ("t.LiteralType(map_value_type=multi)", "typing.Dict[str, Dir]"),
+        ("t.LiteralType(union_type=t.UnionType(variants=[single, none]))", "typing.Optional[File]"),
+    ],
+)
+def test_io_types_rebuild_without_importing_flyte_io(literal_type, expected):
+    """A script that only fetches a deployed task never imports flyte.io, so nothing else registers its transformers."""
+    _loaded_after(
+        f"{_REMOTE_LITERAL_TYPES}"
+        f"guessed = TypeEngine.guess_python_type({literal_type})\n"
+        "import typing\n"
+        "from flyte.io import DataFrame, Dir, File\n"
+        f"assert guessed == {expected}, guessed"
+    )
+
+
+def test_remote_interface_with_file_output_rebuilds_without_importing_flyte_io():
+    _loaded_after(
+        f"{_REMOTE_LITERAL_TYPES}"
+        "outputs = interface_pb2.VariableMap(variables=[\n"
+        "    interface_pb2.VariableEntry(key='o0', value=interface_pb2.Variable(type=single))\n"
+        "])\n"
+        "guessed = guess_interface(interface_pb2.TypedInterface(outputs=outputs))\n"
+        "from flyte.io import File\n"
+        "assert guessed.outputs == {'o0': File}, guessed.outputs"
+    )
+
+
+@pytest.mark.parametrize("literal_type", ["single", "multi", "none"])
+def test_rebuilding_non_dataframe_types_skips_dataframe_engine(literal_type):
+    loaded = _loaded_after(f"{_REMOTE_LITERAL_TYPES}TypeEngine.guess_python_type({literal_type})")
+    assert "flyte.io._dataframe" not in loaded

@@ -423,7 +423,10 @@ def test_guess_python_type_fallback_for_unknown_tag(ctx_with_preserve_original_t
 
 @pytest.mark.asyncio
 async def test_pandas_parquet_encode_remote_uri_uses_forward_slashes(sample_dataframe, monkeypatch):
-    """Remote parquet paths must use forward slashes on every OS; os.path.join inserts '\\' on Windows."""
+    """Remote parquet paths must use forward slashes on every OS; os.path.join inserts '\\' on Windows.
+
+    pandas receives the protocol-stripped path plus a filesystem, so the backslash would corrupt the key.
+    """
     from flyte.io._dataframe.basic_dfs import PandasToParquetEncodingHandler
 
     captured = {}
@@ -436,7 +439,7 @@ async def test_pandas_parquet_encode_remote_uri_uses_forward_slashes(sample_data
     sd = DataFrame.from_df(val=sample_dataframe, uri="s3://my-bucket/models")
     result = await PandasToParquetEncodingHandler().encode(sd, types_pb2.StructuredDatasetType(format=PARQUET))
 
-    assert captured["path"] == "s3://my-bucket/models/00000"
+    assert captured["path"] == "my-bucket/models/00000"
     assert "\\" not in captured["path"]
     assert result.uri == "s3://my-bucket/models"
 

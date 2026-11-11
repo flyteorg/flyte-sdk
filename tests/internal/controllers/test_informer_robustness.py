@@ -78,6 +78,115 @@ async def test_a_watch_cancelled_by_the_server_reconnects():
         await informer.stop()
 
 
+class SilentAfterSentinelOnce:
+    """A watch whose connection died after the sentinel: no error, no EOF, nothing
+    more. The child finished meanwhile, so the next watch's snapshot has it."""
+
+    def __init__(self, sentinel_delay: float = 0.0):
+        self.watches = 0
+        self.sentinel_delay = sentinel_delay
+        self.first_sentinel_watch = None
+
+    async def watch_for_updates(self, req, **kwargs):
+        self.watches += 1
+        if self.watches > 1:
+            yield _succeeded("child")
+        await asyncio.sleep(self.sentinel_delay)
+        if self.first_sentinel_watch is None:
+            self.first_sentinel_watch = self.watches
+        yield _sentinel()
+        await asyncio.Event().wait()
+
+
+def _informer(service, **kwargs) -> Informer:
+    return Informer(run_id=RUN, parent_action_name="a0", shared_queue=asyncio.Queue(), actions_client=service, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_a_silent_watch_reconnects_and_resyncs_the_children():
+    """A watch silent past the idle timeout reconnects, and the new snapshot
+    delivers the child that finished meanwhile."""
+    service = SilentAfterSentinelOnce()
+    # A long backoff shows the idle reconnect isn't counted as a failure.
+    informer = _informer(service, watch_idle_timeout_sec=0.05, min_watch_backoff=30.0, max_watch_backoff=30.0)
+    await informer.start(timeout=5)
+    try:
+        node = await asyncio.wait_for(informer._shared_queue.get(), timeout=5)
+        assert node.name == "child"
+        assert service.watches == 2
+    finally:
+        await informer.stop()
+
+
+@pytest.mark.asyncio
+async def test_the_idle_timeout_waits_for_the_sentinel():
+    service = SilentAfterSentinelOnce(sentinel_delay=0.2)
+    informer = _informer(service, watch_idle_timeout_sec=0.05)
+    await informer.start(timeout=5)
+    try:
+        # A deadline before the sentinel would have cut the first watch short.
+        assert service.first_sentinel_watch == 1
+    finally:
+        await informer.stop()
+
+
+class EndedByTheServerOnce:
+    """A watch the server ends cleanly after the sentinel; the next one has the finished child."""
+
+    def __init__(self):
+        self.watches = 0
+
+    async def watch_for_updates(self, req, **kwargs):
+        self.watches += 1
+        if self.watches > 1:
+            yield _succeeded("child")
+        yield _sentinel()
+        if self.watches > 1:
+            await asyncio.Event().wait()
+
+
+@pytest.mark.asyncio
+async def test_a_watch_the_server_ends_reconnects():
+    service = EndedByTheServerOnce()
+    informer = _informer(service, min_watch_backoff=0.01, max_watch_backoff=0.01)
+    await informer.start(timeout=5)
+    try:
+        node = await asyncio.wait_for(informer._shared_queue.get(), timeout=5)
+        assert node.name == "child"
+        assert service.watches == 2
+    finally:
+        await informer.stop()
+
+
+class Chatty:
+    """A watch that keeps delivering updates, each inside the idle timeout."""
+
+    def __init__(self, children: int):
+        self.watches = 0
+        self.children = children
+
+    async def watch_for_updates(self, req, **kwargs):
+        self.watches += 1
+        yield _sentinel()
+        for i in range(self.children):
+            await asyncio.sleep(0.03)
+            yield _succeeded(f"child{i}")
+        await asyncio.Event().wait()
+
+
+@pytest.mark.asyncio
+async def test_a_watch_that_keeps_delivering_is_not_reconnected():
+    service = Chatty(children=5)
+    informer = _informer(service, watch_idle_timeout_sec=0.1)
+    await informer.start(timeout=5)
+    try:
+        for _ in range(5):
+            await asyncio.wait_for(informer._shared_queue.get(), timeout=5)
+        assert service.watches == 1
+    finally:
+        await informer.stop()
+
+
 @pytest.mark.asyncio
 async def test_stopping_the_informer_still_ends_its_watch():
     service = CancelledByTheServerOnce()

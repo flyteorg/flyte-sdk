@@ -26,16 +26,20 @@ else:
 T = TypeVar("T")
 
 
-def get_pandas_storage_options(uri: str, anonymous: bool = False) -> typing.Optional[typing.Dict]:
-    from pandas.io.common import is_fsspec_url  # type: ignore
+def _get_pandas_path_and_filesystem(uri: str, anonymous: bool = False) -> typing.Tuple[str, typing.Any]:
+    """
+    Return the path and filesystem to hand to pandas for `uri`.
 
-    if is_fsspec_url(uri):
-        if uri.startswith("s3"):
-            return storage.get_configured_fsspec_kwargs("s3", anonymous=anonymous)
-        return {}
+    For S3 URIs this is the protocol-less path plus Flyte's own filesystem. Flyte's configured kwargs
+    are obstore-shaped, so they must not be handed to pandas as `storage_options`: pandas would resolve
+    "s3" through the global fsspec registry, which may hold s3fs when it is installed alongside Flyte.
 
-    # Pandas does not allow storage_options for non-fsspec paths e.g. local.
-    return None
+    For anything else this is `(uri, None)`, which lets pandas resolve the path itself.
+    """
+    if uri.startswith("s3://"):
+        filesystem = storage.get_underlying_filesystem(path=uri, anonymous=anonymous)
+        return filesystem._strip_protocol(uri), filesystem
+    return uri, None
 
 
 class PandasToCSVEncodingHandler(DataFrameEncoder):
@@ -59,11 +63,12 @@ class PandasToCSVEncodingHandler(DataFrameEncoder):
             Path(uri).mkdir(parents=True, exist_ok=True)
         csv_file = storage.join(uri, "data.csv")
         df = typing.cast(pd.DataFrame, dataframe.val)
-        df.to_csv(
-            csv_file,
-            index=False,
-            storage_options=get_pandas_storage_options(uri=csv_file),
-        )
+        path, filesystem = _get_pandas_path_and_filesystem(csv_file)
+        if filesystem is not None:
+            with filesystem.open(path, "wb") as f:
+                df.to_csv(f, index=False, mode="wb")
+        else:
+            df.to_csv(path, index=False)
         structured_dataset_type.format = CSV
         return literals_pb2.StructuredDataset(
             uri=uri, metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type=structured_dataset_type)
@@ -81,7 +86,6 @@ class CSVToPandasDecodingHandler(DataFrameDecoder):
     ) -> "pd.DataFrame":
         uri = flyte_value.uri
         columns = None
-        kwargs = get_pandas_storage_options(uri=uri)
 
         csv_file = uri
         if not uri.endswith(".csv"):
@@ -103,8 +107,11 @@ class CSVToPandasDecodingHandler(DataFrameDecoder):
         except Exception as exc:
             if exc.__class__.__name__ == "NoCredentialsError":
                 logger.debug("S3 source detected, attempting anonymous S3 access")
-                kwargs = get_pandas_storage_options(uri=uri, anonymous=True)
-                return pd.read_csv(csv_file, usecols=columns, storage_options=kwargs)
+                path, filesystem = _get_pandas_path_and_filesystem(csv_file, anonymous=True)
+                if filesystem is not None:
+                    with filesystem.open(path, "rb") as f:
+                        return pd.read_csv(f, usecols=columns)
+                return pd.read_csv(path, usecols=columns)
             else:
                 raise
 
@@ -128,13 +135,13 @@ class PandasToParquetEncodingHandler(DataFrameEncoder):
 
         if not storage.is_remote(uri):
             Path(uri).mkdir(parents=True, exist_ok=True)
-        path = storage.join(uri, f"{0:05}")
+        path, filesystem = _get_pandas_path_and_filesystem(storage.join(uri, f"{0:05}"))
         df = typing.cast(pd.DataFrame, dataframe.val)
         df.to_parquet(
             path,
             coerce_timestamps="us",
             allow_truncated_timestamps=False,
-            storage_options=get_pandas_storage_options(uri=path),
+            filesystem=filesystem,
         )
 
         structured_dataset_type.format = PARQUET
@@ -154,16 +161,16 @@ class ParquetToPandasDecodingHandler(DataFrameDecoder):
     ) -> "pd.DataFrame":
         uri = flyte_value.uri
         columns = None
-        kwargs = get_pandas_storage_options(uri=uri)
         if current_task_metadata.structured_dataset_type and current_task_metadata.structured_dataset_type.columns:
             columns = [c.name for c in current_task_metadata.structured_dataset_type.columns]
         try:
-            return pd.read_parquet(uri, columns=columns, storage_options=kwargs)
+            path, filesystem = _get_pandas_path_and_filesystem(uri)
+            return pd.read_parquet(path, columns=columns, filesystem=filesystem)
         except Exception as exc:
             if exc.__class__.__name__ == "NoCredentialsError":
                 logger.debug("S3 source detected, attempting anonymous S3 access")
-                kwargs = get_pandas_storage_options(uri=uri, anonymous=True)
-                return pd.read_parquet(uri, columns=columns, storage_options=kwargs)
+                path, filesystem = _get_pandas_path_and_filesystem(uri, anonymous=True)
+                return pd.read_parquet(path, columns=columns, filesystem=filesystem)
             else:
                 raise
 

@@ -21,7 +21,7 @@ async def test_exists():
 async def test_image_exists_skips_check_for_unmodified_default_image():
     """A released unmodified default image should short-circuit image_exists without
     hitting any backend checker."""
-    ImageBuildEngine.image_exists.cache_clear()
+    ImageBuildEngine._image_exists.cache_clear()
     with patch("flyte._version.__version__", "1.2.3"):
         image = Image.from_debian_base(python_version=(3, 12))
     assert image._is_cloned is False
@@ -47,7 +47,7 @@ async def test_image_exists_skips_check_for_unmodified_default_image():
 async def test_image_exists_checks_backend_for_modified_default_image():
     """Adding a layer to the default image flips _is_cloned=True and the existence check
     should no longer short-circuit."""
-    ImageBuildEngine.image_exists.cache_clear()
+    ImageBuildEngine._image_exists.cache_clear()
     with patch("flyte._version.__version__", "1.2.3"):
         image = Image.from_debian_base(
             python_version=(3, 12),
@@ -68,7 +68,7 @@ async def test_image_exists_checks_backend_for_modified_default_image():
 @pytest.mark.asyncio
 async def test_image_exists_skips_check_for_from_base():
     """from_base points at an existing image URI; image_exists should short-circuit."""
-    ImageBuildEngine.image_exists.cache_clear()
+    ImageBuildEngine._image_exists.cache_clear()
     image = Image.from_base("ghcr.io/example/my-image:latest")
     assert image._is_cloned is False
 
@@ -94,7 +94,7 @@ async def test_image_exists_surfaces_user_error_for_missing_base(base):
     """`flyte deploy` reaches `image.uri` via `image_exists`; it must raise a user error (FLYTE-SDK-8Z)."""
     from flyte.errors import ImageBuildError
 
-    ImageBuildEngine.image_exists.cache_clear()
+    ImageBuildEngine._image_exists.cache_clear()
     image = Image.from_base(base)  # type: ignore[arg-type]
     with pytest.raises(ImageBuildError, match="no base image URI"):
         await ImageBuildEngine.image_exists(image)
