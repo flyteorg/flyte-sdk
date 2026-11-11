@@ -468,6 +468,8 @@ class Controller:
                 logger.debug(f"Attempting to launch action: {action.name}, actions? {bool(self._actions_service)}")
                 try:
                     if self._actions_service:
+                        from ._org_limits import CAPABILITIES_HEADER, CAPABILITY_ORG_LIMIT_EXCEEDED
+
                         await self._actions_service.enqueue(
                             actions_service_pb2.EnqueueRequest(
                                 action=actions_service_pb2.Action(
@@ -485,7 +487,10 @@ class Controller:
                                 ),
                             ),
                             timeout_ms=int(self._enqueue_timeout * 1000),
-                            headers=_actions_metadata(action),
+                            headers={
+                                **_actions_metadata(action),
+                                CAPABILITIES_HEADER: CAPABILITY_ORG_LIMIT_EXCEEDED,
+                            },
                         )
                     else:
                         if action.override_applied:
@@ -543,6 +548,11 @@ class Controller:
                         logger.info(f"Action {action.name} already exists, continuing to monitor.")
                         action.mark_started()
                         return
+                    from ._org_limits import org_limit_exceeded
+
+                    if (org_limit := org_limit_exceeded(e)) is not None:
+                        # The org is at a limit (e.g. max_actions_per_run): no retry can clear it.
+                        raise org_limit from e
                     if e.code == Code.RESOURCE_EXHAUSTED:
                         raise flyte.errors.ResourceExhaustedError(e.message) from e
                     if e.code == Code.ABORTED:
@@ -636,17 +646,26 @@ class Controller:
                     logger.warning(f"[{worker_id}] Retrying action {action.name} after backoff")
                     await self._shared_queue.put(action)
             except Exception as e:
-                logger.error(f"[{worker_id}] Error in controller loop for {action.name}: {e}")
-                if isinstance(e, flyte.errors.SlowDownError):
-                    reason = f"retries {action.retries} / {self._max_retries} exhausted"
+                if isinstance(e, flyte.errors.OrgLimitExceededError):
+                    # Expected when a run fans out past its org's limit: one per refused child, so not an error.
+                    logger.warning(f"[{worker_id}] Action {action.name} refused at an org limit: {e}")
                 else:
-                    reason = f"non-retryable {type(e).__name__}"
-                err = flyte.errors.RuntimeSystemError(
-                    code=type(e).__name__,
-                    message=f"Controller failed for action {action.name} ({reason}): {e}",
-                    worker=worker_id,
-                )
-                err.__cause__ = e
+                    logger.error(f"[{worker_id}] Error in controller loop for {action.name}: {e}")
+                if isinstance(e, flyte.errors.OrgLimitExceededError):
+                    # A user error the parent can catch, not a controller failure: wrapping it as a system error
+                    # would make the platform retry the whole parent.
+                    err: Exception = e
+                else:
+                    if isinstance(e, flyte.errors.SlowDownError):
+                        reason = f"retries {action.retries} / {self._max_retries} exhausted"
+                    else:
+                        reason = f"non-retryable {type(e).__name__}"
+                    err = flyte.errors.RuntimeSystemError(
+                        code=type(e).__name__,
+                        message=f"Controller failed for action {action.name} ({reason}): {e}",
+                        worker=worker_id,
+                    )
+                    err.__cause__ = e
                 action.set_client_error(err)
                 informer = await self._informers.get(
                     run_name=action.run_name,

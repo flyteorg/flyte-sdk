@@ -191,6 +191,8 @@ def _apply_reusable_override(
     template: Any, reusable: Union[flyte.ReusePolicy, Literal["off"]], task_name: str, task_version: str
 ) -> None:
     """Switch a remote task's template to (or off) a reusable warm pool, in place."""
+    from flyteidl2.core import tasks_pb2
+
     from flyte._internal.runtime.reuse import add_reusable, reuse_policy_to_pb
 
     is_actor = template.type == "actor"
@@ -210,6 +212,8 @@ def _apply_reusable_override(
     if is_actor:
         template.ClearField("custom")
         template.type = "python"
+    # A plain python task runs on a pod of its own; add_reusable marks the task again when it moves to a pool.
+    template.worker_kind = tasks_pb2.WORKER_KIND_UNSPECIFIED
     if reusable == "off":
         template.ClearField("reuse_policy")
         return
