@@ -696,3 +696,37 @@ def test_azure_account_from_bucket():
 )
 def test_storage_join(paths, expected):
     assert storage.join(*paths) == expected
+
+
+@pytest.mark.asyncio
+async def test_get_obstore_bypass_builds_posix_key(monkeypatch, tmp_path):
+    """The single-file obstore bypass must send a "/"-separated key to obstore, never a Windows backslash."""
+    from flyte.storage import _storage
+
+    class _FakeFs:
+        protocol = "s3"
+
+        def _split_path(self, path):
+            return "my-bucket", "models/weights/file.pt"
+
+        def _construct_store(self, bucket):
+            return object()
+
+    monkeypatch.setattr(_storage, "get_underlying_filesystem", lambda path: _FakeFs())
+
+    captured = {}
+
+    async def fake_download_files(self, src_prefix, target_prefix, *paths, **kwargs):
+        captured["src_prefix"] = src_prefix
+        captured["paths"] = paths
+
+    monkeypatch.setattr(
+        "flyte.storage._parallel_reader.ObstoreParallelReader.download_files",
+        fake_download_files,
+    )
+
+    await _storage._get_obstore_bypass("s3://my-bucket/models/weights/file.pt", str(tmp_path / "out.pt"))
+
+    key = str(captured["src_prefix"] / captured["paths"][0])
+    assert key == "models/weights/file.pt"
+    assert "\\" not in key

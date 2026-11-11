@@ -288,7 +288,7 @@ class ObstoreParallelReader:
 
     async def download_files(
         self,
-        src_prefix: pathlib.Path,
+        src_prefix: pathlib.PurePath,
         target_prefix: pathlib.Path,
         *paths,
         destination_file_name: str | None = None,
