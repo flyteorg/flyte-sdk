@@ -1252,7 +1252,7 @@ def _assert_transportable_enum(t: Type, sample_value: Any) -> None:
         )
 
 
-def _enum_members(t: Type[enum.Enum]) -> list:
+def _enum_members(t: Any) -> list:
     """An enum's canonical members as (name, value) pairs, aliases left out."""
     return [(m.name, m.value) for m in t]
 

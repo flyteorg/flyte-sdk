@@ -207,7 +207,6 @@ def test_mixed_value_enum_is_rejected_when_it_reaches_the_wire():
         TypeEngine.to_literal_type(IntFirst)
 
 
-
 @pytest.mark.asyncio
 async def test_a_member_of_a_separately_guessed_copy_converts():
     # The CLI builds a deployed task's enum parameter from one guess and
@@ -248,7 +247,7 @@ async def test_a_union_of_separately_guessed_enums_picks_the_right_branch():
 
     lit = TypeEngine.to_literal_type(Union[A, B])
     first, second = TypeEngine.guess_python_type(lit), TypeEngine.guess_python_type(lit)
-    red = [t for t in first.__args__ if "RED" in t.__members__][0]["RED"]
+    red = next(t for t in first.__args__ if "RED" in t.__members__)["RED"]
     lv = await TypeEngine.to_literal(red, second, lit)
     assert lv.scalar.union.value.scalar.primitive.string_value == "RED"
 
