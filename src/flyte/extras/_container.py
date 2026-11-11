@@ -196,7 +196,7 @@ class ContainerTask(TaskTemplate):
             policies = [
                 p for p in existing if p is not None and not isinstance(p, (FunctionBodyPolicy, ContainerBodyPolicy))
             ]
-            spec = {
+            spec: Dict[str, Any] = {
                 "command": list(self._cmd or []),
                 "args": list(self._args or []),
                 "input_data_dir": str(self._input_data_dir),
