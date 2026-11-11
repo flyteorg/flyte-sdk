@@ -3,6 +3,7 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from flyteidl2.core import tasks_pb2
 
 import flyte
 import flyte.errors
@@ -127,7 +128,9 @@ class TestTaskDetailsReusableOverride:
         assert t.type == "python"
         assert not t.HasField("custom")
         assert not t.HasField("reuse_policy")
+        assert t.worker_kind == tasks_pb2.WORKER_KIND_UNSPECIFIED  # a one-off pod, not a reusable worker's action
         assert deployed.pb2.spec.task_template.type == "actor"  # the fetched task is untouched
+        assert deployed.pb2.spec.task_template.worker_kind == tasks_pb2.WORKER_KIND_REUSABLE
 
     def test_plugin_task_rejects_reusable(self):
         from flyteidl2.task import task_definition_pb2
