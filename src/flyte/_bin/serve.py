@@ -38,7 +38,9 @@ def _ensure_dest_writable(dest_path: str, param_name: str) -> None:
     """
     import pathlib
 
-    if dest_path.endswith(("/", os.sep)):
+    import flyte.storage as storage
+
+    if storage.is_dir_destination(dest_path):
         dest_dir = pathlib.Path(dest_path)
     else:
         dest_dir = pathlib.Path(dest_path).parent
@@ -110,7 +112,7 @@ async def sync_parameters(serialized_parameters: str, dest: str) -> tuple[dict, 
         if parameter.download:
             user_dest = parameter.dest or dest
 
-            if parameter.dest and parameter_type == "file" and parameter.dest.endswith(("/", os.sep)):
+            if parameter.dest and parameter_type == "file" and storage.is_dir_destination(parameter.dest):
                 source_filename = os.path.basename(ser_value)
                 user_dest = os.path.join(parameter.dest, source_filename)
 
