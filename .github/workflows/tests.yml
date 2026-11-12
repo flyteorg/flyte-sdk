@@ -40,6 +40,25 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  unit-tests-connectrpc-0-11:
+    # uv.lock resolves connectrpc 0.10, but the dependency range also admits 0.11, whose
+    # API differs (see flyte.remote._client._connect_compat). Fresh installs get 0.11.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up the environment
+        uses: ./.github/actions/setup-python-env
+        with:
+          python-version: "3.12"
+
+      - name: Run tests on connectrpc 0.11
+        run: make unit_test UV_ARGS="--with 'connectrpc>=0.11,<0.12'"
+
   discover-plugins:
     runs-on: ubuntu-latest
     outputs:

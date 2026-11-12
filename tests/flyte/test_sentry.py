@@ -752,13 +752,26 @@ def test_non_connect_endpoint_response_ignores_200_and_redirects():
     assert not _sentry._is_non_connect_endpoint_response(_wire_error_for_status(302))
 
 
+def _error_detail():
+    """A ConnectError detail in the form the installed connectrpc carries."""
+    import connectrpc.errors
+
+    if hasattr(connectrpc.errors, "ErrorDetail"):
+        # connectrpc 0.11 carries details as protobuf-py messages.
+        from protobuf.wkt import Any
+
+        return Any(type_url="type.googleapis.com/flyteidl2.common.Identity", value=b"")
+    from flyteidl2.common import identity_pb2
+
+    return identity_pb2.Identity()
+
+
 def test_non_connect_endpoint_response_ignores_errors_carrying_details():
     """A Connect JSON error body yields details; from_http_status never does."""
     from connectrpc.code import Code
     from connectrpc.errors import ConnectError
-    from flyteidl2.common import identity_pb2
 
-    err = ConnectError(Code.UNKNOWN, "No Content", details=[identity_pb2.Identity()])
+    err = ConnectError(Code.UNKNOWN, "No Content", details=[_error_detail()])
     assert not _sentry._is_non_connect_endpoint_response(err)
 
 
@@ -863,9 +876,8 @@ def test_method_not_allowed_carrying_details_still_reports():
     """A real Connect JSON error body yields details; from_http_status never does."""
     from connectrpc.code import Code
     from connectrpc.errors import ConnectError
-    from flyteidl2.common import identity_pb2
 
-    err = ConnectError(Code.UNKNOWN, "Method Not Allowed", details=[identity_pb2.Identity()])
+    err = ConnectError(Code.UNKNOWN, "Method Not Allowed", details=[_error_detail()])
     assert not _sentry._is_non_connect_endpoint_response(err)
 
 

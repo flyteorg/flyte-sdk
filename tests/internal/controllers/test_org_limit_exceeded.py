@@ -5,6 +5,7 @@ system error that makes the platform retry the whole parent."""
 import asyncio
 from unittest.mock import AsyncMock, patch
 
+import connectrpc.errors
 import pytest
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
@@ -14,13 +15,26 @@ from google.protobuf.any_pb2 import Any
 import flyte.errors
 from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._core import Controller
+from flyte._internal.controllers.remote._org_limits import org_limit_exceeded
 
 _MSG = '"acme:p:d:r1" would exceed org "acme"\'s max_actions_per_run quota (3 current + 1 requested > 3)'
 
 
-def _org_limit_detail() -> Any:
+def _org_limit_detail(type_url_prefix: str = "type.googleapis.com/"):
     # The open-source SDK has no cloudidl protos; only the type URL identifies the detail.
-    return Any(type_url="type.googleapis.com/cloudidl.common.OrgLimitExceeded", value=b"")
+    type_url = type_url_prefix + "cloudidl.common.OrgLimitExceeded"
+    if hasattr(connectrpc.errors, "ErrorDetail"):
+        # connectrpc 0.11 carries details as protobuf-py messages.
+        from protobuf.wkt import Any as ProtobufPyAny
+
+        return ProtobufPyAny(type_url=type_url, value=b"")
+    return Any(type_url=type_url, value=b"")
+
+
+def test_org_limit_detail_is_recognised_under_any_type_url_prefix():
+    error = ConnectError(Code.FAILED_PRECONDITION, _MSG, details=[_org_limit_detail("custom.example/")])
+
+    assert isinstance(org_limit_exceeded(error), flyte.errors.OrgLimitExceededError)
 
 
 def _controller() -> Controller:
