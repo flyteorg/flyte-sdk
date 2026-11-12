@@ -344,6 +344,7 @@ async def discover_authorization_server() -> str:
     from flyteidl2.auth.auth_service_pb2 import GetOAuth2MetadataRequest
 
     from flyte._initialize import _get_init_config
+    from flyte.remote._client._connect_compat import codec_kwargs
 
     cfg = _get_init_config()
     if cfg is None or cfg.client is None:
@@ -354,7 +355,7 @@ async def discover_authorization_server() -> str:
     session = cfg.client.session_config
     # The session's http client, but not its interceptors: those add the caller's credentials,
     # and in passthrough mode there is no caller here.
-    client = AuthMetadataServiceClient(address=session.endpoint, http_client=session.http_client)
+    client = AuthMetadataServiceClient(address=session.endpoint, http_client=session.http_client, **codec_kwargs())
     metadata = await client.get_o_auth2_metadata(GetOAuth2MetadataRequest())
     if not metadata.issuer:
         raise _AuthorizationServerDiscoveryError(

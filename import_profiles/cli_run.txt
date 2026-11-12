@@ -112,6 +112,7 @@ flyte.models
 flyte.remote
 flyte.remote._action
 flyte.remote._client
+flyte.remote._client._connect_compat
 flyte.remote._client._protocols
 flyte.remote._client.auth
 flyte.remote._client.auth._authenticators

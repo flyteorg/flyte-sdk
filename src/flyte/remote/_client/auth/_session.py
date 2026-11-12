@@ -12,6 +12,7 @@ import pyqwest
 
 from flyte._logging import logger
 from flyte._utils.org_discovery import hostname_from_url
+from flyte.remote._client._connect_compat import codec_kwargs
 
 from ._authenticators.base import get_async_session
 from ._authenticators.factory import (
@@ -73,7 +74,12 @@ class SessionConfig:
     tls_ca_cert: typing.Optional[bytes] = None
 
     def connect_kwargs(self) -> dict[str, Any]:
-        return {"address": self.endpoint, "interceptors": self.interceptors, "http_client": self.http_client}
+        return {
+            "address": self.endpoint,
+            "interceptors": self.interceptors,
+            "http_client": self.http_client,
+            **codec_kwargs(),
+        }
 
     def new_http_client(self) -> Any:
         """Build a fresh HTTP client identical to `http_client`, with its own connection pool."""

@@ -138,6 +138,32 @@ def _make_mock_authenticator(headers=None):
     return auth
 
 
+class _PropertyFormContext:
+    """A RequestContext whose request_headers is a property, as connectrpc 0.11 exposes it."""
+
+    def __init__(self):
+        self._headers = {}
+
+    @property
+    def request_headers(self):
+        return self._headers
+
+
+class TestPropertyFormRequestHeaders:
+    @pytest.mark.asyncio
+    async def test_default_metadata_injects_request_id(self):
+        ctx = _PropertyFormContext()
+        await DefaultMetadataInterceptor().on_start(ctx)
+        assert ctx.request_headers["x-request-id"]
+
+    @pytest.mark.asyncio
+    async def test_auth_injects_headers(self):
+        auth = _make_mock_authenticator({"authorization": "Bearer token123"})
+        ctx = _PropertyFormContext()
+        await AuthUnaryInterceptor(lambda: auth).intercept_unary(AsyncMock(return_value="response"), "request", ctx)
+        assert ctx.request_headers["authorization"] == "Bearer token123"
+
+
 class TestAuthUnaryInterceptor:
     @pytest.mark.asyncio
     async def test_injects_auth_headers(self):

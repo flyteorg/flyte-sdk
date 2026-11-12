@@ -5,7 +5,6 @@ import mock
 import pytest
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
-from google.protobuf.any_pb2 import Any
 from mock.mock import AsyncMock
 
 import flyte
@@ -36,9 +35,8 @@ async def test_resource_exhausted_is_a_user_error():
 
 
 @pytest.mark.asyncio
-async def test_org_limit_refusal_is_a_user_error():
-    detail = Any(type_url="type.googleapis.com/cloudidl.common.OrgLimitExceeded", value=b"")
-    err = ConnectError(Code.FAILED_PRECONDITION, "org at max_actions_per_run", details=[detail])
+async def test_org_limit_refusal_is_a_user_error(org_limit_detail):
+    err = ConnectError(Code.FAILED_PRECONDITION, "org at max_actions_per_run", details=[org_limit_detail()])
     with pytest.raises(flyte.errors.OrgLimitExceededError):
         await _rerun_with_create_run_error(err)
 
