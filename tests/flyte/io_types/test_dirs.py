@@ -6,7 +6,7 @@ import os.path
 import pathlib
 import shutil
 import tempfile
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -95,6 +95,45 @@ async def test_get_file_local(tmp_dir_structure):
     file = await dir_obj.get_file("root.txt")
     assert isinstance(file, File)
     assert os.path.exists(file.path)
+
+
+def test_get_file_sync_local(tmp_dir_structure):
+    dir_obj = Dir(path=tmp_dir_structure)
+    file = dir_obj.get_file_sync("root.txt")
+    assert isinstance(file, File)
+    assert os.path.exists(file.path)
+    assert dir_obj.get_file_sync("missing.txt") is None
+
+
+def test_get_file_sync_remote_builds_posix_key():
+    # os.path.join on Windows would insert a backslash into the remote key; get_file_sync must
+    # use the filesystem separator like the async get_file does.
+    dir_obj = Dir(path="s3://bucket/data")
+    fake_fs = MagicMock()
+    fake_fs.sep = "/"
+    with (
+        patch("flyte.io._dir.storage.get_underlying_filesystem", return_value=fake_fs),
+        patch.object(File, "exists_sync", return_value=True),
+    ):
+        file = dir_obj.get_file_sync("sub.csv")
+    assert file is not None
+    assert file.path == "s3://bucket/data/sub.csv"
+    assert "\\" not in file.path
+
+
+@pytest.mark.asyncio
+async def test_get_file_remote_uses_async_exists():
+    dir_obj = Dir(path="s3://bucket/data")
+    fake_fs = MagicMock()
+    fake_fs.sep = "/"
+    with (
+        patch("flyte.io._dir.storage.get_underlying_filesystem", return_value=fake_fs),
+        patch.object(File, "exists", new=AsyncMock(return_value=True)),
+    ):
+        file = await dir_obj.get_file("sub.csv")
+    assert file is not None
+    assert file.path == "s3://bucket/data/sub.csv"
+    assert "\\" not in file.path
 
 
 @pytest.mark.asyncio
