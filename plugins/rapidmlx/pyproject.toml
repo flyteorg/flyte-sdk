@@ -5,7 +5,7 @@ description = "Rapid-MLX plugin for flyte — serve LLMs on Apple Silicon"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "flyte>=2.0.0b43",
+    "flyte>=2.12.0",
 ]
 
 [build-system]

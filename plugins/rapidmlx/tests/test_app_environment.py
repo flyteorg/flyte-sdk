@@ -151,12 +151,22 @@ def test_on_shutdown_raises_error():
 def test_extra_args_string():
     app = RapidMLXAppEnvironment(
         name="rapidmlx-app",
-        extra_args="--host 0.0.0.0 --port 8123",
+        extra_args="--host 0.0.0.0",
     )
     assert "--host" in app.args
     assert "0.0.0.0" in app.args
-    assert "--port" in app.args
-    assert "8123" in app.args
+
+
+@pytest.mark.parametrize("extra_args", ["--port 8123", "--port=8123", ["--port", "8123"], ["--port=8123"]])
+def test_extra_args_cannot_override_port(extra_args):
+    with pytest.raises(ValueError, match="Use `port`"):
+        RapidMLXAppEnvironment(name="rapidmlx-app", extra_args=extra_args)
+
+
+def test_clone_extra_args_cannot_override_port():
+    app = RapidMLXAppEnvironment(name="rapidmlx-app")
+    with pytest.raises(ValueError, match="Use `port`"):
+        app.clone_with(name="rapidmlx-clone", extra_args="--port 8123")
 
 
 def test_extra_args_list():
@@ -231,6 +241,21 @@ def test_custom_links_preserved():
     assert len(app.links) == 2
     assert app.links[0].path == "/v1/models"
     assert app.links[1].path == "/custom"
+
+
+def test_clone_preserves_links_without_duplicating_default():
+    custom = flyte.app.Link(path="/custom", title="Custom")
+    app = RapidMLXAppEnvironment(name="rapidmlx-app", links=[custom])
+    original_links = list(app.links)
+    cloned = app.clone_with(name="rapidmlx-clone")
+    cloned_again = cloned.clone_with(name="rapidmlx-clone-again")
+    assert app.links == cloned.links == cloned_again.links == original_links
+
+
+def test_explicit_default_link_is_not_duplicated():
+    link = flyte.app.Link(path="/v1/models", title="Rapid-MLX Models", is_relative=True)
+    app = RapidMLXAppEnvironment(name="rapidmlx-app", links=[link])
+    assert app.links == [link]
 
 
 # ---------------------------------------------------------------------------

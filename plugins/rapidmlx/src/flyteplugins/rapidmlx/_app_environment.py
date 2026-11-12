@@ -72,7 +72,8 @@ class RapidMLXAppEnvironment(flyte.app.AppEnvironment):
             for OpenAI client requests.
         api_key: Optional `--api-key`. Prefer secrets with `env_vars` for real keys.
         extra_args: Extra arguments appended to `rapid-mlx serve`, as a list or
-            shell-split string. See `rapid-mlx serve --help`.
+            shell-split string. Set the server port with `port`, not `extra_args`.
+            See `rapid-mlx serve --help`.
     """
 
     port: int | Port = DEFAULT_RAPID_MLX_PORT
@@ -118,6 +119,9 @@ class RapidMLXAppEnvironment(flyte.app.AppEnvironment):
         else:
             extra_args = list(self.extra_args)
 
+        if any(arg == "--port" or arg.startswith("--port=") for arg in extra_args):
+            raise ValueError("--port cannot be set in extra_args. Use `port` to set the server port.")
+
         # Rapid-MLX is served locally on the Mac (devbox ports are bound to 127.0.0.1), so bind
         # loopback by default; a --host in extra_args wins.
         host_args = [] if any(a == "--host" for a in extra_args) else ["--host", "127.0.0.1"]
@@ -145,7 +149,9 @@ class RapidMLXAppEnvironment(flyte.app.AppEnvironment):
 
         # Helpful default link to the OpenAI-compatible models endpoint so users can
         # sanity-check the server from the Flyte UI.
-        self.links = [flyte.app.Link(path="/v1/models", title="Rapid-MLX Models", is_relative=True), *self.links]
+        models_link = flyte.app.Link(path="/v1/models", title="Rapid-MLX Models", is_relative=True)
+        if models_link not in self.links:
+            self.links = [models_link, *self.links]
 
         super().__post_init__()
 
