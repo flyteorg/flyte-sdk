@@ -309,6 +309,7 @@ def test_auto_cache_version_ignores_function_body_policy_empty_hash():
         {"output_data_dir": "/var/out"},
         {"metadata_format": "YAML"},
         {"file_input_layout": "NAMED_DIR"},
+        {"data_loading": False},
     ],
 )
 def test_auto_cache_version_changes_with_what_the_container_runs(changed):
@@ -431,3 +432,34 @@ def test_override_to_auto_cache_versions_by_what_the_container_runs():
 def test_override_rejects_a_field_that_does_not_exist():
     with pytest.raises(TypeError, match="not_a_field"):
         _overridable().override(not_a_field=1)
+
+
+def test_data_loading_disabled_emits_no_data_config():
+    task = ContainerTask(name="nodl", image="alpine:latest", command=["true"], outputs={"x": str}, data_loading=False)
+    assert task.data_loading_config(None) is None
+
+
+@pytest.mark.parametrize("data_loading", [True, False])
+def test_data_loading_reaches_the_k8s_pod_of_a_pod_template_task(data_loading):
+    from kubernetes.client import V1Container, V1PodSpec
+
+    from flyte._internal.runtime.task_serde import translate_task_to_wire
+    from flyte.models import SerializationContext
+
+    task = ContainerTask(
+        name="pod_template_task",
+        image="alpine:latest",
+        command=["true"],
+        outputs={"x": str},
+        data_loading=data_loading,
+        pod_template=flyte.PodTemplate(
+            primary_container_name="main", pod_spec=V1PodSpec(containers=[V1Container(name="main")])
+        ),
+    )
+    flyte.TaskEnvironment.from_task(f"data_loading_{str(data_loading).lower()}", task)
+    sctx = SerializationContext(version="v", project="p", domain="d", org="o", code_bundle=None)
+    template = translate_task_to_wire(task, sctx).task_template
+    assert not template.HasField("container")
+    assert template.k8s_pod.HasField("data_config") is data_loading
+    if data_loading:
+        assert template.k8s_pod.data_config.enabled
