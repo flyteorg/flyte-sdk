@@ -80,6 +80,47 @@ async def test_walk_async_local(tmp_dir_structure):
     assert os.path.exists(f.path)
 
 
+def test_walk_sync_recursive_false_top_level_only(tmp_dir_structure):
+    # GH flyte#8358: walk_sync(recursive=False) must return only top-level files.
+    dir_obj = Dir(path=tmp_dir_structure)
+    names = sorted(os.path.basename(f.path) for f in dir_obj.walk_sync(recursive=False))
+    assert names == ["root.txt"]
+
+
+def test_list_files_sync_is_non_recursive(tmp_dir_structure):
+    # GH flyte#8358: list_files_sync() is documented as non-recursive.
+    dir_obj = Dir(path=tmp_dir_structure)
+    names = sorted(os.path.basename(f.path) for f in dir_obj.list_files_sync())
+    assert names == ["root.txt"]
+
+
+def test_walk_sync_file_pattern(tmp_dir_structure):
+    # GH flyte#8358: walk_sync(file_pattern=...) must filter files by the glob.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for name in ["a.txt", "b.csv"]:
+            with open(os.path.join(tmpdir, name), "w") as f:
+                f.write("x")
+        dir_obj = Dir(path=tmpdir)
+        names = sorted(os.path.basename(f.path) for f in dir_obj.walk_sync(file_pattern="*.txt"))
+    assert names == ["a.txt"]
+
+
+@pytest.mark.asyncio
+async def test_walk_recursive_false_top_level_only(tmp_dir_structure):
+    # GH flyte#8358: walk(recursive=False) must return only top-level files, not one level down.
+    dir_obj = Dir(path=tmp_dir_structure)
+    names = sorted([os.path.basename(f.path) async for f in dir_obj.walk(recursive=False)])
+    assert names == ["root.txt"]
+
+
+@pytest.mark.asyncio
+async def test_list_files_is_non_recursive(tmp_dir_structure):
+    # GH flyte#8358: list_files() is documented as non-recursive.
+    dir_obj = Dir(path=tmp_dir_structure)
+    names = sorted(os.path.basename(f.path) for f in await dir_obj.list_files())
+    assert names == ["root.txt"]
+
+
 @pytest.mark.asyncio
 async def test_download_async_local(tmp_dir_structure):
     dest = tempfile.mkdtemp()

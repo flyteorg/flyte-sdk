@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import os
 from pathlib import Path
 from typing import (
@@ -343,7 +344,9 @@ class Dir(BaseModel, Generic[T], SerializableType):
         """
         fs = storage.get_underlying_filesystem(path=self.path)
         if recursive is False:
-            max_depth = 2
+            # fsspec treats maxdepth=1 as the top-level directory only; maxdepth=2 already
+            # descends into the first level of subdirectories.
+            max_depth = 1
 
         # Note if the path is actually just a file, no walking is done.
         if isinstance(fs, AsyncFileSystem):
@@ -410,8 +413,13 @@ class Dir(BaseModel, Generic[T], SerializableType):
             File objects for each file found in the directory
         """
         fs = storage.get_underlying_filesystem(path=self.path)
+        if recursive is False:
+            # fsspec treats maxdepth=1 as the top-level directory only.
+            max_depth = 1
         for parent, _, files in fs.walk(self.path, maxdepth=max_depth):
             for file in files:
+                if not fnmatch.fnmatch(file, file_pattern):
+                    continue
                 if "file" in fs.protocol:
                     full_file = os.path.join(parent, file)
                 else:
