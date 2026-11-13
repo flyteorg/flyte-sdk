@@ -410,6 +410,16 @@ class ActionAbortedError(RuntimeUserError):
         super().__init__("ActionAbortedError", message, "user")
 
 
+class OrgLimitExceededError(RuntimeUserError):
+    """
+    This error is raised when the server refuses to launch an action because the organization is at one of its limits,
+    for example `max_actions_per_run`. Retrying does not help; the message names the limit and the numbers.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("OrgLimitExceeded", message, "user")
+
+
 class SlowDownError(RuntimeUserError):
     """
     This error is raised when the user tries to access a resource that does not exist or is invalid.

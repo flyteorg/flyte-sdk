@@ -3,6 +3,7 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from flyteidl2.core import tasks_pb2
 
 import flyte
 import flyte.errors
@@ -90,13 +91,16 @@ class TestTaskDetailsReusableOverride:
         def key(deployed: TaskDetails) -> str:
             return deployed.override(reusable=policy).pb2.spec.task_template.custom["version"]
 
+        # Deployed by an SDK that predates reuse_policy.version: only custom["version"] names the pool.
         with_custom = self._deployed(flyte.ReusePolicy(replicas=(1, 2)))
+        with_custom.pb2.spec.task_template.reuse_policy.ClearField("version")
         with_policy_version = self._deployed(flyte.ReusePolicy(replicas=(1, 2)))
         with_policy_version.pb2.spec.task_template.reuse_policy.version = "pool-v9"
         not_reusable = self._deployed(None)
 
         # custom["version"] stands in for the code version, so changing the code version changes the pool
         other_custom = self._deployed(flyte.ReusePolicy(replicas=(1, 2)))
+        other_custom.pb2.spec.task_template.reuse_policy.ClearField("version")
         other_custom.pb2.spec.task_template.custom["version"] = "different"
         assert key(with_custom) != key(other_custom)
 
@@ -124,7 +128,9 @@ class TestTaskDetailsReusableOverride:
         assert t.type == "python"
         assert not t.HasField("custom")
         assert not t.HasField("reuse_policy")
+        assert t.worker_kind == tasks_pb2.WORKER_KIND_UNSPECIFIED  # a one-off pod, not a reusable worker's action
         assert deployed.pb2.spec.task_template.type == "actor"  # the fetched task is untouched
+        assert deployed.pb2.spec.task_template.worker_kind == tasks_pb2.WORKER_KIND_REUSABLE
 
     def test_plugin_task_rejects_reusable(self):
         from flyteidl2.task import task_definition_pb2

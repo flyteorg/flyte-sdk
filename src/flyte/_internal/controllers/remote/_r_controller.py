@@ -21,6 +21,7 @@ from flyte._code_bundle import build_pkl_bundle
 from flyte._context import internal_ctx
 from flyte._internal.controllers import TraceInfo
 from flyte._internal.controllers.remote._action import TERMINAL_PHASES
+from flyte._internal.controllers.remote._org_limits import rust_client_error
 from flyte._internal.controllers.remote._service_protocol import use_actions_service
 from flyte._internal.runtime import convert, io
 from flyte._internal.runtime.task_serde import translate_task_to_wire
@@ -86,7 +87,7 @@ async def handle_action_failure(action: Action, task_name: str) -> Exception:
     # tonic Status, not an ExecutionError or Exception. Wrap it so downstream conversion
     # sees something with `.code` (or short-circuits via `isinstance(Exception)`).
     if isinstance(err, str):
-        err = flyte.errors.RuntimeSystemError("RustControllerError", err)
+        err = rust_client_error(err)
     if not err and action.phase_value == phase_pb2.ACTION_PHASE_FAILED:
         logger.error(f"Server reported failure for action {action.name}, checking error file.")
         try:

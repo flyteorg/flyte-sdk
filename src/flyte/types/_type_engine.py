@@ -1252,6 +1252,11 @@ def _assert_transportable_enum(t: Type, sample_value: Any) -> None:
         )
 
 
+def _enum_members(t: Any) -> list:
+    """An enum's canonical members as (name, value) pairs, aliases left out."""
+    return [(m.name, m.value) for m in t]
+
+
 class EnumTransformer(TypeTransformer[enum.Enum]):
     """
     Enables converting a python type enum.Enum to LiteralType.EnumType
@@ -1296,6 +1301,22 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
             raise TypeTransformerFailedError("Expected an enum")
         if type(python_val.value) is not str:
             _assert_transportable_enum(type(python_val), python_val.value)
+        # The member goes on the wire by name, so the name must be one the
+        # literal type declares, and a member of another class must come from a
+        # structurally identical enum (assert_type's rule). Union conversion
+        # calls this for each branch without assert_type, so without the check
+        # a member matched every branch ("Ambiguous choice of variant").
+        target = get_underlying_type(python_type)
+        if (
+            isinstance(target, enum.EnumMeta)
+            and not isinstance(python_val, target)
+            and _enum_members(type(python_val)) != _enum_members(target)
+        ):
+            raise TypeTransformerFailedError(f"Value {python_val} is not in Enum {target}")
+        if expected is not None and expected.HasField("enum_type") and python_val.name not in expected.enum_type.values:
+            raise TypeTransformerFailedError(
+                f"Value {python_val.name} is not valid value, expected - {expected.enum_type.values}"
+            )
 
         return Literal(scalar=Scalar(primitive=Primitive(string_value=python_val.name)))  # type: ignore
 
@@ -1319,7 +1340,14 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
     def assert_type(self, t: Type[enum.Enum], v: T):
         t = get_underlying_type(t)
         if isinstance(v, enum.Enum):
-            if not isinstance(v, t):
+            # A member of a structurally identical enum passes too: a remote
+            # task's enum is guessed afresh each time (guess_python_type), so the
+            # CLI's parameter and the conversion hold two classes with the same
+            # members, and isinstance alone refused a valid value ("Value
+            # DynamicEnum.branch is not in Enum <enum 'DynamicEnum'>"). Same
+            # canonical (name, value) pairs only: aliases and look-alikes are
+            # still refused.
+            if not isinstance(v, t) and _enum_members(type(v)) != _enum_members(t):
                 raise TypeTransformerFailedError(f"Value {v} is not in Enum {t}")
             return
         # For string inputs (e.g. from the CLI), accept enum names since the transformer
