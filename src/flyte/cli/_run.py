@@ -407,7 +407,7 @@ class RunArguments:
         """
         import os
 
-        from .._internal.runtime.convert import PROPAGATED_INTERNAL_CONTEXT_KEYS, RESERVED_CONTEXT_KEYS
+        from .._internal.runtime.convert import HIDDEN_CONTEXT_KEYS
 
         if not self.custom_context and not self.custom_context_from_env:
             return None
@@ -430,7 +430,7 @@ class RunArguments:
             if not key:
                 raise click.BadParameter(f"Invalid --custom-context value {item!r}: key must not be empty.")
             parsed[key] = value
-        reserved = sorted(set(parsed) & (RESERVED_CONTEXT_KEYS | PROPAGATED_INTERNAL_CONTEXT_KEYS))
+        reserved = sorted(set(parsed) & HIDDEN_CONTEXT_KEYS)
         if reserved:
             raise click.BadParameter(f"Custom context key(s) {reserved} are reserved by Flyte.")
         return parsed

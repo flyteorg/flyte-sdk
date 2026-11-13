@@ -30,13 +30,12 @@ def get_custom_context() -> dict[str, str]:
     Returns:
         Dictionary of context key-value pairs
     """
-    from flyte._internal.runtime.convert import PROPAGATED_INTERNAL_CONTEXT_KEYS, RESERVED_CONTEXT_KEYS
+    from flyte._internal.runtime.convert import HIDDEN_CONTEXT_KEYS
 
     tctx = ctx()
     if not tctx or tctx.custom_context is None:
         return {}
-    hidden = RESERVED_CONTEXT_KEYS | PROPAGATED_INTERNAL_CONTEXT_KEYS
-    return {k: v for k, v in tctx.custom_context.items() if k not in hidden}
+    return {k: v for k, v in tctx.custom_context.items() if k not in HIDDEN_CONTEXT_KEYS}
 
 
 @contextmanager
@@ -65,12 +64,13 @@ def custom_context(**context: str):
     Args:
         context: Key-value pairs to set as input context
     """
-    from flyte._internal.runtime.convert import PROPAGATED_INTERNAL_CONTEXT_KEYS
+    from flyte._internal.runtime.convert import ACTION_OVERRIDES_CONTEXT_KEY
 
-    internal = sorted(set(context) & PROPAGATED_INTERNAL_CONTEXT_KEYS)
-    if internal:
-        # Internal keys must reach every descendant unchanged.
-        raise ValueError(f"Context keys {internal} are reserved for internal use and cannot be set.")
+    if ACTION_OVERRIDES_CONTEXT_KEY in context:
+        # It must reach every descendant unchanged.
+        raise ValueError(
+            f"Context key {ACTION_OVERRIDES_CONTEXT_KEY!r} is reserved for internal use and cannot be set."
+        )
     ctx = internal_ctx()
     if ctx.data.task_context is None:
         yield

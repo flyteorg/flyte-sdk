@@ -639,7 +639,7 @@ def _with_context(inputs: task_common_pb2.Inputs, **context: str) -> task_common
 @pytest.mark.parametrize("recover", [False, True])
 async def test_rerun_of_a_fork_drops_the_overrides_key(recover):
     """A fork's overrides belong to that fork: rerunning or recovering it does not carry them."""
-    from flyte._constants import ACTION_OVERRIDES_CONTEXT_KEY
+    from flyte._internal.runtime.convert import ACTION_OVERRIDES_CONTEXT_KEY
 
     mock_client, _mock_run_service, mock_dataproxy, prior_inputs = _mock_client_with_run()
     await _init_for_testing(client=mock_client, project="test", domain="test")
@@ -655,19 +655,50 @@ async def test_rerun_of_a_fork_drops_the_overrides_key(recover):
 
 
 @pytest.mark.asyncio
-async def test_fork_of_a_fork_carries_only_its_own_overrides_key():
-    from flyte._constants import ACTION_OVERRIDES_CONTEXT_KEY
+async def test_new_run_inputs_carry_only_their_own_overrides_key():
+    """What a fork client (flyteplugins-union) builds its root inputs with."""
+    from flyteidl2.common import run_pb2 as common_run_pb2
+    from flyteidl2.task import run_pb2
 
-    mock_client, _mock_run_service, mock_dataproxy, prior_inputs = _mock_client_with_run()
-    await _init_for_testing(client=mock_client, project="test", domain="test")
-    forked = _with_context(prior_inputs, team="ml", **{ACTION_OVERRIDES_CONTEXT_KEY: "s3://b/fork.pb"})
-    mock_dataproxy.get_action_data.return_value = dataproxy_service_pb2.GetActionDataResponse(inputs=forked)
+    from flyte._internal.runtime.convert import ACTION_OVERRIDES_CONTEXT_KEY, prepare_new_run_inputs
 
-    with mock.patch("flyte.remote._run.RunDetails") as RD:
-        RD.get.aio = AsyncMock(return_value=_fake_prior_run())
-        await flyte.with_runcontext(
-            mode="remote", custom_context={ACTION_OVERRIDES_CONTEXT_KEY: "s3://b/new.pb"}
-        ).rerun.aio("r1", recover=True)
+    def inputs() -> task_common_pb2.Inputs:
+        return _with_context(task_common_pb2.Inputs(), team="ml", **{ACTION_OVERRIDES_CONTEXT_KEY: "s3://b/fork.pb"})
 
-    context = [(kv.key, kv.value) for kv in mock_dataproxy.upload_inputs.call_args[0][0].inputs.context]
-    assert context == [("team", "ml"), (ACTION_OVERRIDES_CONTEXT_KEY, "s3://b/new.pb")]
+    plain, fork = run_pb2.RunSpec(), run_pb2.RunSpec()
+    fork.recover.fork = True
+    offloaded = common_run_pb2.OffloadedInputData(uri="s3://b/inputs.pb")
+
+    out, _ = await prepare_new_run_inputs(inputs(), None, fork, "s3://b/new.pb")
+    assert [(kv.key, kv.value) for kv in out.context] == [
+        ("team", "ml"),
+        (ACTION_OVERRIDES_CONTEXT_KEY, "s3://b/new.pb"),
+    ]
+    out, _ = await prepare_new_run_inputs(inputs(), None, plain)
+    assert [kv.key for kv in out.context] == ["team"]
+
+    # Inputs held by URI are read back only when they may carry a key to set or drop.
+    with mock.patch("flyte._internal.runtime.io.load_inputs", new=AsyncMock()) as load:
+        load.return_value.proto_inputs = inputs()
+        assert await prepare_new_run_inputs(None, offloaded, plain) == (None, offloaded)
+        load.assert_not_called()
+        for spec, uri in ((fork, None), (plain, "s3://b/new.pb")):
+            out, still_offloaded = await prepare_new_run_inputs(None, offloaded, spec, uri)
+            assert still_offloaded is None
+            assert {kv.key: kv.value for kv in out.context}.get(ACTION_OVERRIDES_CONTEXT_KEY) == uri
+
+
+def test_overlay_named_literals():
+    from flyte._internal.runtime.convert import overlay_named_literals
+
+    def lits(**values: int) -> list[task_common_pb2.NamedLiteral]:
+        return [
+            task_common_pb2.NamedLiteral(
+                name=k,
+                value=literals_pb2.Literal(scalar=literals_pb2.Scalar(primitive=literals_pb2.Primitive(integer=v))),
+            )
+            for k, v in values.items()
+        ]
+
+    merged = overlay_named_literals(lits(x=1, y=2), lits(z=9, y=20))
+    assert [(lit.name, lit.value.scalar.primitive.integer) for lit in merged] == [("x", 1), ("y", 20), ("z", 9)]

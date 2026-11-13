@@ -7,15 +7,15 @@ import hashlib
 import inspect
 from dataclasses import dataclass
 from types import NoneType
-from typing import Any, Dict, List, Optional, Tuple, Union, cast, get_args
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union, cast, get_args
 
+from flyteidl2.common import run_pb2 as common_run_pb2
 from flyteidl2.core import execution_pb2, interface_pb2, literals_pb2, tasks_pb2
-from flyteidl2.task import common_pb2
+from flyteidl2.task import common_pb2, run_pb2
 from flyteidl2.workflow import run_definition_pb2
 
 import flyte.errors
 import flyte.storage as storage
-from flyte._constants import ACTION_OVERRIDES_CONTEXT_KEY
 from flyte._context import ctx
 from flyte.models import ActionID, NativeInterface, TaskContext
 from flyte.types import TypeEngine, TypeTransformerFailedError
@@ -35,22 +35,59 @@ PRODUCED_ARTIFACTS_CONTEXT_KEY = "_u_produced_artifacts"
 
 RESERVED_CONTEXT_KEYS = frozenset({KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY, PRODUCED_ARTIFACTS_CONTEXT_KEY})
 
-# Internal keys that, unlike RESERVED_CONTEXT_KEYS, propagate to every descendant action. They stay
-# in the task context and in each child's Inputs.context, but are hidden from get_custom_context()
-# and cannot be set through flyte.custom_context(...) or the CLI.
-PROPAGATED_INTERNAL_CONTEXT_KEYS = frozenset({ACTION_OVERRIDES_CONTEXT_KEY})
+# Key under which a fork's client points every action of the run at its overrides file (a
+# serialized flyteidl2.task.ActionOverridesData; see flyte._internal.controllers.remote._input_overrides).
+# Set on the root action's inputs. Unlike RESERVED_CONTEXT_KEYS it propagates to every descendant,
+# so it stays in the task context and in each child's Inputs.context. It cannot be set through
+# flyte.custom_context(...), and a new run made from a fork's inputs does not carry it.
+ACTION_OVERRIDES_CONTEXT_KEY = "_u_action_overrides"
+
+# Context keys that are internal plumbing: hidden from get_custom_context() and rejected by the CLI.
+HIDDEN_CONTEXT_KEYS = RESERVED_CONTEXT_KEYS | {ACTION_OVERRIDES_CONTEXT_KEY}
 
 
-def set_action_overrides_uri(proto_inputs: common_pb2.Inputs, uri: Optional[str]) -> None:
-    """Point a run's root inputs at a fork's overrides file, or, with uri None, at none.
+def overlay_named_literals(
+    base: Iterable[common_pb2.NamedLiteral], overrides: Iterable[common_pb2.NamedLiteral]
+) -> list[common_pb2.NamedLiteral]:
+    """base with each literal replaced, by name, by the override of the same name.
 
-    Replaces any key the inputs already carry (e.g. inherited from the run being forked or rerun).
+    Overrides base lacks (e.g. an input left to its default, or added since) are appended, in order.
     """
-    kept = [kv for kv in proto_inputs.context if kv.key != ACTION_OVERRIDES_CONTEXT_KEY]
-    del proto_inputs.context[:]
-    proto_inputs.context.extend(kept)
-    if uri:
-        proto_inputs.context.append(literals_pb2.KeyValuePair(key=ACTION_OVERRIDES_CONTEXT_KEY, value=uri))
+    values = {lit.name: lit.value for lit in overrides}
+    merged = [common_pb2.NamedLiteral(name=lit.name, value=values.pop(lit.name, lit.value)) for lit in base]
+    merged += [common_pb2.NamedLiteral(name=name, value=value) for name, value in values.items()]
+    return merged
+
+
+async def prepare_new_run_inputs(
+    proto_inputs: Optional[common_pb2.Inputs],
+    offloaded_input_data: Optional[common_run_pb2.OffloadedInputData],
+    source_run_spec: run_pb2.RunSpec,
+    action_overrides_uri: Optional[str] = None,
+    *,
+    read_back: bool = False,
+) -> Tuple[Optional[common_pb2.Inputs], Optional[common_run_pb2.OffloadedInputData]]:
+    """The root inputs of a new run built from the inputs of the run with spec source_run_spec.
+
+    A fork's overrides belong to that fork alone, so the new run carries action_overrides_uri as its
+    overrides key (when it is itself a fork with overrides) and never the source's. Inputs held only
+    by URI cannot be edited, so they are read back when the key must be set, or may need dropping
+    (the source is a fork), or when the caller asks to (read_back, e.g. a run on another queue).
+    """
+    if offloaded_input_data is not None and (read_back or action_overrides_uri or source_run_spec.recover.fork):
+        from flyte._internal.runtime.io import load_inputs
+
+        proto_inputs = (await load_inputs(offloaded_input_data.uri)).proto_inputs
+        offloaded_input_data = None
+    if proto_inputs is not None:
+        kept = [kv for kv in proto_inputs.context if kv.key != ACTION_OVERRIDES_CONTEXT_KEY]
+        del proto_inputs.context[:]
+        proto_inputs.context.extend(kept)
+        if action_overrides_uri:
+            proto_inputs.context.append(
+                literals_pb2.KeyValuePair(key=ACTION_OVERRIDES_CONTEXT_KEY, value=action_overrides_uri)
+            )
+    return proto_inputs, offloaded_input_data
 
 
 # Name of the output slot currently being serialized (e.g. "o0"), scoped to
