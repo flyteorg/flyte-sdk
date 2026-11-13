@@ -884,6 +884,8 @@ impl CoreBaseController {
             // Set server-side when an action is recovered from a prior run; never set by
             // clients on enqueue.
             recovered_from: None,
+            // This controller does not apply overrides to an action's inputs or code.
+            override_applied: false,
             spec: Some(spec),
         };
         Ok(EnqueueRequest {
