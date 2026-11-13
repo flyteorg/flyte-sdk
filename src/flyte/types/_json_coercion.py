@@ -10,6 +10,8 @@ constructs Literals from JSON dicts and projects Literals back to tool/CLI JSON.
 from __future__ import annotations
 
 import dataclasses
+import datetime
+import enum
 import inspect
 import typing
 from collections.abc import Callable
@@ -168,6 +170,10 @@ async def coerce_json_value(
             }
         )
 
+    scalar = _coerce_json_scalar(value, py_type)
+    if scalar is not _NOT_A_SCALAR:
+        return scalar
+
     if isinstance(py_type, type) and isinstance(value, py_type):
         return value
 
@@ -195,6 +201,35 @@ async def coerce_json_value(
         return kwargs["_"]
 
     return value
+
+
+_NOT_A_SCALAR = object()
+
+
+def _coerce_json_scalar(value: Any, py_type: Any) -> Any:
+    """value as py_type for the scalars JSON cannot express, or _NOT_A_SCALAR for other values.
+
+    An int is a valid float, an ISO string a date or datetime, and an enum is named by its
+    member name (any case), which is how Flyte serializes it, or given as a member of another,
+    structurally identical enum class (a remote task's enum is guessed from its interface).
+    """
+    if not isinstance(py_type, type):
+        return _NOT_A_SCALAR
+    if py_type is float and isinstance(value, int) and not isinstance(value, bool):
+        return float(value)
+    if isinstance(value, str) and py_type in (datetime.datetime, datetime.date):
+        try:
+            return py_type.fromisoformat(value)
+        except ValueError as e:
+            raise ValueError(f"{value!r} is not an ISO {py_type.__name__}: {e}") from e
+    if issubclass(py_type, enum.Enum) and not isinstance(value, py_type):
+        name = value.name if isinstance(value, enum.Enum) else value
+        if isinstance(name, str):
+            for member in py_type.__members__:
+                if member.lower() == name.lower():
+                    return py_type[member]
+        raise ValueError(f"{value!r} is not one of {', '.join(py_type.__members__)}")
+    return _NOT_A_SCALAR
 
 
 def coerce_json_value_sync(
