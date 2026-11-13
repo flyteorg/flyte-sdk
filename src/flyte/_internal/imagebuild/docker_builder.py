@@ -551,7 +551,14 @@ def _get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
         secret_file_name = "_".join(list(filter(None, (secret.group, secret.key))))
         secret_file_path = f"/etc/secrets/{secret_file_name}"
         if not os.path.exists(secret_file_path):
-            raise FileNotFoundError(f"Secret not found in Env Var {secret_env_key} or file {secret_file_path}")
+            # The secret is supplied by the user's build environment, so a missing one is a setup problem.
+            from flyte.errors import ImageBuildError
+
+            raise ImageBuildError(
+                f"Secret not found in Env Var {secret_env_key} or file {secret_file_path}. The local image"
+                f" builder reads build secrets from the machine running the build: set {secret_env_key} or"
+                f" create {secret_file_path} before building."
+            )
         return ["--secret", f"id={secret_id},src={secret_file_path}"]
 
     for layer in layers:
