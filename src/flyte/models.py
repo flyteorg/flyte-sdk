@@ -18,7 +18,7 @@ from flyte._logging import logger
 if TYPE_CHECKING:
     from types import FunctionType
 
-    from flyteidl2.core import literals_pb2
+    from flyteidl2.core import literals_pb2, types_pb2
 
     from flyte._checkpoint import Checkpoint
     from flyte._internal.image_cache import ImageCache
@@ -218,10 +218,22 @@ class RawDataPath:
         return remote_path
 
 
+# The control plane stores group names in a VARCHAR(255) column; longer names fail to record and
+# stall status replication for every run on the shard, so reject them before they leave the SDK.
+MAX_GROUP_NAME_LENGTH = 255
+
+
 @rich.repr.auto
 @dataclass(frozen=True)
 class GroupData:
     name: str
+
+    def __post_init__(self):
+        if len(self.name) > MAX_GROUP_NAME_LENGTH:
+            raise ValueError(
+                f"Group name is {len(self.name)} characters long, but the maximum is {MAX_GROUP_NAME_LENGTH}: "
+                f"{self.name[:40]!r}..."
+            )
 
 
 class CallCounter:
@@ -535,6 +547,10 @@ class NativeInterface:
     # remote form.
     _remote_defaults: Optional[Dict[str, literals_pb2.Literal]] = field(default=None, repr=False)
 
+    # The registered literal types of a remote task's inputs. When set, an input's value can choose its own type
+    # instead of the type rebuilt from the registered schema (see `flyte.types._interface.infer_type_from_value`).
+    _remote_input_types: Optional[Dict[str, types_pb2.LiteralType]] = field(default=None, repr=False)
+
     has_default: ClassVar[Type[_has_default]] = _has_default  # This can be used to indicate if a specific input
 
     # has a default value or not, in the case when the default value is not known. An example would be remote tasks.
@@ -568,6 +584,7 @@ class NativeInterface:
         inputs: Dict[str, Tuple[Type, Type[_has_default] | Type[inspect._empty]]],
         outputs: Dict[str, Type],
         default_inputs: Optional[Dict[str, literals_pb2.Literal]] = None,
+        input_literal_types: Optional[Dict[str, types_pb2.LiteralType]] = None,
     ) -> NativeInterface:
         """
         Create a new NativeInterface from the given types. This is used to create a native interface for the task.
@@ -576,6 +593,7 @@ class NativeInterface:
             inputs: A dictionary of input names and their types and a value indicating if they have a default value.
             outputs: A dictionary of output names and their types.
             default_inputs: Optional dictionary of default inputs for remote tasks.
+            input_literal_types: Optional dictionary of the registered literal types of a remote task's inputs.
 
         Returns:
             A NativeInterface object with the given inputs and outputs.
@@ -583,7 +601,12 @@ class NativeInterface:
         for k, v in inputs.items():
             if v[1] is cls.has_default and (default_inputs is None or k not in default_inputs):
                 raise ValueError(f"Input {k} has a default value but no default input provided for remote task.")
-        return cls(inputs=inputs, outputs=outputs, _remote_defaults=default_inputs)
+        return cls(
+            inputs=inputs,
+            outputs=outputs,
+            _remote_defaults=default_inputs,
+            _remote_input_types=input_literal_types,
+        )
 
     @classmethod
     def from_callable(cls, func: Callable) -> NativeInterface:

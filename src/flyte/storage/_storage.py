@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import functools
+import importlib.util
 import os
 import pathlib
 import random
@@ -11,10 +13,11 @@ from uuid import UUID
 import fsspec
 import obstore
 from fsspec.asyn import AsyncFileSystem
+from fsspec.registry import known_implementations
 from fsspec.utils import get_protocol
 from obstore.exceptions import GenericError
-from obstore.fsspec import register
-from obstore.store import ObjectStore
+from obstore.fsspec import FsspecStore
+from obstore.store import ObjectStore, from_url
 
 from flyte._initialize import get_storage
 from flyte._logging import logger
@@ -212,6 +215,27 @@ def get_configured_fsspec_kwargs(
     return {}
 
 
+@functools.lru_cache(maxsize=None)
+def _obstore_filesystem_class(protocol: str) -> type[FsspecStore]:
+    """
+    Build (and cache) a per-protocol subclass of obstore's `FsspecStore`, mirroring what
+    `obstore.fsspec.register(protocol, asynchronous=True)` would register -- but without
+    touching the global fsspec registry.
+
+    Subclasses of fsspec's `AbstractFileSystem` keep fsspec's instance caching (the
+    `_Cached` metaclass) even when instantiated directly, so constructing these classes
+    behaves the same as resolving them through `fsspec.filesystem(...)`.
+
+    abfs/abfss build on `_AzureFsspecStore` so the storage account in the URI keeps winning.
+    """
+    base = _AzureFsspecStore if protocol in ("abfs", "abfss") else FsspecStore
+    return type(
+        f"FlyteFsspecStore_{protocol}",
+        (base,),
+        {"protocol": protocol, "asynchronous": True},
+    )
+
+
 def get_underlying_filesystem(
     protocol: typing.Optional[str] = None,
     anonymous: bool = False,
@@ -224,6 +248,13 @@ def get_underlying_filesystem(
 
     configured_kwargs = get_configured_fsspec_kwargs(protocol, anonymous=anonymous)
     configured_kwargs.update(kwargs)
+
+    if _is_obstore_supported_protocol(protocol):
+        # Instantiate flyte's own obstore-backed filesystem directly instead of resolving the
+        # protocol through the global fsspec registry: the configured kwargs are obstore-shaped
+        # (retry_config, client_options, config), and another SDK sharing the process (e.g.
+        # flyte v1 / flytekit) may have registered s3fs/gcsfs/adlfs for these protocols.
+        return _obstore_filesystem_class(protocol)(**configured_kwargs)
 
     return fsspec.filesystem(protocol, **configured_kwargs)
 
@@ -664,12 +695,50 @@ async def get_stream(path: str, chunk_size=10 * 2**20, **kwargs) -> AsyncGenerat
 
 def join(*paths: str) -> str:
     """
-    Join multiple paths together. This is a wrapper around os.path.join.
-    # TODO replace with proper join with fsspec root etc
+    Join multiple paths together. For URIs (e.g. s3://, gs://, abfs://, file://),
+    joins using forward slashes regardless of the host operating system to prevent Windows
+    backslash corruption while avoiding URL parsing so characters like '#' or '?' in
+    keys are preserved. For local filesystem paths, uses os.path.join.
 
     Args:
         paths: Paths to be joined.
     """
+    if not paths:
+        return ""
+    if len(paths) == 1:
+        return str(paths[0])
+
+    first = str(paths[0])
+    if is_remote(first) or first.startswith("file://"):
+        first_normalized = first.replace("\\", "/")
+        if "://" in first_normalized:
+            scheme, sep, rest = first_normalized.partition("://")
+            prefix = scheme + sep
+        else:
+            prefix = ""
+            rest = first_normalized
+
+        has_leading_slash = rest.startswith("/")
+        segments = []
+        rest_clean = rest.strip("/")
+        if rest_clean:
+            segments.append(rest_clean)
+
+        for p in paths[1:]:
+            cleaned = str(p).replace("\\", "/").strip("/")
+            if cleaned:
+                segments.append(cleaned)
+
+        body = "/".join(segments)
+        if has_leading_slash:
+            body = "/" + body
+
+        joined = prefix + body
+        last = str(paths[-1])
+        if (last == "" or last.endswith(("/", "\\"))) and not joined.endswith("/"):
+            joined += "/"
+        return joined
+
     return str(os.path.join(*paths))
 
 
@@ -722,11 +791,125 @@ def get_credentials_error(uri: str, protocol: str) -> str:
         return (
             f"Failed to download data from {uri}. "
             f"Azure credentials are required to access the data at {uri}. "
-            "Please set the following environment variables: AZURE_STORAGE_ACCOUNT_NAME, "
-            "AZURE_STORAGE_ACCOUNT_KEY"
+            "Please set the following environment variables: FLYTE_AZURE_STORAGE_ACCOUNT_NAME and "
+            "FLYTE_AZURE_STORAGE_ACCOUNT_KEY (or the generic AZURE_STORAGE_ACCOUNT_NAME and "
+            "AZURE_STORAGE_ACCOUNT_KEY)"
         )
     raise ValueError(f"Unsupported protocol: {protocol}")
 
 
-register(_OBSTORE_SUPPORTED_PROTOCOLS, asynchronous=True)
+# obstore config keys (case-insensitive) that name the storage account, and the credentials that
+# only work for that one account.
+_AZURE_ACCOUNT_NAME_KEYS = frozenset({"account_name", "azure_storage_account_name"})
+_AZURE_ACCOUNT_CREDENTIAL_KEYS = frozenset(
+    {
+        "account_key",
+        "access_key",
+        "master_key",
+        "azure_storage_account_key",
+        "azure_storage_access_key",
+        "azure_storage_master_key",
+        "sas_key",
+        "sas_token",
+        "azure_storage_sas_key",
+        "azure_storage_sas_token",
+    }
+)
+
+
+def _azure_account_from_bucket(bucket: str) -> str | None:
+    """Return the storage account named in an abfs netloc like `container@account.dfs.core.windows.net`."""
+    if "@" not in bucket:
+        return None
+    host = bucket.split("@", 1)[1]
+    return host.split(".", 1)[0] or None
+
+
+def _drop_account_specific_keys(config: typing.Mapping[str, typing.Any]) -> typing.Dict[str, typing.Any]:
+    drop = _AZURE_ACCOUNT_NAME_KEYS | _AZURE_ACCOUNT_CREDENTIAL_KEYS
+    return {k: v for k, v in config.items() if k.lower() not in drop}
+
+
+class _AzureFsspecStore(FsspecStore):
+    """
+    obstore's fsspec store for abfs/abfss, except that the storage account in the URI wins.
+
+    obstore lets an explicit `account_name` override the account parsed from the URI. The configured
+    account typically comes from the generic AZURE_STORAGE_ACCOUNT_NAME, which tasks also set for their
+    own data access (adlfs, deltalake, ...), so Flyte's I/O would silently go to the task's account.
+    When the URI names a different account, the configured account name and its account-scoped
+    credentials (key, SAS) are dropped so the store targets the account in the URI.
+    """
+
+    def _construct_store(self, bucket: str) -> ObjectStore:
+        uri_account = _azure_account_from_bucket(bucket)
+        config: typing.Dict[str, typing.Any] = dict(self._config or {})
+        config_kwargs: typing.Dict[str, typing.Any] = dict(self._config_kwargs)
+        configured_account = next(
+            (v for c in (config, config_kwargs) for k, v in c.items() if k.lower() in _AZURE_ACCOUNT_NAME_KEYS),
+            None,
+        )
+        if uri_account and configured_account and configured_account.lower() != uri_account.lower():
+            logger.debug(
+                f"Using storage account '{uri_account}' from the URI instead of configured account "
+                f"'{configured_account}', and not sending the configured account's key or SAS token"
+            )
+            config = _drop_account_specific_keys(config)
+            config_kwargs = _drop_account_specific_keys(config_kwargs)
+
+        protocol = self.protocol if isinstance(self.protocol, str) else self.protocol[0]
+        # from_url's overloads are keyed on a literal scheme, which the type checkers can't narrow to here.
+        return typing.cast(typing.Any, from_url)(
+            url=f"{protocol}://{bucket}",
+            config=config or None,
+            client_options=self._client_options,
+            retry_config=self._retry_config,
+            credential_provider=self._credential_provider,
+            **config_kwargs,
+        )
+
+
+def _other_implementation_installed(protocol: str) -> bool:
+    """
+    Whether the implementation fsspec knows for `protocol` (e.g. s3fs for "s3") is installed.
+
+    fsspec resolves `known_implementations` lazily, so an empty registry does not mean no
+    implementation exists. This only looks the package up; it does not import it. Importing
+    s3fs/gcsfs/adlfs here would add their (large) import time to `import flyte`, and a package
+    that is installed but fails to import would fail `import flyte` with it.
+    """
+    known = known_implementations.get(protocol)
+    if known is None:
+        return False
+    package = known["class"].split(".", 1)[0]
+    try:
+        return importlib.util.find_spec(package) is not None
+    except Exception:
+        # find_spec raises e.g. ValueError for a module in sys.modules without a spec.
+        return False
+
+
+def _register_obstore_for_missing_protocols() -> None:
+    """
+    Register obstore with fsspec only for protocols that have no other installed implementation.
+
+    flyte v1 (flytekit) may share the process (e.g. a v1 task importing `flyte` to launch v2
+    runs) and owns these protocols via s3fs/gcsfs/adlfs; clobbering the global registry breaks
+    its I/O because obstore rejects s3fs/gcsfs/adlfs-only kwargs (e.g. `cache_regions`).
+    flyte's own I/O never resolves these protocols through the registry (see
+    `get_underlying_filesystem`), so this global registration only exists so that third-party
+    libraries (pandas, pyarrow, ...) can still resolve e.g. `s3://` paths in images that
+    don't ship s3fs/gcsfs/adlfs.
+    """
+    for protocol in _OBSTORE_SUPPORTED_PROTOCOLS:
+        if protocol in fsspec.registry:
+            # Someone (e.g. flytekit v1) already registered an implementation; leave it alone.
+            continue
+        if _other_implementation_installed(protocol):
+            # Leave the protocol to that implementation; fsspec imports it on first use.
+            continue
+        fsspec.register_implementation(protocol, _obstore_filesystem_class(protocol))
+
+
+_register_obstore_for_missing_protocols()
 fsspec.register_implementation("flyte", FlyteFS, clobber=True)

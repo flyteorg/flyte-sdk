@@ -53,7 +53,10 @@ async def build(
             sets overwrite_cache=True on the build run.
         wait: Wait for the build to finish. If wait is False, the function will return immediately and the build will
             run in the background.
-        queue: Queue for a remote image build run. Ignored by local builders.
+        queue: Queue of the cluster pool a remote build is for (the current run's queue when None):
+            the image is looked up there, its spec and context are uploaded to storage that pool
+            reads, the build run goes to that queue, and it is cached for that queue. Ignored by
+            the local builders.
     Returns:
         An ImageBuild object containing the image URI and optionally the remote run that kicked off the build.
 
