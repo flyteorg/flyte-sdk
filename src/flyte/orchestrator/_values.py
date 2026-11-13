@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from flyteidl2.core import interface_pb2, literals_pb2, types_pb2
 
 from flyte.sandbox._bridge import _BLOB_FIELDS, _BLOB_TUPLES, Opaque
+from flyte.types._interface import describe_literal_type as describe
 
 # How deeply values may nest, as the worker allows.
 MAX_DEPTH = 32
@@ -177,29 +178,6 @@ def name_of(value: Any) -> str:
 
 def _blob_kind(blob_type: types_pb2.BlobType) -> Optional[str]:
     return {_SINGLE: "File", _MULTIPART: "Dir"}.get(blob_type.dimensionality)
-
-
-def describe(literal_type: types_pb2.LiteralType) -> str:
-    """The type as a Python annotation, for messages."""
-    kind = literal_type.WhichOneof("type")
-    if kind == "simple":
-        try:
-            return types_pb2.SimpleType.Name(literal_type.simple).lower()
-        except ValueError:
-            return f"simple type {literal_type.simple}"
-    if kind == "collection_type":
-        return f"list[{describe(literal_type.collection_type)}]"
-    if kind == "map_value_type":
-        return f"dict[str, {describe(literal_type.map_value_type)}]"
-    if kind == "union_type":
-        return " | ".join(describe(variant) for variant in literal_type.union_type.variants)
-    if kind == "blob":
-        return _blob_kind(literal_type.blob) or "a file or directory"
-    return {
-        "structured_dataset_type": "a dataframe",
-        "schema": "a schema",
-        "enum_type": "an enum",
-    }.get(kind or "", "an unknown type")
 
 
 def _opaque_kind(literal: literals_pb2.Literal) -> Optional[str]:
