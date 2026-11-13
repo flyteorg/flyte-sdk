@@ -124,6 +124,20 @@ async def test_walk_async_max_depth(tmp_dir_structure):
     assert len([f async for f in dir_obj.walk(max_depth=2)]) == 3
 
 
+@pytest.mark.asyncio
+async def test_walk_async_second_positional_arg_is_max_depth(tmp_dir_structure):
+    # Backward compat: the second positional arg must remain max_depth (not file_pattern).
+    dir_obj = Dir(path=tmp_dir_structure)
+    assert len([f async for f in dir_obj.walk(True, 1)]) == 1
+    assert len([f async for f in dir_obj.walk(True, 2)]) == 3
+
+
+def test_walk_sync_second_positional_arg_is_max_depth(tmp_dir_structure):
+    dir_obj = Dir(path=tmp_dir_structure)
+    assert len(list(dir_obj.walk_sync(True, 1))) == 1
+    assert len(list(dir_obj.walk_sync(True, 2))) == 3
+
+
 def test_list_files_sync_is_non_recursive(tmp_dir_structure):
     dir_obj = Dir(path=tmp_dir_structure)
     names = sorted(os.path.basename(f.path) for f in dir_obj.list_files_sync())
