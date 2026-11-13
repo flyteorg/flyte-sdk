@@ -23,6 +23,7 @@ from flyteidl2.plugins.ray_pb2 import AutoscalerOptions, HeadGroupSpec, RayClust
 from google.protobuf.json_format import MessageToDict
 
 import ray
+from ray.exceptions import RayActorError
 
 if typing.TYPE_CHECKING:
     pass
@@ -30,6 +31,20 @@ if typing.TYPE_CHECKING:
 
 _RAY_HEAD_CONTAINER_NAME = "ray-head"
 _RAY_WORKER_CONTAINER_NAME = "ray-worker"
+_MAX_CAUSE_DEPTH: int = 16
+
+
+def _is_node_preemption(exc: BaseException) -> bool:
+    """Whether a Ray actor in the cause chain died because its node was drained or preempted."""
+    seen: set[int] = set()
+    node: Optional[BaseException] = exc
+    while node is not None and id(node) not in seen and len(seen) < _MAX_CAUSE_DEPTH:
+        seen.add(id(node))
+        if isinstance(node, RayActorError) and getattr(node, "preempted", False):
+            return True
+        ray_cause = getattr(node, "cause", None)
+        node = ray_cause if isinstance(ray_cause, BaseException) else node.__cause__
+    return False
 
 
 @dataclass
@@ -219,6 +234,17 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
         if not ray.is_initialized():
             ray.init(**init_params)
         return {}
+
+    async def execute(self, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return await super().execute(*args, **kwargs)
+        except Exception as e:
+            if _is_node_preemption(e):
+                raise flyte.errors.RuntimeSystemError(
+                    code="NodeDisrupted",
+                    message=f"A Ray node was drained or preempted while the task was running: {e}",
+                ) from e
+            raise
 
     def custom_config(self, sctx: SerializationContext) -> Optional[Dict[str, Any]]:
         cfg = self.plugin_config
