@@ -1,3 +1,5 @@
+from typing import get_args
+
 import pytest
 from flyteidl2.core import tasks_pb2
 
@@ -8,7 +10,7 @@ from flyte._internal.runtime.resources_serde import (
     get_proto_extended_resources,
     get_proto_resources,
 )
-from flyte._resources import GPU, Resources
+from flyte._resources import AMD_GPU, GPU, Device, GPUType, Resources, SharedGPUType
 
 
 def test_cpu_single():
@@ -55,6 +57,10 @@ def test_gpu_int():
         "L40s:2",
         "T4g:1",
         "B300:8",
+        "B200:8",
+        "H200:8",
+        "A2:1",
+        "GB10:1",
     ],
 )
 def test_gpu_accelerator_mapping(gpu_str):
@@ -184,6 +190,12 @@ def test_accelerator_map_with_fallback():
     assert acc.device == "CustomGPU-X1000"  # Should use original device string as fallback
 
 
+def test_every_gpu_type_has_a_device_mapping():
+    # Every dedicated GPU the SDK accepts must normalize to a node label; shared GPUs are sent as is.
+    missing = set(get_args(GPUType)) - set(get_args(SharedGPUType)) - set(ACCELERATOR_DEVICE_MAP)
+    assert not missing
+
+
 @pytest.mark.parametrize("device", ["T4 shared", "L4 shared", "A10G shared", "A10 shared", "L40S shared"])
 def test_gpu_shared_device_string(device):
     # Sent as is, with no partition. The backend maps "T4 shared" to the nvidia-tesla-t4-shared node
@@ -202,3 +214,28 @@ def test_gpu_shared_accelerator_string():
     acc = _get_gpu_extended_resource_entry(Resources(gpu="T4 shared:1"))
     assert acc is not None
     assert acc.device == "T4 shared"
+
+
+@pytest.mark.parametrize(
+    "gpu",
+    [
+        "MI355X:8",
+        AMD_GPU("MI355X", 8),
+        Device(quantity=8, device_class="AMD_GPU", device="MI355X"),
+    ],
+)
+def test_amd_gpu_multi_quantity_to_proto(gpu):
+    """Every spelling of 8x MI355X serializes to an AMD accelerator with a GPU request of 8"""
+    res = Resources(gpu=gpu)
+
+    proto = get_proto_resources(res)
+    assert proto is not None
+    gpu_entries = [e for e in proto.requests if e.name == tasks_pb2.Resources.ResourceName.GPU]
+    assert len(gpu_entries) == 1
+    assert gpu_entries[0].value == "8"
+
+    ext = get_proto_extended_resources(res)
+    assert ext is not None
+    assert ext.gpu_accelerator.device == "MI355X"
+    assert ext.gpu_accelerator.device_class == tasks_pb2.GPUAccelerator.AMD_GPU
+    assert not ext.gpu_accelerator.partition_size

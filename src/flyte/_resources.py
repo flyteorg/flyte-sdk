@@ -90,6 +90,11 @@ Slices for Google Cloud TPU v6e.
 NeuronType = Literal["Inf1", "Inf2", "Trn1", "Trn1n", "Trn2", "Trn2u"]
 
 AMD_GPUType = Literal["MI100", "MI210", "MI250", "MI250X", "MI300A", "MI300X", "MI325X", "MI350X", "MI355X"]
+AMD_GPUQuantity = Literal[1, 8]
+"""
+AMD GPU counts accepted by `AMD_GPU()` and the `"<type>:<count>"` strings: one GPU or a full 8-GPU node.
+Use `Device(quantity=..., device_class="AMD_GPU", device=...)` for any other count.
+"""
 
 HABANA_GAUDIType = Literal["Gaudi1"]
 
@@ -278,22 +283,31 @@ Accelerators = Literal[
     "Inf2:12",
     # MI100
     "MI100:1",
+    "MI100:8",
     # MI210
     "MI210:1",
+    "MI210:8",
     # MI250
     "MI250:1",
+    "MI250:8",
     # MI250X
     "MI250X:1",
+    "MI250X:8",
     # MI300A
     "MI300A:1",
+    "MI300A:8",
     # MI300X
     "MI300X:1",
+    "MI300X:8",
     # MI325X
     "MI325X:1",
+    "MI325X:8",
     # MI350X
     "MI350X:1",
+    "MI350X:8",
     # MI355X
     "MI355X:1",
+    "MI355X:8",
     # Habana Gaudi
     "Gaudi1:1",
     # Apple Silicon (devbox-local)
@@ -451,20 +465,29 @@ def Neuron(device: NeuronType) -> Device:
     return Device(device=device, quantity=1, device_class="NEURON")
 
 
-def AMD_GPU(device: AMD_GPUType) -> Device:
+def AMD_GPU(device: AMD_GPUType, quantity: AMD_GPUQuantity = 1) -> Device:
     """
     Create an AMD GPU device instance.
+
+    The same as the `gpu="<device>:<quantity>"` string form, e.g. `AMD_GPU("MI355X", 8)` is `gpu="MI355X:8"`.
 
     Args:
         device: Device type (e.g., "MI100", "MI210", "MI250", "MI250X", "MI300A", "MI300X", "MI325X", "MI350X",
             "MI355X").
+        quantity: The number of AMD GPUs of this type: 1, or 8 for a full 8-GPU node. Defaults to 1. For any
+            other count, use `Device(quantity=..., device_class="AMD_GPU", device=...)`.
 
     Returns:
         Device instance.
     """
     if device not in get_args(AMD_GPUType):
         raise ValueError(f"Invalid AMD GPU type: {device}. Must be one of {get_args(AMD_GPUType)}")
-    return Device(device=device, quantity=1, device_class="AMD_GPU")
+    if quantity not in get_args(AMD_GPUQuantity):
+        raise ValueError(
+            f"Invalid AMD GPU quantity: {quantity}. AMD GPUs are requested as 1 or a full 8-GPU node, "
+            f"so quantity must be one of {get_args(AMD_GPUQuantity)}."
+        )
+    return Device(device=device, quantity=quantity, device_class="AMD_GPU")
 
 
 def HABANA_GAUDI(device: HABANA_GAUDIType) -> Device:
@@ -613,6 +636,8 @@ class Resources:
 
             Supported GPU types include A2, T4, L4, L40s, A10, A10G, A100, A100_80G, B200, H100, H200, V100,
             RTX_PRO_4500, RTX_PRO_6000, and GB10.
+            AMD GPUs (MI100, MI210, MI250, MI250X, MI300A, MI300X, MI325X, MI350X, MI355X) take 1 or a full
+            8-GPU node, e.g. `"MI355X:8"` or `AMD_GPU("MI355X", 8)`; other counts need `Device(...)`.
             GPU partitioning (MIG) is available on A100, A100_80G, H100, H200, and RTX_PRO_6000.
             Time-sliced (or MPS) shares come from `GPU("T4 shared", 1)` and the other
             `SharedGPUType` devices.
