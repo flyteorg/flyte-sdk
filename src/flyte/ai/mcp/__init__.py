@@ -4,6 +4,7 @@ from flyte.ai.mcp._flyte_mcp_app import (
     READ_ONLY_MCP_TOOLS,
     TOOL_GROUP_MAPPING,
     FlyteMCPAppEnvironment,
+    ProtectedResourceMetadata,
     resolve_tools,
 )
 from flyte.ai.mcp._mcp_app import MCPAppEnvironment
@@ -15,5 +16,6 @@ __all__ = [
     "TOOL_GROUP_MAPPING",
     "FlyteMCPAppEnvironment",
     "MCPAppEnvironment",
+    "ProtectedResourceMetadata",
     "resolve_tools",
 ]
