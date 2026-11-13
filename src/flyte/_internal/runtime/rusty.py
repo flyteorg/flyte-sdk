@@ -1,8 +1,9 @@
 import asyncio
 import os
+import sys
 import time
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import List, Mapping, Optional, Tuple
 
 from flyte._context import contextual_run
 from flyte._internal.controllers import Controller
@@ -106,6 +107,21 @@ async def create_controller(
     return _create_controller(ct="remote", **controller_kwargs)
 
 
+def _parse_attempt_number(attempt_number: int | str | None) -> int | None:
+    """Normalize the per-invocation attempt number, returning None when it is missing or unusable."""
+    if attempt_number is None or isinstance(attempt_number, bool):
+        return None
+    try:
+        value = int(attempt_number)
+    except (TypeError, ValueError):
+        logger.warning(f"[rusty] Ignoring invalid attempt number {attempt_number!r}")
+        return None
+    if value < 0:
+        logger.warning(f"[rusty] Ignoring negative attempt number {attempt_number!r}")
+        return None
+    return value
+
+
 async def run_task(
     task: TaskTemplate,
     controller: Controller,
@@ -128,6 +144,15 @@ async def run_task(
     # placeholder → None) Rust-side and passes a datetime here; absent → None and TaskContext
     # fills in now(UTC).
     run_start_time: Optional[datetime] = None,
+    # The 0-based retry attempt of this invocation. The actor worker receives it per task in the
+    # FLYTE_ATTEMPT_NUMBER entry of the env vars that come with each assignment, and should pass that
+    # value here. The worker's own process environment cannot be used instead: it is set once when the
+    # replica starts, so every retry routed to a warm replica would otherwise read the first value.
+    attempt_number: int | str | None = None,
+    # The env vars that come with this invocation's assignment. The worker hands them over here instead of
+    # writing them to os.environ, which every task running in the process shares. They end up on the
+    # invocation's own TaskContext, so tasks running at the same time each see their own values.
+    env_vars: Mapping[str, str] | None = None,
 ):
     """
     Runs the task with the provided parameters.
@@ -150,6 +175,11 @@ async def run_task(
         code_bundle: Optional code bundle for the task.
         input_path: Optional input path for the task.
         path_rewrite_cfg: Optional path rewrite configuration.
+        run_start_time: Optional start time of the parent run.
+        attempt_number: Optional 0-based retry attempt of this invocation, as an int or its string form.
+            When absent, `TaskContext.attempt_number` falls back to the process environment.
+        env_vars: Optional env vars delivered with this invocation. They are stored, read-only, as
+            `TaskContext.invocation_env` and are never written to the process environment.
 
     Returns:
         The loaded task template.
@@ -180,6 +210,8 @@ async def run_task(
         else:
             logger.info(f"[rusty] Using path rewrite: {path_rewrite}")
 
+    retry_attempt = _parse_attempt_number(attempt_number)
+
     try:
         # Tasks share this process: an aborted sync task must hold its slot until its thread returns, or the
         # executor's cleanup timeout restarts the process.
@@ -198,6 +230,8 @@ async def run_task(
                 input_path=input_path,
                 image_cache=ImageCache.from_transport(image_cache) if image_cache else None,
                 run_start_time=run_start_time,
+                retry_attempt=retry_attempt,
+                invocation_env=env_vars,
             )
     except asyncio.CancelledError as e:
         logger.error(f"[rusty] Task cancellation received: {e!s}")
@@ -212,6 +246,31 @@ async def run_task(
             f"[rusty] TASK_EXECUTION_END: Task '{task.name}' (action: {action_id})"
             f" done after {duration:.2f}s at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}"
         )
+        _flush_output_streams()
+
+
+def _flush_output_streams() -> None:
+    """
+    Flush stdout, stderr and the flyte log handlers after a task invocation.
+
+    The a0 entrypoint flushes these once, right before its process exits. A reusable container's worker
+    process runs one invocation after another and never reaches that point, and when its output goes to a
+    pipe Python buffers it in blocks, so print() output from a task could sit in the buffer indefinitely
+    and never show up in that task's logs. Flushing at the end of every invocation gets it out while it
+    still belongs to the task that wrote it. A stream that user code closed or replaced with something
+    that cannot flush is skipped, since a logging hiccup must not change the outcome of the task.
+    """
+    for handler in logger.handlers:
+        try:
+            handler.flush()
+        except Exception:
+            pass
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream is not None:
+                stream.flush()
+        except Exception:
+            pass
 
 
 async def ping(name: str) -> str:
