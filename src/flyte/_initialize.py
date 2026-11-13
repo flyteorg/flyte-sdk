@@ -195,6 +195,7 @@ def _initialize_logger(
     log_format: LogFormat | None = None,
     reset_root_logger: bool = False,
     user_log_level: int | None = None,
+    wrap_root_handlers: bool | None = None,
 ) -> None:
     # In-cluster runtimes never render Rich output (stdout is captured), so skip the Rich handler
     # — this avoids rich.logging and the transitive ipython_check -> IPython import at startup.
@@ -205,6 +206,7 @@ def _initialize_logger(
         enable_rich=enable_rich,
         reset_root_logger=reset_root_logger,
         user_log_level=user_log_level,
+        wrap_root_handlers=wrap_root_handlers,
     )
 
 
@@ -218,6 +220,7 @@ async def init(
     log_format: LogFormat | None = None,
     reset_root_logger: bool = False,
     user_log_level: int | None = None,
+    wrap_root_handlers: bool | None = None,
     endpoint: str | None = None,
     headless: bool = False,
     insecure: bool = False,
@@ -266,6 +269,13 @@ async def init(
             warnings are logged through it too. Defaults to False, which leaves those handlers in
             place and instead wraps each one so its output carries the run and action context. Can
             also be turned on with the environment variable `FLYTE_RESET_ROOT_LOGGER=1`.
+        wrap_root_handlers: Controls that wrapping. Defaults to True. Set it to False (or export
+            `FLYTE_WRAP_ROOT_HANDLERS=0`) to leave handlers Flyte did not create completely
+            untouched, which an application that owns its root-handler formatting -- emitting
+            structured JSON, say -- needs in order to keep that output parseable. The run and
+            action context is still stamped onto every record as the `run_name` and `action_name`
+            attributes, so it can be rendered by the application's own formatter. Ignored when
+            `reset_root_logger` is True.
         api_key: Optional API key for authentication
         endpoint: Optional API endpoint URL
         headless: Optional Whether to run in headless mode
@@ -316,6 +326,7 @@ async def init(
         log_format=log_format,
         reset_root_logger=reset_root_logger,
         user_log_level=user_log_level,
+        wrap_root_handlers=wrap_root_handlers,
     )
     if load_plugin_type_transformers:
         _load_custom_type_transformers()
@@ -379,6 +390,7 @@ async def init_from_config(
     log_level: int | None = None,
     log_format: LogFormat = "console",
     user_log_level: int | None = None,
+    wrap_root_handlers: bool | None = None,
     org: str | None = None,
     project: str | None = None,
     domain: str | None = None,
@@ -404,6 +416,10 @@ async def init_from_config(
         log_level: Optional logging level for the framework logger,
             default is set using the default initialization policies
         log_format: Optional logging format for the logger, default is "console"
+        wrap_root_handlers: Whether Flyte may wrap the formatter of each pre-existing root handler
+            so third-party log lines also carry the run and action context. Defaults to True. Set
+            it to False (or export `FLYTE_WRAP_ROOT_HANDLERS=0`) to leave handlers Flyte did not
+            create untouched. See `init` for details.
         storage: Optional blob store (S3, GCS, Azure) configuration if needed to access (i.e. using Minio)
         images: List of image strings in format "imagename=imageuri" or just "imageuri".
         sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
@@ -453,6 +469,7 @@ async def init_from_config(
         log_level=log_level,
         log_format=log_format,
         user_log_level=user_log_level,
+        wrap_root_handlers=wrap_root_handlers,
         image_builder=image_builder or cfg.image.builder or "local",
         batch_size=batch_size,
         images=cfg.image.image_refs,

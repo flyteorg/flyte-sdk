@@ -75,6 +75,19 @@ def is_rich_logging_disabled() -> bool:
     return os.environ.get("DISABLE_RICH_LOGGING") is not None
 
 
+def wrap_root_handlers_from_env() -> bool:
+    """
+    Whether flyte may wrap the formatters of root handlers it did not create, so that third-party
+    log lines pick up the [run][action] prefix. Set FLYTE_WRAP_ROOT_HANDLERS=0 to leave them alone;
+    the run/action context is still stamped onto every record by the log record factory, so callers
+    that opt out can render it themselves.
+    """
+    value = os.environ.get("FLYTE_WRAP_ROOT_HANDLERS")
+    if value is None:
+        return True
+    return value.strip().lower() not in ("0", "false", "no", "off")
+
+
 def get_env_log_level() -> int:
     value = os.getenv("LOG_LEVEL")
     if value is None:
@@ -205,10 +218,20 @@ def initialize_logger(
     enable_rich: bool = False,
     reset_root_logger: bool = False,
     user_log_level: int | None = None,
+    wrap_root_handlers: bool | None = None,
 ):
     """
     Initializes the global loggers to the default configuration.
     When enable_rich=True, upgrades to Rich handler for local CLI usage.
+
+    The root logger is left alone by default apart from having the formatters of its existing
+    handlers wrapped, so that third-party log lines render with the [run][action] prefix:
+
+    - reset_root_logger=True clears every root handler and installs flyte's own instead.
+    - wrap_root_handlers=False leaves handlers flyte did not create completely untouched. Use this
+      when the application owns the root handler formatting (structured/JSON logging, for example).
+      The run/action context is still stamped onto every record, so it can be rendered by the
+      application's own formatter via the run_name and action_name record attributes.
     """
     global logger  # noqa: PLW0603
 
@@ -225,9 +248,11 @@ def initialize_logger(
     use_rich = enable_rich and not use_json
 
     reset_root_logger = reset_root_logger or os.environ.get("FLYTE_RESET_ROOT_LOGGER") == "1"
+    if wrap_root_handlers is None:
+        wrap_root_handlers = wrap_root_handlers_from_env()
     if reset_root_logger:
         _setup_root_logger(use_json=use_json, use_rich=use_rich, log_level=log_level)
-    else:
+    elif wrap_root_handlers:
         # Wrap each existing root-handler formatter so third-party log lines
         # routed through root render with [run][action]. Captures handlers
         # registered before this call; handlers added later won't be wrapped
