@@ -21,6 +21,7 @@ from flyte._code_bundle import build_pkl_bundle
 from flyte._context import internal_ctx
 from flyte._internal.controllers import TraceInfo
 from flyte._internal.controllers.remote._action import TERMINAL_PHASES
+from flyte._internal.controllers.remote._org_limits import rust_client_error
 from flyte._internal.controllers.remote._service_protocol import use_actions_service
 from flyte._internal.runtime import convert, io
 from flyte._internal.runtime.task_serde import translate_task_to_wire
@@ -86,7 +87,7 @@ async def handle_action_failure(action: Action, task_name: str) -> Exception:
     # tonic Status, not an ExecutionError or Exception. Wrap it so downstream conversion
     # sees something with `.code` (or short-circuits via `isinstance(Exception)`).
     if isinstance(err, str):
-        err = flyte.errors.RuntimeSystemError("RustControllerError", err)
+        err = rust_client_error(err)
     if not err and action.phase_value == phase_pb2.ACTION_PHASE_FAILED:
         logger.error(f"Server reported failure for action {action.name}, checking error file.")
         try:
@@ -141,8 +142,13 @@ class RemoteController(BaseController):
         endpoint: str | None = None,
         workers: int = 20,
         max_system_retries: int = 10,  # TODO: pass in Rust controller (hard-coded MAX_RETRIES = 5 in core.rs)
+        workload_token: bool = False,
     ):
-        # No endpoint means must have the api key env var
+        # No endpoint means must have the api key env var. With workload_token, the endpoint is authenticated
+        # with the pod's own service-account token (_U_WORKLOAD, _U_WORKLOAD_TOKEN_FILE).
+        # Passed only when set, so an older flyte_controller_base without the argument keeps working.
+        if workload_token:
+            return super().__new__(cls, endpoint=endpoint, workers=workers, workload_token=True)
         return super().__new__(cls, endpoint=endpoint, workers=workers)
 
     def __init__(
@@ -150,6 +156,7 @@ class RemoteController(BaseController):
         endpoint: str | None = None,
         workers: int = 20,
         max_system_retries: int = 10,  # TODO: pass in Rust controller (hard-coded MAX_RETRIES = 5 in core.rs)
+        workload_token: bool = False,
     ):
         default_parent_concurrency = int(os.getenv("_F_P_CNC", "1000"))
         self._default_parent_concurrency = default_parent_concurrency

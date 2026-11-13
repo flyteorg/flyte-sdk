@@ -1,10 +1,11 @@
+import copy
 import hashlib
 import inspect
 import json
 import os
 import pathlib
 import shutil
-from dataclasses import replace
+from dataclasses import fields, replace
 from typing import Any, Dict, List, Literal, Optional, Tuple, Type, Union
 
 from flyteidl2.core import tasks_pb2
@@ -106,6 +107,11 @@ class ContainerTask(TaskTemplate):
         file_input_layout: How CoPilot stages File / list[File] inputs on disk.
             "DIRECT" (default) uses the bare path/index; "NAMED_DIR" preserves each input's
             original basename (and extension), so extension-sniffing tools work.
+        data_loading: If True (default), CoPilot downloads inputs into `input_data_dir` before the
+            container starts and uploads outputs from `output_data_dir` after it exits. Set False for
+            a container that reads its inputs from template arguments (e.g. "{{.inputs.x}}") and
+            writes its outputs itself (e.g. to "{{.outputPrefix}}"): no CoPilot containers are added
+            to the pod. Only affects remote execution.
     """
 
     MetadataFormat = Literal["JSON", "YAML", "PROTO"]
@@ -123,6 +129,7 @@ class ContainerTask(TaskTemplate):
         metadata_format: MetadataFormat = "JSON",
         local_logs: bool = True,
         file_input_layout: Literal["DIRECT", "NAMED_DIR"] = "DIRECT",
+        data_loading: bool = True,
         **kwargs,
     ):
         super().__init__(
@@ -159,15 +166,37 @@ class ContainerTask(TaskTemplate):
         self._outputs = outputs
         self.local_logs = local_logs
         self._file_input_layout = file_input_layout
+        self._data_loading = data_loading
+        self._version_cache()
 
+    def _replace(self, **changes: Any) -> "ContainerTask":
+        """
+        Return a copy of this task with `changes` applied, for `override`.
+
+        `dataclasses.replace` can't rebuild a `ContainerTask`: `__init__` takes `command` and the like, not the
+        dataclass's fields. So the copy keeps them, and what `__init__` derives from the fields is derived again.
+        """
+        unknown = changes.keys() - {f.name for f in fields(self) if f.init}
+        if unknown:
+            raise TypeError(f"{type(self).__name__} has no fields {sorted(unknown)} to override")
+        new = copy.copy(self)
+        for name, value in changes.items():
+            setattr(new, name, value)
+        new.__post_init__()
+        new._version_cache()
+        return new
+
+    def _version_cache(self) -> None:
         # "auto" caching versions a task by its Python function body, which a container task
         # doesn't have. Version it by what the container runs instead, keeping any other
         # policies the caller supplied. Explicit "override" versions are left untouched.
         cache = cache_from_request(self.cache)
         if cache.behavior == "auto":
             existing = cache.policies if isinstance(cache.policies, list) else [cache.policies]
-            policies = [p for p in existing if p is not None and not isinstance(p, FunctionBodyPolicy)]
-            spec = {
+            policies = [
+                p for p in existing if p is not None and not isinstance(p, (FunctionBodyPolicy, ContainerBodyPolicy))
+            ]
+            spec: Dict[str, Any] = {
                 "command": list(self._cmd or []),
                 "args": list(self._args or []),
                 "input_data_dir": str(self._input_data_dir),
@@ -175,6 +204,9 @@ class ContainerTask(TaskTemplate):
                 "metadata_format": self._metadata_format,
                 "file_input_layout": self._file_input_layout,
             }
+            # Only when disabled, so tasks that leave it at the default keep their cache version.
+            if not self._data_loading:
+                spec["data_loading"] = False
             self.cache = replace(cache, policies=[ContainerBodyPolicy(self._image, spec), *policies])
 
     def _render_command_and_volume_binding(self, cmd: str, **kwargs) -> Tuple[str, Dict[str, Dict[str, str]]]:
@@ -428,7 +460,9 @@ class ContainerTask(TaskTemplate):
         container.remove()
         return output
 
-    def data_loading_config(self, sctx: SerializationContext) -> tasks_pb2.DataLoadingConfig:
+    def data_loading_config(self, sctx: SerializationContext) -> Optional[tasks_pb2.DataLoadingConfig]:
+        if not self._data_loading:
+            return None
         literal_to_protobuf = {
             "JSON": tasks_pb2.DataLoadingConfig.JSON,
             "YAML": tasks_pb2.DataLoadingConfig.YAML,

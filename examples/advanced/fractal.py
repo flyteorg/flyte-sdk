@@ -39,6 +39,7 @@ async def tree(max_depth: int = 3, n_children: int = 2, index: int = 1, depth: i
 async def main_builder():
     from flyte._internal.imagebuild.image_builder import ImageBuildEngine
 
+    assert isinstance(env.image, flyte.Image)
     result = await ImageBuildEngine.build(env.image)
     print(f"Built image URI: {result.uri}")
     return result

@@ -205,3 +205,57 @@ def test_mixed_value_enum_is_rejected_when_it_reaches_the_wire():
 
     with pytest.raises(TypeTransformerFailedError, match="Only string-valued enums and IntEnum"):
         TypeEngine.to_literal_type(IntFirst)
+
+
+@pytest.mark.asyncio
+async def test_a_member_of_a_separately_guessed_copy_converts():
+    # The CLI builds a deployed task's enum parameter from one guess and
+    # converts against another: two classes with the same members, which
+    # isinstance alone refused ("Value DynamicEnum.branch is not in Enum").
+    lit = TypeEngine.to_literal_type(Color)
+    parsed_with = TypeEngine.guess_python_type(lit)
+    converted_with = TypeEngine.guess_python_type(lit)
+    lv = await TypeEngine.to_literal(parsed_with["GREEN"], converted_with, lit)
+    assert lv.scalar.primitive.string_value == "GREEN"
+    assert await TypeEngine.to_python_value(lv, Color) == Color.GREEN
+
+
+@pytest.mark.asyncio
+async def test_a_look_alike_enum_is_still_refused():
+    lit = TypeEngine.to_literal_type(Color)
+    guessed = TypeEngine.guess_python_type(lit)
+    # Same names, one extra member: not the same enum.
+    Wider = Enum("DynamicEnum", {"RED": "RED", "GREEN": "GREEN", "BLUE": "BLUE", "PINK": "PINK"})
+    with pytest.raises(TypeTransformerFailedError):
+        await TypeEngine.to_literal(Wider["GREEN"], guessed, lit)
+    # An alias resolves to its canonical member, so it goes out by the
+    # canonical name (never the alias's), when the canonical members match.
+    Aliased = Enum("DynamicEnum", {"RED": "RED", "GREEN": "GREEN", "BLUE": "BLUE", "LIME": "GREEN"})
+    lv = await TypeEngine.to_literal(Aliased["LIME"], guessed, lit)
+    assert lv.scalar.primitive.string_value == "GREEN"
+
+
+@pytest.mark.asyncio
+async def test_a_union_of_separately_guessed_enums_picks_the_right_branch():
+    from typing import Union
+
+    class A(Enum):
+        RED = "RED"
+
+    class B(Enum):
+        BLUE = "BLUE"
+
+    lit = TypeEngine.to_literal_type(Union[A, B])
+    first, second = TypeEngine.guess_python_type(lit), TypeEngine.guess_python_type(lit)
+    red = next(t for t in first.__args__ if "RED" in t.__members__)["RED"]
+    lv = await TypeEngine.to_literal(red, second, lit)
+    assert lv.scalar.union.value.scalar.primitive.string_value == "RED"
+
+
+@pytest.mark.asyncio
+async def test_a_literal_enum_never_takes_a_foreign_members_name():
+    target = literal_to_enum(Literal["low", "high"])
+    lit = TypeEngine.to_literal_type(target)
+    Foreign = Enum("Foreign", {"LOW": "low", "HIGH": "high"})
+    with pytest.raises(TypeTransformerFailedError):
+        await TypeEngine.to_literal(Foreign.LOW, target, lit)

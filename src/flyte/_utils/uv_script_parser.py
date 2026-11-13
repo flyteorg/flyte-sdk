@@ -27,11 +27,19 @@ def _extract_uv_metadata_block(text: str) -> str | None:
     return "\n".join(lines)
 
 
-@lru_cache
 def parse_uv_script_file(path: pathlib.Path) -> UVScriptMetadata:
     if not path.exists() or not path.is_file():
         raise FileNotFoundError(f"File not found: {path}")
 
+    # Parsing is cached because the image hash re-reads the script repeatedly, but the
+    # cache is keyed on the file's mtime and size as well as its path: an edited script
+    # must produce new metadata, or a dependency change would not rebuild the image.
+    stat = path.stat()
+    return _parse_uv_script_file(path, stat.st_mtime_ns, stat.st_size)
+
+
+@lru_cache
+def _parse_uv_script_file(path: pathlib.Path, mtime_ns: int, size: int) -> UVScriptMetadata:
     text = path.read_text(encoding="utf-8")
     raw_header = _extract_uv_metadata_block(text)
     if raw_header is None:

@@ -112,8 +112,14 @@ class Bridge:
         lease_ttl: float = 60.0,
         idle_ttl: float = 900.0,
         start_timeout: float = 900.0,
+        rewrites: dict[str, str] | None = None,
     ):
+        from ._hostexec import DEVBOX_ENDPOINT_REWRITES
+
         self.secret = secret
+        # In-cluster addresses in a workload's environment, and what this host reaches them at: the
+        # devbox's by default; `flyte start onebox` passes its own.
+        self.rewrites = dict(DEVBOX_ENDPOINT_REWRITES if rewrites is None else rewrites)
         self.command = command
         self.log_dir = log_dir
         self.host_platform = host_platform
@@ -193,7 +199,7 @@ class Bridge:
                 workload_id,
                 entrypoint=entrypoint,
                 argv=argv,
-                env=rewrite_endpoints(forwardable_env(env)),
+                env=rewrite_endpoints(forwardable_env(env), self.rewrites),
                 python=python,
                 packages=packages,
                 state_dir=self.log_dir.parent,
@@ -592,7 +598,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--lease-ttl", type=float, default=60.0)
     parser.add_argument("--idle-ttl", type=float, default=900.0)
     parser.add_argument("--start-timeout", type=float, default=900.0)
+    parser.add_argument(
+        "--rewrite",
+        action="append",
+        default=None,
+        metavar="IN_CLUSTER=ON_HOST",
+        help="An in-cluster address in workloads' environment and what this host reaches it at (repeatable). "
+        "Replaces the devbox's defaults.",
+    )
+    parser.add_argument(
+        "--no-default-rewrites",
+        action="store_true",
+        help="Do not use the devbox's rewrites: only those given with `--rewrite`, if any.",
+    )
     args = parser.parse_args(argv)
+    rewrites = None
+    if args.rewrite is not None or args.no_default_rewrites:
+        rewrites = {}
+        for item in args.rewrite or []:
+            src, sep, dst = item.partition("=")
+            if not sep or not src or not dst:
+                parser.error(f"--rewrite takes IN_CLUSTER=ON_HOST, got {item!r}")
+            rewrites[src] = dst
 
     reason = _host.apple_silicon_unavailable_reason()
     if reason:
@@ -611,6 +638,7 @@ def main(argv: list[str] | None = None) -> int:
         lease_ttl=args.lease_ttl,
         idle_ttl=args.idle_ttl,
         start_timeout=args.start_timeout,
+        rewrites=rewrites,
     )
     serve(bridge, args.host, args.port)
     return 0

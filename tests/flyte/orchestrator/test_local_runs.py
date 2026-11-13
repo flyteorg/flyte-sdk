@@ -18,6 +18,7 @@ from pydantic import BaseModel
 import flyte
 import flyte.errors
 import flyte.orchestrator
+from flyte.errors import NonRecoverableError
 from flyte.io import File
 
 env = flyte.TaskEnvironment(name="parity")
@@ -317,3 +318,71 @@ async def test_a_local_tasks_spec_carries_its_defaults():
     defaults = {p.name: p.parameter.default for p in spec.default_inputs}
     assert set(defaults) == {"x", "label"}
     assert defaults["label"].scalar.primitive.string_value == "none"
+
+
+@flyte.orchestrator.task
+def gives_up(x: int) -> int:
+    if x < 0:
+        raise flyte.errors.NonRecoverableError(f"{x} is negative")
+    return x
+
+
+@flyte.orchestrator.task
+def gives_up_by_name(x: int) -> int:
+    raise NonRecoverableError(f"{x} is never enough")
+
+
+@flyte.orchestrator.task
+def catches_giving_up(x: int) -> str:
+    try:
+        raise flyte.errors.NonRecoverableError(f"{x} is negative")
+    except RuntimeError as e:
+        return "caught " + str(e)
+
+
+def test_a_non_recoverable_error_fails_the_run_as_one():
+    # As a run whose task raises it ends: a RuntimeUserError with its code.
+    with pytest.raises(flyte.errors.RuntimeUserError, match="-1 is negative") as raised:
+        run(gives_up, x=-1)
+    assert raised.value.code == "NonRecoverableError"
+    assert run(gives_up, x=1) == 1
+
+
+def test_a_non_recoverable_error_imported_by_name_fails_the_run_as_one():
+    with pytest.raises(flyte.errors.RuntimeUserError, match="3 is never enough") as raised:
+        run(gives_up_by_name, x=3)
+    assert raised.value.code == "NonRecoverableError"
+
+
+def test_a_non_recoverable_error_is_a_runtime_error_the_source_can_catch():
+    assert run(catches_giving_up, x=-1) == "caught flyte.errors.NonRecoverableError: -1 is negative"
+
+
+ATTEMPTS: list[int] = []
+
+
+@env.task
+async def attempt(x: int) -> int:
+    ATTEMPTS.append(x)
+    return x
+
+
+@flyte.orchestrator.task(retries=2)
+def fails_after_a_call(x: int) -> int:
+    attempt(x)
+    if x < 0:
+        raise flyte.errors.NonRecoverableError(f"{x} is negative")
+    raise ValueError(f"{x} failed")
+
+
+def test_retries_apply_unless_the_error_is_non_recoverable():
+    ATTEMPTS.clear()
+    with pytest.raises(flyte.errors.RuntimeUserError, match="1 failed"):
+        run(fails_after_a_call, x=1)
+    assert ATTEMPTS == [1, 1, 1]
+
+    ATTEMPTS.clear()
+    with pytest.raises(flyte.errors.RuntimeUserError, match="-1 is negative") as raised:
+        run(fails_after_a_call, x=-1)
+    assert raised.value.code == "NonRecoverableError"
+    assert ATTEMPTS == [-1]

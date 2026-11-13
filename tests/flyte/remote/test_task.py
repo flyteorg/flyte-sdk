@@ -3,6 +3,7 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from flyteidl2.core import tasks_pb2
 
 import flyte
 import flyte.errors
@@ -40,6 +41,104 @@ class TestTaskDetailsCacheMaxAge:
 
         unset = zero.override(cache=flyte.Cache("override", version_override="v3"))
         assert not unset.pb2.spec.task_template.metadata.HasField("cache_max_age")
+
+
+class TestTaskDetailsReusableOverride:
+    @staticmethod
+    def _deployed(reusable: flyte.ReusePolicy | None) -> TaskDetails:
+        """A deployed task as the backend returns it: serialized the same way `flyte deploy` does."""
+        from flyteidl2.task import task_definition_pb2
+
+        from flyte._internal.runtime.reuse import add_reusable, reuse_policy_to_pb
+
+        pb2 = task_definition_pb2.TaskDetails()
+        pb2.task_id.name = "workers.square"
+        pb2.task_id.version = "v1"
+        t = pb2.spec.task_template
+        t.id.name = "workers.square"
+        t.type = "python"
+        t.container.image = "img:1"
+        t.container.args.extend(["a0"])
+        if reusable is not None:
+            t.reuse_policy.CopyFrom(reuse_policy_to_pb(reusable))
+            add_reusable(t, reusable, code_bundle=None, parent_env_name="workers", code_version="bundle")
+        return TaskDetails(pb2)
+
+    def test_new_policy_gets_its_own_pool(self):
+        deployed = self._deployed(flyte.ReusePolicy(replicas=(1, 2), idle_ttl=60))
+        t = deployed.override(reusable=flyte.ReusePolicy(replicas=(2, 8), idle_ttl=600)).pb2.spec.task_template
+
+        assert t.type == "actor"
+        assert t.custom["name"] == "workers"
+        assert t.custom["spec"]["min_replica_count"] == 2
+        assert t.custom["spec"]["replica_count"] == 8
+        assert t.reuse_policy.max_replicas == 8
+        assert t.custom["version"] != deployed.pb2.spec.task_template.custom["version"]
+
+    def test_resources_change_the_pool(self):
+        deployed = self._deployed(flyte.ReusePolicy(replicas=(1, 2), idle_ttl=60))
+        policy = flyte.ReusePolicy(replicas=(1, 2), idle_ttl=60)
+        small = deployed.override(reusable=policy).pb2.spec.task_template
+        big = deployed.override(reusable=policy, resources=flyte.Resources(memory="8Gi")).pb2.spec.task_template
+        again = deployed.override(reusable=policy).pb2.spec.task_template
+
+        assert small.custom["version"] == again.custom["version"]
+        assert small.custom["version"] != big.custom["version"]
+
+    def test_pool_key_prefers_reuse_policy_version_then_custom_then_task_version(self):
+        policy = flyte.ReusePolicy(replicas=2)
+
+        def key(deployed: TaskDetails) -> str:
+            return deployed.override(reusable=policy).pb2.spec.task_template.custom["version"]
+
+        # Deployed by an SDK that predates reuse_policy.version: only custom["version"] names the pool.
+        with_custom = self._deployed(flyte.ReusePolicy(replicas=(1, 2)))
+        with_custom.pb2.spec.task_template.reuse_policy.ClearField("version")
+        with_policy_version = self._deployed(flyte.ReusePolicy(replicas=(1, 2)))
+        with_policy_version.pb2.spec.task_template.reuse_policy.version = "pool-v9"
+        not_reusable = self._deployed(None)
+
+        # custom["version"] stands in for the code version, so changing the code version changes the pool
+        other_custom = self._deployed(flyte.ReusePolicy(replicas=(1, 2)))
+        other_custom.pb2.spec.task_template.reuse_policy.ClearField("version")
+        other_custom.pb2.spec.task_template.custom["version"] = "different"
+        assert key(with_custom) != key(other_custom)
+
+        # reuse_policy.version wins over custom["version"]
+        other_policy_version = self._deployed(flyte.ReusePolicy(replicas=(1, 2)))
+        other_policy_version.pb2.spec.task_template.reuse_policy.version = "pool-v9"
+        other_policy_version.pb2.spec.task_template.custom["version"] = "different"
+        assert key(with_policy_version) == key(other_policy_version)
+        assert key(with_policy_version) != key(with_custom)
+
+        # no deployed pool: the task version is the fallback
+        bumped = self._deployed(None)
+        bumped.pb2.task_id.version = "v2"
+        assert key(not_reusable) != key(bumped)
+
+    def test_non_reusable_task_becomes_reusable(self):
+        t = self._deployed(None).override(reusable=flyte.ReusePolicy(replicas=2)).pb2.spec.task_template
+        assert t.type == "actor"
+        assert t.custom["name"] == "workers"
+        assert t.HasField("reuse_policy")
+
+    def test_off_runs_as_one_off_pod(self):
+        deployed = self._deployed(flyte.ReusePolicy(replicas=(1, 2), idle_ttl=60))
+        t = deployed.override(reusable="off").pb2.spec.task_template
+        assert t.type == "python"
+        assert not t.HasField("custom")
+        assert not t.HasField("reuse_policy")
+        assert t.worker_kind == tasks_pb2.WORKER_KIND_UNSPECIFIED  # a one-off pod, not a reusable worker's action
+        assert deployed.pb2.spec.task_template.type == "actor"  # the fetched task is untouched
+        assert deployed.pb2.spec.task_template.worker_kind == tasks_pb2.WORKER_KIND_REUSABLE
+
+    def test_plugin_task_rejects_reusable(self):
+        from flyteidl2.task import task_definition_pb2
+
+        pb2 = task_definition_pb2.TaskDetails()
+        pb2.spec.task_template.type = "spark"
+        with pytest.raises(flyte.errors.RemoteTaskUsageError):
+            TaskDetails(pb2).override(reusable=flyte.ReusePolicy(replicas=2))
 
 
 class TestLazyEntity:

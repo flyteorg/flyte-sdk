@@ -214,10 +214,12 @@ def test_resources_with_various_gpu_combinations():
         ("A100", 4),
         ("A100_80G", 8),
         ("B200", 1),
+        ("B300", 8),
         ("H100", 2),
         ("L4", 1),
         ("L40s", 2),
         ("T4", 4),
+        ("T4g", 1),
         ("V100", 1),
         ("RTX_PRO_4500", 1),
         ("RTX_PRO_6000", 1),
@@ -432,6 +434,53 @@ def test_amd_gpu_invalid_device():
         AMD_GPU(device="InvalidAMD")  # type: ignore
 
 
+def test_amd_gpu_default_quantity_is_one():
+    """AMD_GPU without a quantity keeps requesting a single GPU"""
+    device = AMD_GPU("MI300X")
+    assert device == Device(quantity=1, device_class="AMD_GPU", device="MI300X")
+
+
+def test_amd_gpu_with_quantity():
+    """AMD_GPU takes a quantity and matches the equivalent Device"""
+    device = AMD_GPU("MI355X", 8)
+    assert device == Device(quantity=8, device_class="AMD_GPU", device="MI355X")
+    assert Resources(gpu=device).get_device() == device
+
+
+@pytest.mark.parametrize("quantity", [0, -1, 2, 4, 7, 9, 16])
+def test_amd_gpu_invalid_quantity(quantity):
+    """AMD_GPU takes only 1 or a full 8-GPU node"""
+    with pytest.raises(ValueError, match=r"Invalid AMD GPU quantity.*1 or a full 8-GPU node"):
+        AMD_GPU("MI355X", quantity)  # type: ignore
+
+
+def test_amd_gpu_device_quantity_is_unrestricted():
+    """Device(...) still takes any AMD GPU count"""
+    device = Resources(gpu=Device(quantity=4, device_class="AMD_GPU", device="MI355X")).get_device()
+    assert device is not None
+    assert device.quantity == 4
+
+
+@pytest.mark.parametrize("amd_gpu_type", list(get_args(AMD_GPUType)))
+@pytest.mark.parametrize("quantity", [1, 8])
+def test_amd_gpu_strings_accept_one_and_eight(amd_gpu_type, quantity):
+    """Every AMD GPU type takes the "<type>:1" and "<type>:8" string forms"""
+    device = Resources(gpu=f"{amd_gpu_type}:{quantity}").get_device()  # type: ignore
+    assert device == Device(quantity=quantity, device_class="AMD_GPU", device=amd_gpu_type)
+
+
+def test_amd_gpu_string_matches_helper():
+    """gpu="MI355X:8" is the same device as AMD_GPU("MI355X", 8)"""
+    assert Resources(gpu="MI355X:8").get_device() == AMD_GPU("MI355X", 8)
+
+
+@pytest.mark.parametrize("gpu", ["MI250X:4", "MI355X:3", "MI355X:16"])
+def test_amd_gpu_string_rejects_other_counts(gpu):
+    """AMD GPU strings take only 1 or a full 8-GPU node"""
+    with pytest.raises(ValueError, match="gpu must be one of"):
+        Resources(gpu=gpu)  # type: ignore
+
+
 # Habana Gaudi Accelerator Tests
 @pytest.mark.parametrize(
     "gaudi_type",
@@ -469,6 +518,7 @@ def test_habana_gaudi_invalid_device():
         ("Trn1:1", "Trn1", 1, "NEURON"),
         ("Inf2:1", "Inf2", 1, "NEURON"),
         ("MI300X:1", "MI300X", 1, "AMD_GPU"),
+        ("MI355X:8", "MI355X", 8, "AMD_GPU"),
         ("Gaudi1:1", "Gaudi1", 1, "HABANA_GAUDI"),
     ],
 )
