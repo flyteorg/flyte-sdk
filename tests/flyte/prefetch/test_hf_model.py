@@ -387,22 +387,11 @@ def test_download_snapshot_to_local_with_readme():
     with patch.dict(sys.modules, {"huggingface_hub": mock_hf_hub}):
         from flyte.prefetch._hf_model import _download_snapshot_to_local
 
-        with tempfile.TemporaryDirectory() as local_dir:
-            with patch("tempfile.NamedTemporaryFile") as mock_temp:
-                mock_temp_file = MagicMock()
-                mock_temp_file.name = "/tmp/readme"
-                mock_temp.return_value.__enter__.return_value = mock_temp_file
-
-                with patch(
-                    "builtins.open",
-                    MagicMock(
-                        return_value=MagicMock(
-                            __enter__=MagicMock(return_value=MagicMock(read=MagicMock(return_value="# README"))),
-                            __exit__=MagicMock(),
-                        )
-                    ),
-                ):
-                    result_dir, card = _download_snapshot_to_local("test-repo", "abc123", "token", local_dir)
+        with (
+            tempfile.TemporaryDirectory() as local_dir,
+            patch("flyte.prefetch._hf_model._download_hf_text", return_value="# README"),
+        ):
+            result_dir, card = _download_snapshot_to_local("test-repo", "abc123", "token", local_dir)
 
             assert result_dir == local_dir
             assert card is not None

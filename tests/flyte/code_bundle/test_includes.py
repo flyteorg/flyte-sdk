@@ -112,7 +112,7 @@ def test_ls_files_include_dir_respects_ignores():
             additional_files=[str(pkg), str(pkg / "*.pyc")],
         )
 
-        rel = {str(Path(f).relative_to(tmp_dir)) for f in files}
+        rel = {Path(f).relative_to(tmp_dir).as_posix() for f in files}
         assert "assets/page.html" in rel
         assert not any(".pyc" in f or "__pycache__" in f for f in rel), rel
 

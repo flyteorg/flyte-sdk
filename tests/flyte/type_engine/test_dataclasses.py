@@ -2,7 +2,6 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import Dict, List, Optional, Union
 
 import mock
@@ -589,10 +588,7 @@ async def test_modify_literal_uris_call(mock_resolver, ctx_with_test_raw_data_pa
     bm = DC1(s=sd)
 
     def mock_resolve_remote_path(flyte_uri: str):
-        p = Path(flyte_uri)
-        if p.exists():
-            return "/my/replaced/val"
-        return ""
+        return "/my/replaced/val"
 
     mock_resolver.resolve_remote_path.side_effect = mock_resolve_remote_path
     mock_resolver.protocol = "/"

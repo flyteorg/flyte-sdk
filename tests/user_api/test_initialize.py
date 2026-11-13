@@ -119,7 +119,7 @@ task:
             await init_from_config.aio(path_or_config=nonexistent_path)
 
         assert "Configuration file" in str(exc_info.value)
-        assert nonexistent_path in str(exc_info.value)
+        assert str(Path(nonexistent_path)) in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_init_from_config_with_nonexistent_relative_file(self):

@@ -96,7 +96,7 @@ class Chunk:
 @dataclasses.dataclass
 class Source:
     id: Hashable
-    path: pathlib.Path  # Should be str, represents the fully qualified prefix of a file (no bucket)
+    path: pathlib.PurePath  # Should be str, represents the fully qualified prefix of a file (no bucket)
     length: int
     offset: int = 0
     metadata: Any | None = None
@@ -288,7 +288,7 @@ class ObstoreParallelReader:
 
     async def download_files(
         self,
-        src_prefix: pathlib.Path,
+        src_prefix: pathlib.Path | pathlib.PurePosixPath,
         target_prefix: pathlib.Path,
         *paths,
         destination_file_name: str | None = None,
@@ -301,6 +301,10 @@ class ObstoreParallelReader:
         paths: Specific paths (relative to src_prefix) to download. If empty, download everything
         exclude: List of patterns to exclude from the download.
         """
+        # Object-store keys always use '/', while a pathlib.Path constructed
+        # on Windows stringifies with '\\'. Normalize before doing relative
+        # path arithmetic against keys returned by the store.
+        src_prefix = pathlib.PurePosixPath(str(src_prefix).replace("\\", "/"))
 
         def _keep(path):
             if exclude is not None and any(path.match(e) for e in exclude):
@@ -331,18 +335,20 @@ class ObstoreParallelReader:
 
             # Build a set of all parent directory paths from the objects
             # This identifies which paths are parent directories of actual files
-            dir_paths = {str(parent) for o in objs for parent in pathlib.Path(o["path"]).parents}
+            dir_paths = {
+                str(parent) for o in objs for parent in pathlib.PurePosixPath(str(o["path"]).replace("\\", "/")).parents
+            }
 
             for obj in objs:
-                path = pathlib.Path(obj["path"])  # e.g. Path(prefix/file.txt), needs to be changed to str.
+                path = pathlib.PurePosixPath(str(obj["path"]).replace("\\", "/"))
                 size = obj["size"]
                 # Strip src_prefix from path for destination
-                rel_path = path.relative_to(src_prefix)  # doesn't work on windows
+                rel_path = path.relative_to(pathlib.PurePosixPath(src_prefix))
 
                 # Skip directory placeholder objects. These are identified by:
                 # 1. Root-level entry (rel_path == ".") — represents the prefix itself
                 # 2. 0-byte object that is a parent of other files in the listing
-                if rel_path == pathlib.Path(".") or (size == 0 and str(path) in dir_paths):
+                if rel_path == pathlib.PurePosixPath(".") or (size == 0 and str(path) in dir_paths):
                     continue
 
                 source = Source(id=path, path=path, length=size)
@@ -351,7 +357,7 @@ class ObstoreParallelReader:
                 for offset, length in chunk_ranges:
                     yield DownloadTask(
                         source=source,
-                        target=tmp_dir / rel_path,  # doesn't work on windows
+                        target=pathlib.Path(tmp_dir) / pathlib.Path(*rel_path.parts),
                         chunk=Chunk(offset, length),
                     )
 
@@ -360,7 +366,7 @@ class ObstoreParallelReader:
                 if len(paths) == 1 and destination_file_name is not None:
                     target = target_prefix / destination_file_name
                 else:
-                    target = target_prefix / buf.path.relative_to(tmp_dir)
+                    target = target_prefix / buf.path.relative_to(pathlib.Path(tmp_dir))
                 await aiofiles.os.makedirs(target.parent, exist_ok=True)
                 return await aiofiles.os.replace(buf.path, target)  # mv buf.path target
 

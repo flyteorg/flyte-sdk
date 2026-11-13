@@ -15,7 +15,7 @@ def test_json_raw_serializes_pathlib_values():
     out = format("Modules", vals, of="json-raw")
 
     parsed = json.loads(out)
-    assert parsed == [{"Path": "/tmp/some/module.py", "Err": "boom"}]
+    assert parsed == [{"Path": str(Path("/tmp/some/module.py")), "Err": "boom"}]
 
 
 def test_json_raw_empty_returns_empty_list():

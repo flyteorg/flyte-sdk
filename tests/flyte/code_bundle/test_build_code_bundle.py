@@ -14,6 +14,7 @@ any ``__pycache__`` or stray artifacts that may accumulate in-tree.
 from __future__ import annotations
 
 import importlib.util
+import os
 import shutil
 import sys
 import tarfile
@@ -372,7 +373,7 @@ def fn(x: int) -> int:
         with tarfile.open(Path(bundle_after.tgz), "r:gz") as tar:
             bundled_file = tar.extractfile("hello.py")
             assert bundled_file is not None
-            assert bundled_file.read().decode("utf-8") == updated_source
+            assert bundled_file.read().decode("utf-8") == updated_source.replace("\n", os.linesep)
         assert bundle_after.computed_version != bundle_before.computed_version
 
 

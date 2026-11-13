@@ -214,7 +214,7 @@ class StandardIgnore(Ignore):
             return False
 
         for pattern in self.patterns:
-            if fnmatch(str(rel_path), pattern):
+            if fnmatch(rel_path.as_posix(), pattern):
                 return True
         return False
 
@@ -251,7 +251,7 @@ class DockerfileIgnore(Ignore):
             rel = path.relative_to(self.root)
         except ValueError:
             return False
-        return self._matcher.matches(str(rel))
+        return self._matcher.matches(rel.as_posix())
 
 
 def _normalize_flyteignore_pattern(pattern: str) -> List[str]:
@@ -396,5 +396,5 @@ class IgnoreGroup(Ignore):
             for file in files:
                 abs_path = dir_path / file
                 if self.is_ignored(abs_path):
-                    ignored.append(str(abs_path.relative_to(self.root)))
+                    ignored.append(abs_path.relative_to(self.root).as_posix())
         return ignored

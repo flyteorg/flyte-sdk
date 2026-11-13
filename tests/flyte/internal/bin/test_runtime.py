@@ -144,7 +144,7 @@ def test_runtime_task_coroutine_exception():
             patch(
                 "flyte._internal.runtime.entrypoints.load_and_run_task", new_callable=AsyncMock, side_effect=task_error
             ),
-            patch("faulthandler.register"),  # Mock faulthandler to avoid fileno issues in tests
+            patch("faulthandler.register", create=True),  # Mock faulthandler to avoid fileno issues in tests
             patch.dict(os.environ, env_vars, clear=False),
         ):
             # Run the CLI command
@@ -223,7 +223,7 @@ def test_runtime_controller_failure_exception():
             patch("flyte._initialize.init_in_cluster", side_effect=mock_init_in_cluster),
             patch("flyte._internal.controllers.create_controller", return_value=mock_controller),
             patch("flyte._internal.runtime.entrypoints.load_and_run_task", return_value=_never_completes()),
-            patch("faulthandler.register"),  # Mock faulthandler to avoid fileno issues in tests
+            patch("faulthandler.register", create=True),  # Mock faulthandler to avoid fileno issues in tests
             patch.dict(os.environ, env_vars, clear=False),
         ):
             # Run the CLI command
@@ -301,7 +301,7 @@ def test_non_recoverable_error_sets_kind():
                 new_callable=AsyncMock,
                 side_effect=task_error,
             ),
-            patch("faulthandler.register"),
+            patch("faulthandler.register", create=True),
             patch.dict(os.environ, env_vars, clear=False),
         ):
             result = runner.invoke(

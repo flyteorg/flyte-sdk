@@ -52,6 +52,22 @@ _CARD_HTML_PREFIX = (
 _CARD_HTML_SUFFIX = "</body></html>"
 
 
+def _download_hf_text(hfs: Any, name: str, commit: str) -> str:
+    """Download a small HuggingFace text file via a closed temporary path.
+
+    Windows does not allow another handle to overwrite a NamedTemporaryFile
+    while its creating handle is still open.
+    """
+    temp_file = tempfile.NamedTemporaryFile(delete=False)
+    temp_file.close()
+    try:
+        hfs.download(name, temp_file.name, revision=commit)
+        with open(temp_file.name, encoding="utf-8") as f:
+            return f.read()
+    finally:
+        os.unlink(temp_file.name)
+
+
 class VLLMShardArgs(BaseModel):
     """
     Arguments for sharding a model using vLLM.
@@ -432,10 +448,7 @@ def _stream_to_remote_dir(
     try:
         readme_file_details = hfs.info(f"{repo_id}/README.md", revision=commit)
         readme_name = readme_file_details["name"]
-        with tempfile.NamedTemporaryFile() as temp_file:
-            hfs.download(readme_name, temp_file.name, revision=commit)
-            with open(temp_file.name, "r") as f:
-                card = f.read()
+        card = _download_hf_text(hfs, readme_name, commit)
     except FileNotFoundError:
         logger.info("No README.md file found")
 
@@ -494,10 +507,7 @@ def _download_snapshot_to_local(
     try:
         readme_file_details = hfs.info(f"{repo_id}/README.md", revision=commit)
         readme_name = readme_file_details["name"]
-        with tempfile.NamedTemporaryFile() as temp_file:
-            hfs.download(readme_name, temp_file.name, revision=commit)
-            with open(temp_file.name, "r") as f:
-                card = f.read()
+        card = _download_hf_text(hfs, readme_name, commit)
     except FileNotFoundError:
         logger.info("No README.md file found")
 
@@ -539,10 +549,7 @@ def _shard_model(
     hfs = huggingface_hub.HfFileSystem(token=token)
     try:
         readme_info = hfs.info(f"{repo}/README.md", revision=commit)
-        with tempfile.NamedTemporaryFile() as temp_file:
-            hfs.download(readme_info["name"], temp_file.name, revision=commit)
-            with open(temp_file.name, "r") as f:
-                card = f.read()
+        card = _download_hf_text(hfs, readme_info["name"], commit)
     except FileNotFoundError:
         logger.warning("No README.md found")
 

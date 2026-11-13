@@ -7,6 +7,7 @@ code bundle downloading, and the main serve command without using mocks.
 
 import json
 import os
+import sys
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -418,6 +419,7 @@ class TestEnsureDestWritable:
             dest = os.path.join(tmpdir, "file.txt")
             _ensure_dest_writable(dest, "test_param")
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Windows ACLs do not follow POSIX chmod permission bits")
     def test_ensure_dest_writable_non_writable_dir(self):
         """Validate that _ensure_dest_writable raises when the directory is not writable."""
         from flyte._bin.serve import _ensure_dest_writable
@@ -433,6 +435,7 @@ class TestEnsureDestWritable:
             finally:
                 os.chmod(read_only_dir, 0o755)
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Windows ACLs do not follow POSIX chmod permission bits")
     def test_ensure_dest_writable_uncreatable_dir(self):
         """Validate that _ensure_dest_writable raises when the directory cannot be created."""
         from flyte._bin.serve import _ensure_dest_writable
@@ -449,6 +452,7 @@ class TestEnsureDestWritable:
                 os.chmod(read_only_dir, 0o755)
 
     @pytest.mark.asyncio
+    @pytest.mark.skipif(sys.platform == "win32", reason="Windows ACLs do not follow POSIX chmod permission bits")
     async def test_sync_parameters_validates_dest_before_download(self):
         """Validate that sync_parameters checks dest writability before attempting download."""
         from flyte.io import File
@@ -1043,7 +1047,7 @@ class TestMainCommand:
         runner = CliRunner()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            parameters_file = os.path.join(tmpdir, "flyte-parameters.json")
+            parameters_file = "flyte-parameters.json"
             with patch("flyte.app._parameter.RUNTIME_PARAMETERS_FILE", parameters_file):
                 original_cwd = os.getcwd()
                 try:
@@ -1073,11 +1077,10 @@ class TestMainCommand:
                             ["--version", "v1.0.0", "--dest", tmpdir, "--", "echo", "test"],
                         )
 
-                        # Verify RUNTIME_PARAMETERS_FILE is in environment
-                        from flyte.app._parameter import RUNTIME_PARAMETERS_FILE
-
-                        assert RUNTIME_PARAMETERS_FILE in captured_env
-                        assert captured_env[RUNTIME_PARAMETERS_FILE].endswith("flyte-parameters.json")
+                        # Verify the parameter file is passed to the child.
+                        # Windows environment variable names are case-insensitive,
+                        # so assert the exported value rather than its dict key.
+                        assert any(value.endswith(parameters_file) for value in captured_env.values())
 
                 finally:
                     os.chdir(original_cwd)

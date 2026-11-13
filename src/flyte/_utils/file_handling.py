@@ -25,7 +25,8 @@ def filehash_update(path: pathlib.Path, hasher: hashlib._Hash) -> None:
 
 
 def _pathhash_update(path: Union[os.PathLike, str], hasher: hashlib._Hash) -> None:
-    path_list = str(path).split(os.sep)
+    path_str = str(path).replace(os.sep, "/") if os.sep != "/" else str(path)
+    path_list = path_str.split("/")
     hasher.update("".join(path_list).encode("utf-8"))
 
 

@@ -1450,7 +1450,10 @@ class TestMemoryStorePathAddressedIO:
         await memory.write_text.aio("user/a.txt", "a")
 
         # Plant a symlink that ``list_paths`` must skip rather than expose.
-        (root / "user" / "leak.txt").symlink_to(outside / "secret.txt")
+        try:
+            (root / "user" / "leak.txt").symlink_to(outside / "secret.txt")
+        except OSError as e:
+            pytest.skip(f"Creating a symlink is unavailable on this Windows runner: {e}")
 
         paths = memory.list_paths()
         assert "user/a.txt" in paths
@@ -1479,7 +1482,10 @@ class TestMemoryStorePathAddressedIO:
         # The symlink lives *inside* the memory root but points outside —
         # exactly the threat model for a downloaded ``Dir`` carrying a
         # malicious sidechannel.
-        (root / "escape.txt").symlink_to(outside / "secret.txt")
+        try:
+            (root / "escape.txt").symlink_to(outside / "secret.txt")
+        except OSError as e:
+            pytest.skip(f"Creating a symlink is unavailable on this Windows runner: {e}")
 
         memory = MemoryStore(key="test", root=root)
         with pytest.raises(MemoryStoreError, match="outside the memory root"):

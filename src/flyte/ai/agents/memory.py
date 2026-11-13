@@ -211,6 +211,11 @@ def _join_remote_path(*parts: str) -> str:
     if not segments:
         return ""
     head, *rest = segments
+    # Local Windows storage roots use native paths. Remote object-store URIs
+    # always keep POSIX separators, independent of the host running the SDK.
+    if pathlib.Path(head).is_absolute():
+        head = os.path.normpath(head)
+        return os.path.join(head.rstrip("/\\"), *(p.strip("/\\") for p in rest))
     return "/".join([head.rstrip("/"), *(p.strip("/") for p in rest)])
 
 
@@ -848,11 +853,13 @@ class MemoryStore(SerializableType):
             vdir = self._versions_dir(rel)
             vdir.mkdir(parents=True, exist_ok=True)
             ts = _utc_ts().replace(":", "-")
-            vpath = vdir / f"{ts}_{new_sha}.txt"
+            # Keep version paths below Windows' legacy 260-character path
+            # limit when the memory root itself is deeply nested.
+            vpath = vdir / f"{ts}_{new_sha[:16]}.txt"
             if vpath.exists():
                 # Defend against same-second collisions.
                 salt = _sha256_bytes(os.urandom(8))[:8]
-                vpath = vdir / f"{ts}_{new_sha}_{salt}.txt"
+                vpath = vdir / f"{ts}_{new_sha[:16]}_{salt}.txt"
             vpath.write_text(content, encoding="utf-8")
             version_file_rel = vpath.relative_to(self._root).as_posix()
 
@@ -973,9 +980,12 @@ class MemoryStore(SerializableType):
         # already exists (local and remote alike). Trailing slashes on both sides copy the
         # working root's *contents* into the destination instead, keeping ``messages.json`` at
         # a stable path the next run can reload. Existing files are overwritten in place.
-        from_path = os.path.join(str(self._root), "")
-        to_path = remote_destination.rstrip("/") + "/"
-        await storage.put(from_path, to_path, recursive=True)
+        if not storage.is_remote(remote_destination):
+            shutil.copytree(self._root, remote_destination, dirs_exist_ok=True)
+        else:
+            from_path = os.path.join(str(self._root), "")
+            to_path = remote_destination.rstrip("/") + "/"
+            await storage.put(from_path, to_path, recursive=True)
         return Dir.from_existing_remote(remote_destination)
 
     @classmethod

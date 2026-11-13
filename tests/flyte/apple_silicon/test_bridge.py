@@ -16,6 +16,10 @@ from flyte._internal.apple_silicon._token import mint_token
 
 SECRET = "test-secret-" + "0" * 40
 FAKE_SERVER = [sys.executable, str(Path(__file__).parent / "fake_daemon_server.py")]
+_POSIX_DAEMON_PROCESS = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Apple Silicon daemon lifecycle tests require POSIX process-group signaling",
+)
 
 
 @pytest.fixture
@@ -56,6 +60,7 @@ def call(bridge, method, path, token=None, body=None):
         return e.code, e.read()
 
 
+@_POSIX_DAEMON_PROCESS
 def test_attach_serves_and_proxies(bridge):
     attachment = attach_from_env(env_for(bridge, "wl-ok"))
     assert attachment is not None
@@ -115,6 +120,7 @@ def test_daemon_that_cannot_start_is_named(bridge, monkeypatch):
         attach_from_env(env_for(bridge, "wl-crash"))
 
 
+@_POSIX_DAEMON_PROCESS
 def test_oom_kill_is_surfaced_not_silent(bridge, monkeypatch):
     monkeypatch.setenv("FAKE_DAEMON_MODE", "oom")
     attachment = attach_from_env(env_for(bridge, "wl-oom"))
@@ -132,6 +138,7 @@ def test_oom_kill_is_surfaced_not_silent(bridge, monkeypatch):
         attachment.close()
 
 
+@_POSIX_DAEMON_PROCESS
 def test_attach_after_failure_starts_a_fresh_daemon(bridge, monkeypatch):
     monkeypatch.setenv("FAKE_DAEMON_MODE", "crash")
     with pytest.raises(flyte.errors.AppleSiliconDaemonStartFailedError):
@@ -142,6 +149,7 @@ def test_attach_after_failure_starts_a_fresh_daemon(bridge, monkeypatch):
     attachment.close()
 
 
+@_POSIX_DAEMON_PROCESS
 def test_lapsed_lease_tears_the_daemon_down(bridge):
     attachment = attach_from_env(env_for(bridge, "wl-lease"))
     attachment._stop.set()  # the workload's container died: no more heartbeats

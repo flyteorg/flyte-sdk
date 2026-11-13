@@ -160,7 +160,10 @@ def modify_literal_uris(lit: Literal):
         if (
             lit.scalar.HasField("blob")
             and lit.scalar.blob.uri
-            and lit.scalar.blob.uri.startswith(RemoteFSPathResolver.protocol)
+            and (
+                lit.scalar.blob.uri.startswith(RemoteFSPathResolver.protocol)
+                or (RemoteFSPathResolver.protocol == "/" and os.path.isabs(lit.scalar.blob.uri))
+            )
         ):
             lit.scalar.blob.uri = cast(str, RemoteFSPathResolver.resolve_remote_path(lit.scalar.blob.uri))
         elif lit.scalar.HasField("union"):
@@ -168,7 +171,10 @@ def modify_literal_uris(lit: Literal):
         elif (
             lit.scalar.HasField("structured_dataset")
             and lit.scalar.structured_dataset.uri
-            and lit.scalar.structured_dataset.uri.startswith(RemoteFSPathResolver.protocol)
+            and (
+                lit.scalar.structured_dataset.uri.startswith(RemoteFSPathResolver.protocol)
+                or (RemoteFSPathResolver.protocol == "/" and os.path.isabs(lit.scalar.structured_dataset.uri))
+            )
         ):
             lit.scalar.structured_dataset.uri = cast(
                 str, RemoteFSPathResolver.resolve_remote_path(lit.scalar.structured_dataset.uri)

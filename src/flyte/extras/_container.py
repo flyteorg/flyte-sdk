@@ -155,12 +155,12 @@ class ContainerTask(TaskTemplate):
             raise ValueError("All elements in the arguments list must be strings.")
         self._cmd = command
         self._args = arguments
-        self._input_data_dir = input_data_dir
-        if isinstance(input_data_dir, str):
-            self._input_data_dir = pathlib.Path(input_data_dir)
-        self._output_data_dir = output_data_dir
-        if isinstance(output_data_dir, str):
-            self._output_data_dir = pathlib.Path(output_data_dir)
+        # These are paths inside the Linux container, so their separators must
+        # stay POSIX even when the SDK is running on Windows.
+        self._input_data_dir = pathlib.PurePosixPath(str(input_data_dir).replace("\\", "/")) if input_data_dir else ""
+        self._output_data_dir = (
+            pathlib.PurePosixPath(str(output_data_dir).replace("\\", "/")) if output_data_dir else ""
+        )
         self._metadata_format = metadata_format
         self._inputs = inputs
         self._outputs = outputs
@@ -242,7 +242,7 @@ class ContainerTask(TaskTemplate):
                     if self._file_input_layout == "NAMED_DIR" and type(input_val) is File:
                         continue
                     local_flyte_file_or_dir_path = input_val.path
-                    remote_flyte_file_or_dir_path = os.path.join(self._input_data_dir, k)  # type: ignore
+                    remote_flyte_file_or_dir_path = str(pathlib.PurePosixPath(str(self._input_data_dir)) / k)
                     volume_binding[local_flyte_file_or_dir_path] = {
                         "bind": remote_flyte_file_or_dir_path,
                         "mode": "rw",
@@ -367,8 +367,8 @@ class ContainerTask(TaskTemplate):
         """
 
         # Normalize the input and output directories
-        self._input_data_dir = os.path.normpath(self._input_data_dir) if self._input_data_dir else ""
-        self._output_data_dir = os.path.normpath(self._output_data_dir) if self._output_data_dir else ""
+        self._input_data_dir = pathlib.PurePosixPath(str(self._input_data_dir)) if self._input_data_dir else ""
+        self._output_data_dir = pathlib.PurePosixPath(str(self._output_data_dir)) if self._output_data_dir else ""
 
         cmd_and_args = (self._cmd or []) + (self._args or [])
         commands, volume_bindings = self._prepare_command_and_volumes(cmd_and_args, **kwargs)
@@ -402,7 +402,7 @@ class ContainerTask(TaskTemplate):
             return str(local_dir)
 
         for k, v in kwargs.items():
-            remote_path = os.path.join(str(self._input_data_dir), k)
+            remote_path = str(pathlib.PurePosixPath(str(self._input_data_dir)) / k)
             if isinstance(v, File):
                 if named:
                     volume_bindings[_stage_files_into_dir([v])] = {"bind": remote_path, "mode": "rw"}
@@ -415,7 +415,7 @@ class ContainerTask(TaskTemplate):
                 volume_bindings[_stage_files_into_dir(v)] = {"bind": remote_path, "mode": "rw"}
 
         volume_bindings[str(output_directory)] = {
-            "bind": self._output_data_dir,
+            "bind": str(self._output_data_dir),
             "mode": "rw",
         }
 

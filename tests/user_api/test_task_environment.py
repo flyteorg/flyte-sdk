@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 import flyte
@@ -177,7 +179,7 @@ def test_task_environment_include_rejects_non_str_entries():
 def test_task_environment_include_populates_declaring_file():
     env = flyte.TaskEnvironment(name="te_inc_declaring", include=("a.html",))
     assert env._declaring_file is not None
-    assert env._declaring_file.endswith("test_task_environment.py")
+    assert Path(env._declaring_file).name == "test_task_environment.py"
 
 
 def test_task_environment_works_with_include_and_tasks():

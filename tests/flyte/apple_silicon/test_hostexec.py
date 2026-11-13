@@ -17,6 +17,10 @@ from flyte._internal.apple_silicon._token import mint_token
 from flyte._internal.runtime.resources_serde import get_apple_silicon_execution_env
 
 SECRET = "test-secret-" + "0" * 40
+_POSIX_HOST_PROCESS = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Apple Silicon host process tests require POSIX executable and process-group behavior",
+)
 
 # Stand-ins for the flyte entrypoints a host environment provides.
 FAKE_A0 = """#!{python}
@@ -90,6 +94,7 @@ def container_env(bridge, workload, **extra):
     }
 
 
+@_POSIX_HOST_PROCESS
 def test_task_runs_on_the_host_and_mirrors_its_exit_code(tmp_path, capfd):
     bridge, server = make_bridge(tmp_path)
     try:
@@ -114,6 +119,7 @@ def _free_port():
         return s.getsockname()[1]
 
 
+@_POSIX_HOST_PROCESS
 def test_app_port_is_forwarded_to_the_host_process(tmp_path):
     bridge, server = make_bridge(tmp_path)
     listen = _free_port()
@@ -225,6 +231,7 @@ def test_host_app_reports_the_host_port(monkeypatch):
     assert app.get_port().port == 51234
 
 
+@_POSIX_HOST_PROCESS
 def test_app_port_opens_only_once_the_host_app_listens(tmp_path):
     bridge, server = make_bridge(tmp_path)
     listen = _free_port()
