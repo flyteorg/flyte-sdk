@@ -64,25 +64,40 @@ def print_ls_tree(source: os.PathLike, ls: typing.List[str]):
     logger.info(capture.get(), extra={"console": console})
 
 
-def _compress_tarball(source: pathlib.Path, output: pathlib.Path) -> None:
-    """Compress code tarball using pigz if available, otherwise gzip"""
-    if pigz := shutil.which("pigz"):
-        with open(str(output), "wb") as gzipped:
-            subprocess.run([pigz, "--no-time", "-c", str(source)], stdout=gzipped, check=True)
-    else:
-        start_time = time.time()
-        with gzip.GzipFile(filename=str(output), mode="wb", mtime=0) as gzipped:
-            with open(source, "rb") as source_file:
-                gzipped.write(source_file.read())
+def _gzip_compress(source: pathlib.Path, output: pathlib.Path) -> None:
+    """Compress `source` into `output` with Python's gzip module, truncating any existing output."""
+    with gzip.GzipFile(filename=str(output), mode="wb", mtime=0) as gzipped:
+        with open(source, "rb") as source_file:
+            gzipped.write(source_file.read())
 
-        end_time = time.time()
-        warning_time = 10
-        if end_time - start_time > warning_time:
-            click.secho(
-                f"Code tarball compression took {end_time - start_time:.0f} seconds. "
-                f"Consider installing `pigz` for faster compression.",
-                fg="yellow",
-            )
+
+def _compress_tarball(source: pathlib.Path, output: pathlib.Path) -> None:
+    """Compress code tarball using pigz if available, otherwise gzip.
+
+    pigz is only an accelerator: if it fails (it exits with the errno of the failure, e.g. 28 for ENOSPC), fall
+    back to Python's gzip so a genuine environment problem surfaces as the real `OSError` instead of an opaque
+    `CalledProcessError`, and a transient pigz failure does not fail the deploy (FLYTE-SDK-8W).
+    """
+    if pigz := shutil.which("pigz"):
+        try:
+            with open(str(output), "wb") as gzipped:
+                subprocess.run([pigz, "--no-time", "-c", str(source)], stdout=gzipped, check=True)
+            return
+        except (subprocess.CalledProcessError, OSError) as e:
+            logger.warning(f"pigz failed to compress the code bundle ({e}); falling back to Python gzip.")
+            _gzip_compress(source, output)
+            return
+
+    start_time = time.time()
+    _gzip_compress(source, output)
+    end_time = time.time()
+    warning_time = 10
+    if end_time - start_time > warning_time:
+        click.secho(
+            f"Code tarball compression took {end_time - start_time:.0f} seconds. "
+            f"Consider installing `pigz` for faster compression.",
+            fg="yellow",
+        )
 
 
 def list_files_to_bundle(
