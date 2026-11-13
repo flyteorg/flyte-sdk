@@ -125,6 +125,8 @@ async def test_offload_trigger_inputs_uses_task_spec_for_deploy_path():
     assert req.WhichOneof("task") == "task_spec"
     assert req.WhichOneof("id") == "project_id"
     assert req.project_id.name == "p"
+    # The upload is marked as a trigger's, so the backend keeps it for the trigger's lifetime.
+    assert req.for_trigger is True
 
 
 @pytest.mark.asyncio

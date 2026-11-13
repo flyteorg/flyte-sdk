@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
     from starlette.applications import Starlette
     from starlette.middleware import Middleware
+    from starlette.routing import BaseRoute
 
 # Named so the CLI and any other caller can share one definition instead of
 # repeating the literal and letting the two drift apart.
@@ -90,14 +91,8 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
 
         self._starlette_app = self._create_starlette_app()
 
-        mcp_link = self.mcp_mount_path
-        if self.transport == "streamable-http":
-            mcp_link = f"{self.mcp_mount_path}/mcp"
-        elif self.transport == "sse":
-            mcp_link = f"{self.mcp_mount_path}/sse"
-
         self.links = [
-            Link(path=mcp_link, title="MCP Endpoint", is_relative=True),
+            Link(path=self._mcp_endpoint_path, title="MCP Endpoint", is_relative=True),
             Link(path="/health", title="Health", is_relative=True),
             *self.links,
         ]
@@ -128,6 +123,15 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
         anyio.run(self.run_stdio_async)
 
     @property
+    def _mcp_endpoint_path(self) -> str:
+        """Path of the MCP session endpoint: what a client puts after the host in its server URL."""
+        if self.transport == "streamable-http":
+            return f"{self.mcp_mount_path}/mcp"
+        if self.transport == "sse":
+            return f"{self.mcp_mount_path}/sse"
+        return self.mcp_mount_path
+
+    @property
     def _mcp_server(self) -> FastMCP:
         """Alias for `MCPAppEnvironment.mcp` (matches historical attribute name)."""
         return self.mcp
@@ -136,6 +140,14 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
         """Return Starlette middleware to install on the app.
 
         Subclasses may override to inject middleware (e.g. authentication).
+        Defaults to an empty list.
+        """
+        return []
+
+    def _starlette_routes(self) -> list[BaseRoute]:
+        """Return extra Starlette routes to serve beside the MCP mount and `/health`.
+
+        Subclasses may override to add endpoints (e.g. OAuth metadata documents).
         Defaults to an empty list.
         """
         return []
@@ -177,6 +189,7 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
         routes = [
             Mount(self.mcp_mount_path, app=mcp_asgi),
             Route("/health", endpoint=_health, methods=["GET"]),
+            *self._starlette_routes(),
         ]
 
         @asynccontextmanager
