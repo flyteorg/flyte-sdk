@@ -93,14 +93,16 @@ def _missing_message(name: str) -> str:
     return f"Secret '{name}' does not exist, so nothing was changed. Use `create_secret` to create it."
 
 
-def _cli_fallback(op: SecretOp, name: str, project: str, domain: str) -> str:
+def _cli_fallback(name: str, project: str, domain: str) -> str:
+    """The terminal command that prompts for the value with hidden input.
+
+    The same command serves create and update: `flyte create secret` replaces the value of a
+    secret that already exists. Deleting first would leave the secret missing if the prompt were
+    aborted or the create refused while the deletion propagates.
+    """
     # The command is meant to be pasted into a shell, and the name comes from the model.
     name, project, domain = shlex.quote(name), shlex.quote(project), shlex.quote(domain)
-    create = f"flyte create secret {name} -p {project} -d {domain}"
-    if op == "create":
-        return create
-    # There is no `flyte update secret`; replacing a value means deleting and re-creating it.
-    return f"flyte delete secret {name} -p {project} -d {domain} && {create}"
+    return f"flyte create secret {name} -p {project} -d {domain}"
 
 
 def _http_request(ctx: Any) -> Request | None:

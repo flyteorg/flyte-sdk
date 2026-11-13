@@ -144,7 +144,7 @@ def build_secret_tools(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         _check_validator(validator)
         with env._scoped(project, domain) as (resolved_project, resolved_domain):
             await _check_exists(op, name)
-            cli_fallback = _cli_fallback(op, name, resolved_project, resolved_domain)
+            cli_fallback = _cli_fallback(name, resolved_project, resolved_domain)
             request = None if env.transport == "stdio" else _http_request(ctx)
             if request is None:
                 return {

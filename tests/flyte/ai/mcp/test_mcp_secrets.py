@@ -530,8 +530,9 @@ class TestAwaitingValueResult:
 
         assert created["status"] == updated["status"] == "awaiting_value"
         assert created["cli_fallback"] == "flyte create secret s -p p -d d"
-        # No `flyte update secret` exists, so the fallback has to say delete-then-create.
-        assert updated["cli_fallback"] == "flyte delete secret s -p p -d d && flyte create secret s -p p -d d"
+        # `flyte create secret` replaces an existing secret's value, so update uses the same command.
+        # Deleting first would leave the secret missing if the prompt were aborted.
+        assert updated["cli_fallback"] == "flyte create secret s -p p -d d"
         assert "url" not in created and "url" not in updated
         assert env._secret_inputs._pending == {}
 
