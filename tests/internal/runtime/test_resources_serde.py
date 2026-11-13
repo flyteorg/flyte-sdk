@@ -1,3 +1,5 @@
+from typing import get_args
+
 import pytest
 from flyteidl2.core import tasks_pb2
 
@@ -8,7 +10,7 @@ from flyte._internal.runtime.resources_serde import (
     get_proto_extended_resources,
     get_proto_resources,
 )
-from flyte._resources import AMD_GPU, GPU, Device, Resources
+from flyte._resources import AMD_GPU, GPU, Device, GPUType, Resources, SharedGPUType
 
 
 def test_cpu_single():
@@ -55,6 +57,10 @@ def test_gpu_int():
         "L40s:2",
         "T4g:1",
         "B300:8",
+        "B200:8",
+        "H200:8",
+        "A2:1",
+        "GB10:1",
     ],
 )
 def test_gpu_accelerator_mapping(gpu_str):
@@ -182,6 +188,12 @@ def test_accelerator_map_with_fallback():
     acc = _get_gpu_extended_resource_entry(res)
     assert acc is not None
     assert acc.device == "CustomGPU-X1000"  # Should use original device string as fallback
+
+
+def test_every_gpu_type_has_a_device_mapping():
+    # Every dedicated GPU the SDK accepts must normalize to a node label; shared GPUs are sent as is.
+    missing = set(get_args(GPUType)) - set(get_args(SharedGPUType)) - set(ACCELERATOR_DEVICE_MAP)
+    assert not missing
 
 
 @pytest.mark.parametrize("device", ["T4 shared", "L4 shared", "A10G shared", "A10 shared", "L40S shared"])
