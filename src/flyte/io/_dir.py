@@ -970,11 +970,10 @@ class Dir(BaseModel, Generic[T], SerializableType):
         Returns:
             A File instance if the file exists, None otherwise
         """
-        fs = storage.get_underlying_filesystem(path=self.path)
-        file_path = fs.sep.join([self.path, file_name])
+        file_path = storage.join(self.path, file_name)
         file = File[T](path=file_path)
 
-        if fs.exists(file_path):
+        if await file.exists():
             return file
         return None
 
@@ -1003,7 +1002,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
         Returns:
             A File instance if the file exists, None otherwise
         """
-        file_path = os.path.join(self.path, file_name)
+        file_path = storage.join(self.path, file_name)
         file = File[T](path=file_path)
 
         if file.exists_sync():
