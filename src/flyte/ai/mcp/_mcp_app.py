@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
     from starlette.applications import Starlette
     from starlette.middleware import Middleware
+    from starlette.routing import BaseRoute
 
 # Named so the CLI and any other caller can share one definition instead of
 # repeating the literal and letting the two drift apart.
@@ -140,6 +141,13 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
         """
         return []
 
+    def _extra_routes(self) -> list[BaseRoute]:
+        """Return additional routes for the outer Starlette app (outside the MCP mount).
+
+        Subclasses may override to serve their own HTTP endpoints. Defaults to none.
+        """
+        return []
+
     async def _starlette_lifespan_startup(self) -> None:
         """Hook invoked during Starlette lifespan startup, before requests are served.
 
@@ -177,6 +185,7 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
         routes = [
             Mount(self.mcp_mount_path, app=mcp_asgi),
             Route("/health", endpoint=_health, methods=["GET"]),
+            *self._extra_routes(),
         ]
 
         @asynccontextmanager

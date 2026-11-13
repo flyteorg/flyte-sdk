@@ -194,3 +194,13 @@ async def test_whoami_reports_the_config_file(monkeypatch):
     out = await whoami()
     assert out["config_file"] == "/etc/flyte/config.yaml"
     assert out["endpoint"] == "dns:///pinned.example.com"
+
+
+class TestAllowInlineSecretValues:
+    def test_off_by_default(self, workspace, captured_init):
+        assert _invoke().exit_code == 0
+        assert captured_init["env"].allow_inline_secret_values is False
+
+    def test_flag_opts_in(self, workspace, captured_init):
+        assert _invoke("--allow-inline-secret-values").exit_code == 0
+        assert captured_init["env"].allow_inline_secret_values is True
