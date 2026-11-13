@@ -136,6 +136,35 @@ async def test_get_file_remote_uses_async_exists():
     assert "\\" not in file.path
 
 
+def test_get_file_sync_absolute_path(tmp_path):
+    # An absolute file_name must replace the dir path entirely (os.path.join semantics),
+    # not be concatenated onto it.
+    base = tmp_path / "base"
+    base.mkdir()
+
+    target = tmp_path / "shared.txt"
+    target.write_text("hello")
+
+    file = Dir(path=str(base)).get_file_sync(str(target))
+
+    assert file is not None
+    assert file.path == str(target)
+
+
+def test_get_file_sync_remote_strips_trailing_slash():
+    # A dir path with a trailing separator must not produce "data//sub.csv".
+    dir_obj = Dir(path="s3://bucket/data/")
+    fake_fs = MagicMock()
+    fake_fs.sep = "/"
+    with (
+        patch("flyte.io._dir.storage.get_underlying_filesystem", return_value=fake_fs),
+        patch.object(File, "exists_sync", return_value=True),
+    ):
+        file = dir_obj.get_file_sync("sub.csv")
+    assert file is not None
+    assert file.path == "s3://bucket/data/sub.csv"
+
+
 @pytest.mark.asyncio
 async def test_dir_local_remote(tmp_dir_structure, ctx_with_test_raw_data_path):
     upload_location = await storage.put(tmp_dir_structure, recursive=True)
