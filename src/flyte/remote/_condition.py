@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import timedelta
 from typing import Any, AsyncIterator, Union
 
 import rich.repr
@@ -28,9 +29,20 @@ class Condition(ToJSONMixin):
 
     Use `Condition.listall` to discover the conditions of a run, `Condition.get` to look one up by
     name, and `Condition.signal` to resolve one with a typed payload.
+
+    What the condition asks for (`prompt`, `prompt_type`, `description`, `timeout`) is not part of
+    the action listing; it is only returned by the action-details RPC. Call `Condition.fetch_details`
+    to load it, until then those properties are `None`.
+
+    Example:
+        ```python
+        cond = flyte.remote.Condition.get("approve", run_name="r1").fetch_details()
+        print(cond.prompt, cond.expected_type, cond.timeout)
+        ```
     """
 
     pb2: run_definition_pb2.Action
+    details_pb2: run_definition_pb2.ActionDetails | None = None
 
     @property
     def name(self) -> str:
@@ -56,6 +68,45 @@ class Condition(ToJSONMixin):
 
         return action_phase_name(self.pb2.status.phase)
 
+    @property
+    def prompt(self) -> str | None:
+        """The prompt text the condition shows whoever signals it, or `None` if details are not loaded."""
+        spec = self._spec
+        if spec is None or not spec.prompt:
+            return None
+        return spec.prompt
+
+    @property
+    def prompt_type(self) -> str | None:
+        """How `prompt` should be rendered: `"text"` or `"markdown"`, or `None` if unknown."""
+        spec = self._spec
+        if spec is None:
+            return None
+        return _PROMPT_TYPE_TO_STR.get(spec.prompt_type)
+
+    @property
+    def description(self) -> str | None:
+        """The condition's description, or `None` if it has none or details are not loaded."""
+        spec = self._spec
+        if spec is None or not spec.description:
+            return None
+        return spec.description
+
+    @property
+    def timeout(self) -> timedelta | None:
+        """How long the condition waits for a signal before timing out, or `None` if it waits forever
+        or details are not loaded."""
+        spec = self._spec
+        if spec is None or not spec.HasField("timeout"):
+            return None
+        return spec.timeout.ToTimedelta()
+
+    @property
+    def _spec(self) -> run_definition_pb2.ConditionAction | None:
+        if self.details_pb2 is None or not self.details_pb2.HasField("condition"):
+            return None
+        return self.details_pb2.condition
+
     def __rich_repr__(self) -> rich.repr.Result:
         yield "name", self.name
         yield "action", self.action_name
@@ -63,15 +114,27 @@ class Condition(ToJSONMixin):
         yield "phase", self.phase
         if (et := self.expected_type) is not None:
             yield "type", et.__name__
+        if (prompt := self.prompt) is not None:
+            yield "prompt", prompt
+        if (timeout := self.timeout) is not None:
+            yield "timeout", timeout
         yield "parent", self.pb2.metadata.parent
 
     @property
     def expected_type(self) -> type | None:
         """Python type the condition expects for its payload, derived from
-        `metadata.condition.type` populated by the backend. Returns `None` if the
-        underlying action is not a condition or the backend has not yet exposed the
-        type (older deployments / older `flyteidl2` stubs).
+        `metadata.condition.type` populated by the backend, falling back to the loaded
+        details (see `fetch_details`). Returns `None` if the underlying action is not a
+        condition or the backend has not exposed the type (older deployments / older
+        `flyteidl2` stubs).
         """
+        from_metadata = self._metadata_expected_type()
+        if from_metadata is not None:
+            return from_metadata
+        spec = self._spec
+        return _data_type_from_literal_type(spec.type) if spec is not None else None
+
+    def _metadata_expected_type(self) -> type | None:
         if not self.pb2.metadata.HasField("condition"):
             return None
         ct = self.pb2.metadata.condition
@@ -83,6 +146,23 @@ class Condition(ToJSONMixin):
         except ValueError:
             return None
         return _SIMPLE_TO_PY.get(ct.type.simple)
+
+    @syncify
+    async def fetch_details(self) -> Condition:
+        """
+        Load what the condition is asking for: its prompt, description and timeout.
+
+        This is one action-details RPC for the condition action. The current object is left
+        unchanged; a new `Condition` carrying the details is returned.
+
+        Returns:
+            A Condition whose `prompt`, `prompt_type`, `description` and `timeout` are populated.
+        """
+        ensure_client()
+        resp = await get_client().run_service.get_action_details(
+            run_service_pb2.GetActionDetailsRequest(action_id=self.pb2.id)
+        )
+        return replace(self, details_pb2=resp.details)
 
     @syncify
     @classmethod
@@ -220,6 +300,11 @@ def _encode_payload(value: ConditionPayload) -> Any:
     raise TypeError(f"Unsupported payload type: {type(value)}")
 
 
+_PROMPT_TYPE_TO_STR: dict[int, str] = {
+    run_definition_pb2.CONDITION_PROMPT_TYPE_TEXT: "text",
+    run_definition_pb2.CONDITION_PROMPT_TYPE_MARKDOWN: "markdown",
+}
+
 _SIMPLE_TO_PY: dict[int, type] = {
     types_pb2.BOOLEAN: bool,
     types_pb2.INTEGER: int,
@@ -253,12 +338,7 @@ def resolve_condition_expected_type(
     Checks `metadata.condition.type` first, then `ActionDetails.condition.type`
     when details are available (the backend often only populates the latter).
     """
-    expected = Condition(pb2=action_pb2).expected_type
-    if expected is not None:
-        return expected
-    if details_pb2 is not None and details_pb2.HasField("condition"):
-        return _data_type_from_literal_type(details_pb2.condition.type)
-    return None
+    return Condition(pb2=action_pb2, details_pb2=details_pb2).expected_type
 
 
 _BOOL_TRUE = {"true", "1", "yes", "y", "t"}
