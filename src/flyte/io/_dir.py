@@ -304,7 +304,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
             return True
 
     async def walk(
-        self, recursive: bool = True, file_pattern: str = "*", max_depth: Optional[int] = None
+        self, recursive: bool = True, max_depth: Optional[int] = None, *, file_pattern: str = "*"
     ) -> AsyncIterator[File[T]]:
         """
         Asynchronously walk through the directory and yield File objects.
@@ -377,7 +377,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
                     yield File[T](path=full_file)
 
     def walk_sync(
-        self, recursive: bool = True, file_pattern: str = "*", max_depth: Optional[int] = None
+        self, recursive: bool = True, max_depth: Optional[int] = None, *, file_pattern: str = "*"
     ) -> Iterator[File[T]]:
         """
         Synchronously walk through the directory and yield File objects.
