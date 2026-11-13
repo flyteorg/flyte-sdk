@@ -164,6 +164,28 @@ def _load_module_from_file(file_path: Path) -> str | None:
         raise flyte.errors.ModuleLoadError(f"Failed to load module from {file_path}: {e}") from e
 
 
+def _relative_sys_path_entry(path: str, root_dir: Path, resolved_root: Path) -> str | None:
+    """Spell `path` relative to `root_dir`, or return None when it does not live under the root.
+
+    A path that is already a literal subpath is used as-is. Resolving those would follow symlinks that
+    legitimately point outside the root — `.venv/bin` is the canonical case — and drop them, the same
+    constraint `_code_bundle._utils._rebase_under_source` documents.
+
+    Only a path that is *not* a literal subpath is resolved, which is what catches a root reached through
+    a symlink: on macOS `/tmp` is a symlink to `/private/tmp`, so the root resolves to `/private/tmp/proj`
+    while `sys.path` still carries `/tmp/proj/pkg`. Both writers record entries with `abspath`
+    (`_initialize.py` for the root itself, `_load_module_from_file` for a loaded module's directory), and
+    `abspath` does not resolve symlinks, so comparing them against a resolved root matched nothing.
+    """
+    p = Path(path)
+    if p.is_relative_to(root_dir):
+        return f"./{p.relative_to(root_dir)}"
+    try:
+        return f"./{p.resolve().relative_to(resolved_root)}"
+    except (ValueError, OSError):
+        return None
+
+
 def local_sys_paths_env(root_dir: Path) -> dict[str, str]:
     """
     Mirror the local `sys.path` entries that live under `root_dir` as the `FLYTE_SYS_PATH` env var.
@@ -172,12 +194,22 @@ def local_sys_paths_env(root_dir: Path) -> dict[str, str]:
     at runtime, where the code bundle is extracted into the working directory. This is what lets a task or app
     module import its sibling files (`from _agent import ...`) when it was loaded from a subdirectory of the
     root directory.
+
+    An entry that does not live under the root is skipped rather than reported: it has no meaning once the
+    bundle is extracted somewhere else. Entries are de-duplicated because the same directory can reach us
+    under two spellings (`/tmp/proj/pkg` and `/private/tmp/proj/pkg`) that rewrite to one relative path.
     """
-    root_dir_abs = Path(root_dir).resolve()
-    value = ":".join(
-        f"./{Path(path).relative_to(root_dir_abs)}" for path in sys.path if Path(path).is_relative_to(root_dir_abs)
-    )
-    return {FLYTE_SYS_PATH: value}
+    root_dir_abs = Path(os.path.abspath(root_dir))
+    resolved_root = root_dir_abs.resolve()
+    entries: List[str] = []
+    for path in sys.path:
+        if not path:
+            # The conventional "current directory" entry; `adjust_sys_path` re-adds it at runtime.
+            continue
+        entry = _relative_sys_path_entry(path, root_dir_abs, resolved_root)
+        if entry is not None and entry not in entries:
+            entries.append(entry)
+    return {FLYTE_SYS_PATH: ":".join(entries)}
 
 
 def adjust_sys_path(additional_paths: List[str] | None = None):
