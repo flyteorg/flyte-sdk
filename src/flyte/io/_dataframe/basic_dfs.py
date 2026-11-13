@@ -31,13 +31,13 @@ def _get_pandas_path_and_filesystem(uri: str, anonymous: bool = False) -> typing
     """
     Return the path and filesystem to hand to pandas for `uri`.
 
-    For S3 URIs this is the protocol-less path plus Flyte's own filesystem. Flyte's configured kwargs
+    For S3 and Azure URIs this is the protocol-less path plus Flyte's own filesystem. Flyte's configured kwargs
     are obstore-shaped, so they must not be handed to pandas as `storage_options`: pandas would resolve
-    "s3" through the global fsspec registry, which may hold s3fs when it is installed alongside Flyte.
+    the protocol through the global fsspec registry, which may hold s3fs or adlfs.
 
     For anything else this is `(uri, None)`, which lets pandas resolve the path itself.
     """
-    if uri.startswith("s3://"):
+    if uri.startswith(("s3://", "abfs://", "abfss://")):
         filesystem = storage.get_underlying_filesystem(path=uri, anonymous=anonymous)
         return filesystem._strip_protocol(uri), filesystem
     return uri, None
@@ -226,6 +226,10 @@ class ParquetToArrowDecodingHandler(DataFrameDecoder):
         if current_task_metadata.structured_dataset_type and current_task_metadata.structured_dataset_type.columns:
             columns = [c.name for c in current_task_metadata.structured_dataset_type.columns]
         try:
+            if storage.is_remote(path):
+                # Read through Flyte's filesystem, as the encoder writes, so Flyte's storage config applies.
+                filesystem = storage.get_underlying_filesystem(path=path)
+                return pq.read_table(filesystem._strip_protocol(path), columns=columns, filesystem=filesystem)
             return pq.read_table(path, columns=columns)
         except Exception as exc:
             if exc.__class__.__name__ == "NoCredentialsError":
