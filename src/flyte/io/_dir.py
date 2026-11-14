@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import os
 from pathlib import Path
 from typing import (
@@ -41,6 +42,14 @@ T = TypeVar("T", default=Any)
 # that cannot collide with any real local or object-store path users might pass (no scheme,
 # leading colons, illegal in filesystems and URIs alike).
 _EMPTY_DIR_SENTINEL = "::flyte-empty-dir::"
+
+
+def _resolve_maxdepth(recursive: bool, max_depth: Optional[int]) -> Optional[int]:
+    # fsspec's walk treats maxdepth=1 as top-level-only and maxdepth=N as N levels deep.
+    # recursive=False means top-level only and takes precedence over max_depth.
+    if not recursive:
+        return 1
+    return max_depth
 
 
 class Dir(BaseModel, Generic[T], SerializableType):
@@ -294,7 +303,9 @@ class Dir(BaseModel, Generic[T], SerializableType):
         ):
             return True
 
-    async def walk(self, recursive: bool = True, max_depth: Optional[int] = None) -> AsyncIterator[File[T]]:
+    async def walk(
+        self, recursive: bool = True, max_depth: Optional[int] = None, *, file_pattern: str = "*"
+    ) -> AsyncIterator[File[T]]:
         """
         Asynchronously walk through the directory and yield File objects.
 
@@ -336,24 +347,29 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
         Args:
             recursive: If True, recursively walk subdirectories. If False, only list files in the top-level directory.
-            max_depth: Maximum depth for recursive walking. If None, walk through all subdirectories.
+            file_pattern: Glob pattern to filter files (e.g., "*.txt", "*.csv"). Default is "*" (all files).
+            max_depth: Maximum depth for recursive walking, only honored when recursive is True. If None, walk through
+                all subdirectories.
 
         Yields:
             File objects for each file found in the directory
         """
         fs = storage.get_underlying_filesystem(path=self.path)
-        if recursive is False:
-            max_depth = 2
+        maxdepth = _resolve_maxdepth(recursive, max_depth)
 
         # Note if the path is actually just a file, no walking is done.
         if isinstance(fs, AsyncFileSystem):
-            async for parent, _, files in fs._walk(self.path, maxdepth=max_depth):
+            async for parent, _, files in fs._walk(self.path, maxdepth=maxdepth):
                 for file in files:
+                    if not fnmatch.fnmatch(file, file_pattern):
+                        continue
                     full_file = fs.unstrip_protocol(parent + fs.sep + file)
                     yield File[T](path=full_file)
         else:
-            for parent, _, files in fs.walk(self.path, maxdepth=max_depth):
+            for parent, _, files in fs.walk(self.path, maxdepth=maxdepth):
                 for file in files:
+                    if not fnmatch.fnmatch(file, file_pattern):
+                        continue
                     if "file" in fs.protocol:
                         full_file = os.path.join(parent, file)
                     else:
@@ -404,14 +420,18 @@ class Dir(BaseModel, Generic[T], SerializableType):
         Args:
             recursive: If True, recursively walk subdirectories. If False, only list files in the top-level directory.
             file_pattern: Glob pattern to filter files (e.g., "*.txt", "*.csv"). Default is "*" (all files).
-            max_depth: Maximum depth for recursive walking. If None, walk through all subdirectories.
+            max_depth: Maximum depth for recursive walking, only honored when recursive is True. If None, walk through
+                all subdirectories.
 
         Yields:
             File objects for each file found in the directory
         """
         fs = storage.get_underlying_filesystem(path=self.path)
-        for parent, _, files in fs.walk(self.path, maxdepth=max_depth):
+        maxdepth = _resolve_maxdepth(recursive, max_depth)
+        for parent, _, files in fs.walk(self.path, maxdepth=maxdepth):
             for file in files:
+                if not fnmatch.fnmatch(file, file_pattern):
+                    continue
                 if "file" in fs.protocol:
                     full_file = os.path.join(parent, file)
                 else:

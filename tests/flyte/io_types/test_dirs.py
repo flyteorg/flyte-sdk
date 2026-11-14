@@ -80,6 +80,82 @@ async def test_walk_async_local(tmp_dir_structure):
     assert os.path.exists(f.path)
 
 
+def test_walk_sync_recursive_false_top_level_only(tmp_dir_structure):
+    dir_obj = Dir(path=tmp_dir_structure)
+    names = sorted(os.path.basename(f.path) for f in dir_obj.walk_sync(recursive=False))
+    assert names == ["root.txt"]
+
+
+def test_walk_sync_file_pattern(tmp_dir_structure):
+    dir_obj = Dir(path=tmp_dir_structure)
+    assert sorted(os.path.basename(f.path) for f in dir_obj.walk_sync(file_pattern="file*.txt")) == [
+        "file1.txt",
+        "file2.txt",
+    ]
+    assert list(dir_obj.walk_sync(file_pattern="*.csv")) == []
+
+
+@pytest.mark.asyncio
+async def test_walk_async_recursive_false_top_level_only(tmp_dir_structure):
+    dir_obj = Dir(path=tmp_dir_structure)
+    names = sorted(os.path.basename(f.path) for f in [f async for f in dir_obj.walk(recursive=False)])
+    assert names == ["root.txt"]
+
+
+@pytest.mark.asyncio
+async def test_walk_async_recursive_false_ignores_max_depth(tmp_dir_structure):
+    dir_obj = Dir(path=tmp_dir_structure)
+    names = sorted(os.path.basename(f.path) for f in [f async for f in dir_obj.walk(recursive=False, max_depth=1)])
+    assert names == ["root.txt"]
+
+
+@pytest.mark.asyncio
+async def test_walk_async_file_pattern(tmp_dir_structure):
+    dir_obj = Dir(path=tmp_dir_structure)
+    names = sorted(os.path.basename(f.path) for f in [f async for f in dir_obj.walk(file_pattern="file*.txt")])
+    assert names == ["file1.txt", "file2.txt"]
+    assert [f async for f in dir_obj.walk(file_pattern="*.csv")] == []
+
+
+@pytest.mark.asyncio
+async def test_walk_async_max_depth(tmp_dir_structure):
+    dir_obj = Dir(path=tmp_dir_structure)
+    assert len([f async for f in dir_obj.walk(max_depth=1)]) == 1
+    assert len([f async for f in dir_obj.walk(max_depth=2)]) == 3
+
+
+@pytest.mark.asyncio
+async def test_walk_async_second_positional_arg_is_max_depth(tmp_dir_structure):
+    # Backward compat: async walk's second positional arg must remain max_depth.
+    dir_obj = Dir(path=tmp_dir_structure)
+    assert len([f async for f in dir_obj.walk(True, 1)]) == 1
+    assert len([f async for f in dir_obj.walk(True, 2)]) == 3
+
+
+def test_walk_sync_second_positional_arg_is_file_pattern(tmp_dir_structure):
+    # Backward compat: walk_sync's original signature has file_pattern as the second
+    # positional arg, so that contract is preserved.
+    dir_obj = Dir(path=tmp_dir_structure)
+    assert sorted(os.path.basename(f.path) for f in dir_obj.walk_sync(True, "file*.txt")) == [
+        "file1.txt",
+        "file2.txt",
+    ]
+    assert list(dir_obj.walk_sync(True, "*.csv")) == []
+
+
+def test_list_files_sync_is_non_recursive(tmp_dir_structure):
+    dir_obj = Dir(path=tmp_dir_structure)
+    names = sorted(os.path.basename(f.path) for f in dir_obj.list_files_sync())
+    assert names == ["root.txt"]
+
+
+@pytest.mark.asyncio
+async def test_list_files_is_non_recursive(tmp_dir_structure):
+    dir_obj = Dir(path=tmp_dir_structure)
+    names = sorted(os.path.basename(f.path) for f in await dir_obj.list_files())
+    assert names == ["root.txt"]
+
+
 @pytest.mark.asyncio
 async def test_download_async_local(tmp_dir_structure):
     dest = tempfile.mkdtemp()
@@ -589,12 +665,12 @@ async def test_list_dir_mock_s3(tmp_path, tmp_dir_structure, ctx_with_test_local
     # List files with a trailing /
     replica_dir = Dir.from_existing_remote(uploaded_path)
     files = await replica_dir.list_files()
-    assert len(files) == 3
+    assert len(files) == 1
 
     # List without the /
     replica_dir = Dir.from_existing_remote(uploaded_dir.path)
     files = await replica_dir.list_files()
-    assert len(files) == 3
+    assert len(files) == 1
 
 
 @pytest.mark.asyncio
@@ -611,7 +687,7 @@ async def test_list_dir_local_fs(tmp_path, tmp_dir_structure, ctx_with_test_raw_
     # List files
     replica_dir = Dir(path=uploaded_dir.path + "/")
     files = await replica_dir.list_files()
-    assert len(files) == 3
+    assert len(files) == 1
 
 
 @pytest.mark.parametrize("sync", [False, True])
