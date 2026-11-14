@@ -1220,6 +1220,39 @@ async def test_enqueue_aborted_raises_system_error_without_retry():
 
 
 @pytest.mark.asyncio
+async def test_queue_service_rejects_overridden_action_without_enqueuing():
+    """EnqueueActionRequest cannot carry override_applied, so the controller fails the
+    action with the reason instead of enqueuing it without the flag."""
+    phases = {"subrun-1": [(phase_pb2.ACTION_PHASE_SUCCEEDED, None, None)]}
+
+    class CountingService(DummyService):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.enqueue_calls = 0
+
+        async def enqueue_action(self, req, **kwargs):
+            self.enqueue_calls += 1
+            return await super().enqueue_action(req, **kwargs)
+
+    service = CountingService(phases=phases)
+
+    async def create_service():
+        return service
+
+    run_id = _ce_make_run_id()
+    action = _ce_make_action("subrun-1", run_id)
+    action.override_applied = True
+    c = Controller(client_coro=create_service(), workers=2, max_system_retries=2, min_backoff_on_err_sec=0.01)
+
+    final_node = await c.submit_action(action)
+    assert service.enqueue_calls == 0
+    assert isinstance(final_node.client_err, flyte.errors.RuntimeSystemError)
+    assert "actions service" in str(final_node.client_err.__cause__ or final_node.client_err)
+    await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
+    await c.stop()
+
+
+@pytest.mark.asyncio
 async def test_enqueue_invalid_argument_raises_system_error_without_retry():
     """INVALID_ARGUMENT is non-retryable — surfaced immediately."""
     phases = {

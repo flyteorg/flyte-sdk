@@ -207,3 +207,33 @@ def infer_type_from_value(value: Any, literal_type: types_pb2.LiteralType) -> Op
         return value_type
 
     return None
+
+
+def describe_literal_type(literal_type: types_pb2.LiteralType) -> str:
+    """A LiteralType as a Python annotation, for messages and for comparing interfaces.
+
+    It describes the type's structure only: metadata, annotations and structure tags, which a
+    rebuild of the same task may change, are left out.
+    """
+    kind = literal_type.WhichOneof("type")
+    if kind == "simple":
+        try:
+            return types_pb2.SimpleType.Name(literal_type.simple).lower()
+        except ValueError:
+            return f"simple type {literal_type.simple}"
+    if kind == "collection_type":
+        return f"list[{describe_literal_type(literal_type.collection_type)}]"
+    if kind == "map_value_type":
+        return f"dict[str, {describe_literal_type(literal_type.map_value_type)}]"
+    if kind == "union_type":
+        return " | ".join(describe_literal_type(variant) for variant in literal_type.union_type.variants)
+    if kind == "blob":
+        return {
+            types_pb2.BlobType.BlobDimensionality.SINGLE: "File",
+            types_pb2.BlobType.BlobDimensionality.MULTIPART: "Dir",
+        }.get(literal_type.blob.dimensionality, "a file or directory")
+    return {
+        "structured_dataset_type": "a dataframe",
+        "schema": "a schema",
+        "enum_type": "an enum",
+    }.get(kind or "", "an unknown type")

@@ -82,3 +82,30 @@ def test_stringify_via_agents_helper():
     parsed = json.loads(run_sync(_stringify_tool_result, f))
     assert parsed["uri"] == "s3://bucket/report.txt"
     assert parsed["dimensionality"] == "SINGLE"
+
+
+@pytest.mark.asyncio
+async def test_coerces_the_scalars_json_cannot_express():
+    import datetime
+    import enum
+
+    from flyte.types._json_coercion import coerce_json_value
+
+    class Color(enum.Enum):
+        RED = "red"
+        BLUE = "blue"
+
+    Guessed = enum.Enum("DynamicEnum", {"RED": "RED", "BLUE": "BLUE"})
+
+    assert await coerce_json_value(3, float) == 3.0 and isinstance(await coerce_json_value(3, float), float)
+    assert await coerce_json_value(True, float) is True, "a bool is not an int for float coercion"
+    assert await coerce_json_value("2026-11-12", datetime.date) == datetime.date(2026, 11, 12)
+    assert await coerce_json_value("2026-11-12T10:30:00", datetime.datetime) == datetime.datetime(2026, 11, 12, 10, 30)
+    assert await coerce_json_value("blue", Color) is Color.BLUE, "by member name, any case"
+    assert await coerce_json_value(Color.RED, Guessed) is Guessed.RED, "a member of a structurally identical enum"
+    assert await coerce_json_value([1, 2], list[float]) == [1.0, 2.0]
+    assert await coerce_json_value({"a": "red"}, dict[str, Color]) == {"a": Color.RED}
+    with pytest.raises(ValueError, match="not one of RED, BLUE"):
+        await coerce_json_value("green", Color)
+    with pytest.raises(ValueError, match="not an ISO date"):
+        await coerce_json_value("tomorrow", datetime.date)

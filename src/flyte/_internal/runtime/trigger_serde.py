@@ -316,6 +316,9 @@ async def offload_trigger_inputs(
     req = dataproxy_service_pb2.UploadInputsRequest(
         inputs=inputs,
         project_id=identifier_pb2.ProjectIdentifier(organization=org, name=project, domain=domain),
+        # Every run the trigger creates reads these inputs, so the backend must keep them for as
+        # long as the trigger exists rather than with the data of a single run.
+        for_trigger=True,
     )
     if task_spec is not None:
         req.task_spec.CopyFrom(task_spec)
