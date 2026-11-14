@@ -187,6 +187,60 @@ def test_from_local_sync_with_local_files():
         assert content == test_content
 
 
+@pytest.mark.asyncio
+async def test_from_local_with_file_uri_destination(tmp_path):
+    flyte.init()
+    local_path = tmp_path / "source.txt"
+    local_path.write_text(TEST_CONTENT)
+    dest = tmp_path / "destination.txt"
+
+    result = await File.from_local(str(local_path), dest.as_uri())
+
+    assert dest.read_text() == TEST_CONTENT
+    assert os.path.samefile(result.path, dest)
+
+
+def test_from_local_sync_with_file_uri_destination(tmp_path):
+    flyte.init()
+    local_path = tmp_path / "source.txt"
+    local_path.write_text(TEST_CONTENT)
+    dest = tmp_path / "destination.txt"
+
+    result = File.from_local_sync(str(local_path), dest.as_uri())
+
+    assert dest.read_text() == TEST_CONTENT
+    assert os.path.samefile(result.path, dest)
+
+
+def test_from_local_sync_with_file_uri_destination_hashed(tmp_path):
+    flyte.init()
+    local_path = tmp_path / "source.txt"
+    local_path.write_text(TEST_CONTENT)
+    dest = tmp_path / "destination.txt"
+
+    result = File.from_local_sync(
+        str(local_path), dest.as_uri(), hash_method=HashlibAccumulator.from_hash_name("sha256")
+    )
+
+    assert dest.read_text() == TEST_CONTENT
+    assert result.hash == TEST_SHA256
+
+
+def test_from_local_sync_with_percent_encoded_file_uri_destination(tmp_path):
+    flyte.init()
+    local_path = tmp_path / "source.txt"
+    local_path.write_text(TEST_CONTENT)
+    dest_dir = tmp_path / "my dir"
+    dest_dir.mkdir()
+    dest = dest_dir / "destination.txt"
+    assert "%20" in dest.as_uri()
+
+    result = File.from_local_sync(str(local_path), dest.as_uri())
+
+    assert dest.read_text() == TEST_CONTENT
+    assert os.path.samefile(result.path, dest)
+
+
 @pytest.mark.sandbox
 @pytest.mark.asyncio
 async def test_from_local_to_s3(ctx_with_test_local_s3_stack_raw_data_path):
