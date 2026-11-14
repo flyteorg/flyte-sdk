@@ -377,7 +377,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
                     yield File[T](path=full_file)
 
     def walk_sync(
-        self, recursive: bool = True, max_depth: Optional[int] = None, *, file_pattern: str = "*"
+        self, recursive: bool = True, file_pattern: str = "*", max_depth: Optional[int] = None
     ) -> Iterator[File[T]]:
         """
         Synchronously walk through the directory and yield File objects.
