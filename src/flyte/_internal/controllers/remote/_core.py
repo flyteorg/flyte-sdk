@@ -348,14 +348,26 @@ class Controller:
         # run for hours, so they wait without a timeout.
         if action.type == "trace":
             _trace_timeout = float(os.getenv("_F_TRACE_COMPLETION_TIMEOUT", "60"))
-            try:
-                await asyncio.wait_for(informer.wait_for_action_completion(action.name), timeout=_trace_timeout)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"{threading.current_thread().name} Trace completion wait timed out after {_trace_timeout}s "
-                    f"for {action.name}, continuing anyway"
-                )
-                await informer.fire_completion_event(action.name)
+            while True:
+                try:
+                    await asyncio.wait_for(informer.wait_for_action_completion(action.name), timeout=_trace_timeout)
+                    break
+                except asyncio.TimeoutError:
+                    current = await informer.get(action.name)
+                    if current is not None and not current.is_started():
+                        # The record has not reached the server, so continuing could lose it if the task
+                        # exits. The launch retries, and fails the action once its retries run out.
+                        logger.warning(
+                            f"{threading.current_thread().name} Trace {action.name} not launched after "
+                            f"{_trace_timeout}s, still waiting"
+                        )
+                        continue
+                    logger.warning(
+                        f"{threading.current_thread().name} Trace completion wait timed out after {_trace_timeout}s "
+                        f"for {action.name}, continuing anyway"
+                    )
+                    await informer.fire_completion_event(action.name)
+                    break
         else:
             await informer.wait_for_action_completion(action.name)
         logger.info(f"{threading.current_thread().name} Action {action.name} completed")

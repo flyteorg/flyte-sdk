@@ -1482,3 +1482,56 @@ async def test_cancel_after_launch_sends_abort_without_watch_update():
 
     await c._finalize_parent_action(run_id=run_id, parent_action_name=parent_action_name)
     await c.stop()
+
+
+class SlowToAcceptService(DummyActionsService):
+    """Refuses the first enqueues as a control plane under load does, and never echoes the action on the watch."""
+
+    def __init__(self, refusals: int):
+        super().__init__(phases={})
+        self._refusals = refusals
+        self.attempts = 0
+        self.accepted = False
+
+    async def enqueue(self, req, **kwargs):
+        self.attempts += 1
+        if self.attempts <= self._refusals:
+            raise ConnectError(Code.UNAVAILABLE, "Request timed out")
+        self.accepted = True
+        return actions_service_pb2.EnqueueResponse()
+
+    async def watch_for_updates(self, req, **kwargs):
+        yield actions_service_pb2.WatchForUpdatesResponse(
+            control_message=state_service_pb2.ControlMessage(sentinel=True),
+        )
+        await asyncio.Event().wait()
+
+
+@pytest.mark.asyncio
+async def test_a_trace_is_not_done_until_its_launch_is_accepted(monkeypatch):
+    """Before: a trace whose launch was still retrying at the completion timeout was taken as recorded,
+    so a task that exited then lost the record."""
+    monkeypatch.setenv("_F_TRACE_COMPLETION_TIMEOUT", "0.1")
+    run_id = _ce_make_run_id()
+    service = SlowToAcceptService(refusals=3)
+
+    async def create_service():
+        return service
+
+    action = Action(
+        action_id=identifier_pb2.ActionIdentifier(name="trace-1", run=run_id),
+        parent_action_name="parent_action",
+        type="trace",
+        inputs_uri="input_uri",
+        run_output_base="run-base",
+    )
+    c = Controller(client_coro=create_service(), workers=2, max_system_retries=10, min_backoff_on_err_sec=0.2)
+
+    async def _run():
+        await c.submit_action(action)
+        assert service.accepted
+        assert service.attempts == 4
+        await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
+        await c.stop()
+
+    await run_coros(_run(), c.watch_for_errors())
