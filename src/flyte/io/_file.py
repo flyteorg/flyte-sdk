@@ -24,6 +24,7 @@ from typing import (
 
 import aiofiles
 from flyteidl2.core import literals_pb2, types_pb2
+from fsspec.core import url_to_fs
 from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
@@ -72,6 +73,18 @@ async def _upload_hashed(
             max_concurrency=max_concurrency,
         )
         return path, src_wrapper.result()
+
+
+def _to_local_path(path: str) -> str:
+    """
+    Turn a `file://` URI into a path that `open()` and `shutil` accept; leave plain paths untouched.
+
+    fsspec resolves Windows drive letters too (`file:///C:/data/x.txt` -> `C:/data/x.txt`).
+    """
+    if path.startswith("file://"):
+        _, local = url_to_fs(path)
+        return local
+    return path
 
 
 # Type variable for the file format. Defaults to Any (PEP 696) so that calls that
@@ -935,6 +948,7 @@ class File(BaseModel, Generic[T], SerializableType):
             if remote_destination is None:
                 path = str(Path(local_path).absolute())
             else:
+                remote_path = _to_local_path(remote_path)
                 if hash_method_obj:
                     with open(local_path, "rb") as src:
                         with open(remote_path, "wb") as dst:
@@ -1057,6 +1071,7 @@ class File(BaseModel, Generic[T], SerializableType):
                 path = str(Path(local_path).absolute())
             else:
                 # Otherwise, actually make a copy of the file
+                remote_path = _to_local_path(remote_path)
                 async with aiofiles.open(local_path, "rb") as src:
                     async with aiofiles.open(remote_path, "wb") as dst:
                         if hash_method:
