@@ -6,6 +6,7 @@ from flyteidl2.core import types_pb2
 from fsspec.utils import get_protocol
 
 import flyte
+import flyte.storage as storage
 from flyte.io._dataframe import lazy_import_dataframe_handler
 from flyte.io._dataframe.dataframe import (
     PARQUET,
@@ -418,6 +419,53 @@ def test_guess_python_type_fallback_for_unknown_tag(ctx_with_preserve_original_t
     pt = fdt.guess_python_type(lt)
     # Should fall back to DataFrame for unknown types
     assert pt is DataFrame
+
+
+@pytest.mark.asyncio
+async def test_pandas_parquet_encode_remote_uri_uses_forward_slashes(sample_dataframe, monkeypatch):
+    """Remote parquet paths must use forward slashes on every OS; os.path.join inserts '\\' on Windows.
+
+    pandas receives the protocol-stripped path plus a filesystem, so the backslash would corrupt the key.
+    """
+    from flyte.io._dataframe.basic_dfs import PandasToParquetEncodingHandler
+
+    captured = {}
+
+    def fake_to_parquet(self, path, *args, **kwargs):
+        captured["path"] = path
+
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", fake_to_parquet)
+
+    sd = DataFrame.from_df(val=sample_dataframe, uri="s3://my-bucket/models")
+    result = await PandasToParquetEncodingHandler().encode(sd, types_pb2.StructuredDatasetType(format=PARQUET))
+
+    assert captured["path"] == "my-bucket/models/00000"
+    assert "\\" not in captured["path"]
+    assert result.uri == "s3://my-bucket/models"
+
+
+@pytest.mark.asyncio
+async def test_arrow_parquet_encode_remote_uri_uses_forward_slashes(sample_dataframe, monkeypatch):
+    """Arrow parquet encoder must also build remote paths with forward slashes."""
+    pa = pytest.importorskip("pyarrow")
+    import pyarrow.parquet as pq
+
+    from flyte.io._dataframe.basic_dfs import ArrowToParquetEncodingHandler
+
+    captured = {}
+
+    def fake_write_table(table, where, *args, **kwargs):
+        captured["path"] = where
+
+    monkeypatch.setattr(pq, "write_table", fake_write_table)
+    monkeypatch.setattr(storage, "get_underlying_filesystem", lambda *a, **k: None)
+
+    sd = DataFrame.from_df(val=pa.Table.from_pandas(sample_dataframe), uri="s3://my-bucket/models")
+    result = await ArrowToParquetEncodingHandler().encode(sd, types_pb2.StructuredDatasetType(format=PARQUET))
+
+    assert "\\" not in captured["path"]
+    assert captured["path"].endswith("my-bucket/models/00000")
+    assert result.uri == "s3://my-bucket/models"
 
 
 def test_guess_python_type_raises_for_non_structured_dataset():
