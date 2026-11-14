@@ -95,6 +95,8 @@ class Controller:
         self._enqueue_timeout = enqueue_timeout_sec
         self._consecutive_launch_timeouts = 0
         self._informer_start_wait_timeout = thread_wait_timeout_sec
+        # How long a lookup waits for the informer's first sync before it fails rather than answer "not found".
+        self._informer_sync_timeout = float(os.getenv("_F_INFORMER_SYNC_TIMEOUT", "300"))
         max_qps = int(os.getenv("_F_MAX_QPS", "100"))
         self._rate_limiter = AsyncLimiter(max_qps, 1.0)
 
@@ -303,6 +305,14 @@ class Controller:
             actions_service=self._actions_service,
         )
         if informer:
+            # Until the first sync the cache is empty, so a miss would not mean the action is absent:
+            # a retried attempt would re-run a trace it already recorded.
+            if not await informer.wait_for_cache_sync(timeout=self._informer_sync_timeout):
+                raise flyte.errors.RuntimeSystemError(
+                    "InformerSyncTimeout",
+                    f"Informer {informer.name} did not sync within {self._informer_sync_timeout}s, "
+                    f"cannot tell whether action {action_id.name} exists.",
+                )
             return await informer.get(action_id.name)
         return None
 

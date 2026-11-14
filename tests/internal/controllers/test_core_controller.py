@@ -1482,3 +1482,74 @@ async def test_cancel_after_launch_sends_abort_without_watch_update():
 
     await c._finalize_parent_action(run_id=run_id, parent_action_name=parent_action_name)
     await c.stop()
+
+
+class SlowToSyncService(DummyActionsService):
+    """A watch whose first snapshot arrives late (or never): a child recorded by an earlier attempt,
+    then the sentinel."""
+
+    def __init__(self, sync_delay: float | None):
+        super().__init__(phases={})
+        self._sync_delay = sync_delay
+
+    async def watch_for_updates(self, req, **kwargs):
+        if self._sync_delay is None:
+            await asyncio.Event().wait()
+        await asyncio.sleep(self._sync_delay)
+        yield actions_service_pb2.WatchForUpdatesResponse(
+            action_update=state_service_pb2.ActionUpdate(
+                action_id=identifier_pb2.ActionIdentifier(name="recorded", run=req.parent_action_id.run),
+                phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+                output_uri="s3://out/recorded",
+            )
+        )
+        yield actions_service_pb2.WatchForUpdatesResponse(
+            control_message=state_service_pb2.ControlMessage(sentinel=True),
+        )
+        await asyncio.Event().wait()
+
+
+@pytest.mark.asyncio
+async def test_get_action_waits_for_a_sync_slower_than_the_informer_start():
+    """Before: a sync slower than the informer start timeout made the lookup read an empty cache and
+    answer "not found", so a retried attempt re-ran a trace it had already recorded."""
+    run_id = _ce_make_run_id()
+    service = SlowToSyncService(sync_delay=0.5)
+
+    async def create_service():
+        return service
+
+    c = Controller(client_coro=create_service(), workers=2, max_system_retries=2, thread_wait_timeout_sec=0.05)
+
+    async def _run():
+        found = await c.get_action(identifier_pb2.ActionIdentifier(name="recorded", run=run_id), "parent_action")
+        assert found is not None
+        assert found.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
+        missing = await c.get_action(identifier_pb2.ActionIdentifier(name="never-ran", run=run_id), "parent_action")
+        assert missing is None
+        await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
+        await c.stop()
+
+    await run_coros(_run(), c.watch_for_errors())
+
+
+@pytest.mark.asyncio
+async def test_get_action_fails_when_the_informer_never_syncs(monkeypatch):
+    """An informer that never syncs cannot say an action is absent: the lookup fails as a system error."""
+    monkeypatch.setenv("_F_INFORMER_SYNC_TIMEOUT", "0.2")
+    run_id = _ce_make_run_id()
+    service = SlowToSyncService(sync_delay=None)
+
+    async def create_service():
+        return service
+
+    c = Controller(client_coro=create_service(), workers=2, max_system_retries=2, thread_wait_timeout_sec=0.05)
+
+    async def _run():
+        with pytest.raises(flyte.errors.RuntimeSystemError) as exc_info:
+            await c.get_action(identifier_pb2.ActionIdentifier(name="recorded", run=run_id), "parent_action")
+        assert exc_info.value.code == "InformerSyncTimeout"
+        await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
+        await c.stop()
+
+    await run_coros(_run(), c.watch_for_errors())
