@@ -738,7 +738,7 @@ class File(BaseModel, Generic[T], SerializableType):
         else:
             # Preserve trailing separator if present (Path.absolute() strips it)
             local_path_str = str(local_path)
-            has_trailing_sep = local_path_str.endswith(os.sep)
+            has_trailing_sep = storage.is_dir_destination(local_path_str)
             local_path = str(Path(local_path).absolute())
             if has_trailing_sep:
                 local_path = local_path + os.sep
@@ -752,7 +752,7 @@ class File(BaseModel, Generic[T], SerializableType):
             if isinstance(local_path, str):
                 local_path_obj = Path(local_path)
                 # Check if it's a directory or ends with separator
-                if local_path.endswith(os.sep) or (local_path_obj.exists() and local_path_obj.is_dir()):
+                if storage.is_dir_destination(local_path) or (local_path_obj.exists() and local_path_obj.is_dir()):
                     remote_filename = Path(self.path).name
                     local_path_for_copy = str(local_path_obj / remote_filename)
 
@@ -813,7 +813,7 @@ class File(BaseModel, Generic[T], SerializableType):
         else:
             # Preserve trailing separator if present (Path.absolute() strips it)
             local_path_str = str(local_path)
-            has_trailing_sep = local_path_str.endswith(os.sep)
+            has_trailing_sep = storage.is_dir_destination(local_path_str)
             local_path = str(Path(local_path).absolute())
             if has_trailing_sep:
                 local_path = local_path + os.sep
@@ -827,7 +827,7 @@ class File(BaseModel, Generic[T], SerializableType):
             if isinstance(local_path, str):
                 local_path_obj = Path(local_path)
                 # Check if it's a directory or ends with separator
-                if local_path.endswith(os.sep) or (local_path_obj.exists() and local_path_obj.is_dir()):
+                if storage.is_dir_destination(local_path) or (local_path_obj.exists() and local_path_obj.is_dir()):
                     remote_filename = Path(self.path).name
                     local_path_for_copy = str(local_path_obj / remote_filename)
 

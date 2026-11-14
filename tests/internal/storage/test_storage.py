@@ -696,3 +696,18 @@ def test_azure_account_from_bucket():
 )
 def test_storage_join(paths, expected):
     assert storage.join(*paths) == expected
+
+
+@pytest.mark.parametrize(
+    "path, expected",
+    [
+        ("out/dir/", True),
+        ("out/dir", False),
+        ("out" + os.sep + "dir" + os.sep, True),
+        ("out" + os.sep + "dir", False),
+        ("file.txt", False),
+        ("", False),
+    ],
+)
+def test_is_dir_destination(path, expected):
+    assert storage.is_dir_destination(path) is expected
