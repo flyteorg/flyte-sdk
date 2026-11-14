@@ -1,6 +1,9 @@
+import asyncio
 import math
 import os
+import pathlib
 import tempfile
+import types
 import unittest
 
 import fsspec
@@ -662,6 +665,100 @@ def test_azure_account_from_bucket():
     assert _azure_account_from_bucket("container") is None
 
 
+@pytest.mark.asyncio
+async def test_download_single_file_sends_posix_key_to_get_range(monkeypatch, tmp_path):
+    # Object-store keys are always "/"-separated. On Windows, rebuilding the key with the OS path
+    # type (pathlib.Path -> WindowsPath) turns it into a backslash key that obstore rejects. This
+    # test simulates Windows by swapping only the module's ``pathlib.Path`` for ``PureWindowsPath``
+    # so it fails on the pre-fix code regardless of the host OS.
+    from flyte.storage import _parallel_reader as pr
+
+    shim = types.SimpleNamespace(
+        Path=pathlib.PureWindowsPath,
+        PurePosixPath=pathlib.PurePosixPath,
+        PurePath=pathlib.PurePath,
+    )
+    monkeypatch.setattr(pr, "pathlib", shim)
+
+    # Keep the simulated-Windows local destination off the real filesystem.
+    class _FsFreeBuffer:
+        def __init__(self, size):
+            self.pending = size
+
+        async def write(self, offset, length, value):
+            self.pending -= length
+
+        @property
+        def complete(self):
+            return self.pending == 0
+
+    monkeypatch.setattr(pr._FileBuffer, "new", classmethod(lambda cls, path, size: _FsFreeBuffer(size)))
+    monkeypatch.setattr(pr._MemoryBuffer, "new", classmethod(lambda cls, size: _FsFreeBuffer(size)))
+
+    async def fake_head(store, key, **kwargs):
+        return {"path": "models/weights/file.pt", "size": 4}
+
+    captured = {}
+
+    class _StopForTest(Exception):
+        pass
+
+    async def fake_get_range(store, key, *, start, end):
+        captured["key"] = key
+        raise _StopForTest
+
+    monkeypatch.setattr(pr.obstore, "head_async", fake_head)
+    monkeypatch.setattr(pr.obstore, "get_range_async", fake_get_range)
+
+    reader = pr.ObstoreParallelReader(object())
+    with pytest.raises(Exception):
+        await asyncio.wait_for(
+            reader.download_files(
+                pathlib.PurePosixPath("models/weights"),
+                tmp_path,
+                "file.pt",
+                destination_file_name="file.pt",
+            ),
+            timeout=10,
+        )
+
+    assert captured.get("key") == "models/weights/file.pt"
+    assert "\\" not in captured["key"]
+
+
+@pytest.mark.asyncio
+async def test_download_single_file_writes_local_destination(monkeypatch, tmp_path):
+    # Full pipeline on the real filesystem: the POSIX key is sent to get_range and the bytes land
+    # at the OS-native local destination.
+    from flyte.storage import _parallel_reader as pr
+
+    content = b"hello-weights"
+
+    async def fake_head(store, key, **kwargs):
+        return {"path": "models/weights/file.pt", "size": len(content)}
+
+    captured = {}
+
+    async def fake_get_range(store, key, *, start, end):
+        captured["key"] = key
+        return content[start:end]
+
+    monkeypatch.setattr(pr.obstore, "head_async", fake_head)
+    monkeypatch.setattr(pr.obstore, "get_range_async", fake_get_range)
+
+    reader = pr.ObstoreParallelReader(object())
+    dest = tmp_path / "out"
+    await reader.download_files(
+        pathlib.PurePosixPath("models/weights"),
+        dest,
+        "file.pt",
+        destination_file_name="file.pt",
+    )
+
+    assert captured["key"] == "models/weights/file.pt"
+    assert (dest / "file.pt").read_bytes() == content
+
+
 @pytest.mark.parametrize(
     "paths,expected",
     [
@@ -696,3 +793,37 @@ def test_azure_account_from_bucket():
 )
 def test_storage_join(paths, expected):
     assert storage.join(*paths) == expected
+
+
+@pytest.mark.asyncio
+async def test_get_obstore_bypass_builds_posix_key(monkeypatch, tmp_path):
+    """The single-file obstore bypass must send a "/"-separated key to obstore, never a Windows backslash."""
+    from flyte.storage import _storage
+
+    class _FakeFs:
+        protocol = "s3"
+
+        def _split_path(self, path):
+            return "my-bucket", "models/weights/file.pt"
+
+        def _construct_store(self, bucket):
+            return object()
+
+    monkeypatch.setattr(_storage, "get_underlying_filesystem", lambda path: _FakeFs())
+
+    captured = {}
+
+    async def fake_download_files(self, src_prefix, target_prefix, *paths, **kwargs):
+        captured["src_prefix"] = src_prefix
+        captured["paths"] = paths
+
+    monkeypatch.setattr(
+        "flyte.storage._parallel_reader.ObstoreParallelReader.download_files",
+        fake_download_files,
+    )
+
+    await _storage._get_obstore_bypass("s3://my-bucket/models/weights/file.pt", str(tmp_path / "out.pt"))
+
+    key = str(captured["src_prefix"] / captured["paths"][0])
+    assert key == "models/weights/file.pt"
+    assert "\\" not in key

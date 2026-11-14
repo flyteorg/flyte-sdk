@@ -96,7 +96,7 @@ class Chunk:
 @dataclasses.dataclass
 class Source:
     id: Hashable
-    path: pathlib.Path  # Should be str, represents the fully qualified prefix of a file (no bucket)
+    path: pathlib.PurePath  # Remote object key (POSIX-separated); str(path) is sent to get_range
     length: int
     offset: int = 0
     metadata: Any | None = None
@@ -288,7 +288,7 @@ class ObstoreParallelReader:
 
     async def download_files(
         self,
-        src_prefix: pathlib.Path,
+        src_prefix: pathlib.PurePath,
         target_prefix: pathlib.Path,
         *paths,
         destination_file_name: str | None = None,
@@ -329,29 +329,32 @@ class ObstoreParallelReader:
             # Materialize all objects to detect directory placeholders via parent relationships
             objs = [obj async for obj in _list_downloadable()]
 
-            # Build a set of all parent directory paths from the objects
-            # This identifies which paths are parent directories of actual files
-            dir_paths = {str(parent) for o in objs for parent in pathlib.Path(o["path"]).parents}
+            # Object-store keys are always "/"-separated. Keep the remote key as PurePosixPath so
+            # str(key) stays POSIX on every OS; the local destination is rebuilt as an OS-native path
+            # (pathlib.Path would turn the key into a WindowsPath and send backslash keys to the store).
+            dir_paths = {str(parent) for o in objs for parent in pathlib.PurePosixPath(o["path"]).parents}
+            tmp_root = pathlib.Path(tmp_dir)
 
             for obj in objs:
-                path = pathlib.Path(obj["path"])  # e.g. Path(prefix/file.txt), needs to be changed to str.
+                key = pathlib.PurePosixPath(obj["path"])  # remote object key, POSIX-separated
                 size = obj["size"]
-                # Strip src_prefix from path for destination
-                rel_path = path.relative_to(src_prefix)  # doesn't work on windows
+                # Strip src_prefix from the key to get the path relative to the download root.
+                rel_key = key.relative_to(src_prefix)
 
                 # Skip directory placeholder objects. These are identified by:
-                # 1. Root-level entry (rel_path == ".") — represents the prefix itself
+                # 1. Root-level entry (rel_key == ".") — represents the prefix itself
                 # 2. 0-byte object that is a parent of other files in the listing
-                if rel_path == pathlib.Path(".") or (size == 0 and str(path) in dir_paths):
+                if rel_key == pathlib.PurePosixPath(".") or (size == 0 and str(key) in dir_paths):
                     continue
 
-                source = Source(id=path, path=path, length=size)
+                source = Source(id=key, path=key, length=size)
+                target = tmp_root.joinpath(*rel_key.parts)  # OS-native local destination
                 # Emit a single empty chunk for zero-byte objects so the file is still materialized locally
                 chunk_ranges = self._chunks(size) if size else [(0, 0)]
                 for offset, length in chunk_ranges:
                     yield DownloadTask(
                         source=source,
-                        target=tmp_dir / rel_path,  # doesn't work on windows
+                        target=target,
                         chunk=Chunk(offset, length),
                     )
 
