@@ -21,6 +21,7 @@ from typing import (
     Type,
     Union,
 )
+from urllib.parse import unquote
 
 import aiofiles
 from flyteidl2.core import literals_pb2, types_pb2
@@ -79,11 +80,12 @@ def _to_local_path(path: str) -> str:
     """
     Turn a `file://` URI into a path that `open()` and `shutil` accept; leave plain paths untouched.
 
-    fsspec resolves Windows drive letters too (`file:///C:/data/x.txt` -> `C:/data/x.txt`).
+    fsspec resolves Windows drive letters too (`file:///C:/data/x.txt` -> `C:/data/x.txt`) but keeps
+    percent-escapes, so decode them (`My%20Dir` -> `My Dir`), matching what `Path.as_uri()` produces.
     """
     if path.startswith("file://"):
         _, local = url_to_fs(path)
-        return local
+        return unquote(local)
     return path
 
 
