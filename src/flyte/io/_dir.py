@@ -43,6 +43,17 @@ T = TypeVar("T", default=Any)
 _EMPTY_DIR_SENTINEL = "::flyte-empty-dir::"
 
 
+def _join_dir_and_file(fs: Any, dir_path: str, file_name: str) -> str:
+    # Mirror os.path.join: an absolute local path or fully-qualified URI replaces dir_path entirely.
+    if os.path.isabs(file_name) or get_protocol(file_name) != "file":
+        return file_name
+    # Local filesystem keeps native joins; remote stores join on fs.sep so POSIX keys never pick up
+    # Windows backslashes, stripping any trailing separator on dir_path to avoid "dir//file".
+    if "file" in fs.protocol:
+        return os.path.join(dir_path, file_name)
+    return fs.sep.join([dir_path.rstrip(fs.sep), file_name])
+
+
 class Dir(BaseModel, Generic[T], SerializableType):
     """
     A generic directory class representing a directory with files of a specified format.
@@ -971,10 +982,10 @@ class Dir(BaseModel, Generic[T], SerializableType):
             A File instance if the file exists, None otherwise
         """
         fs = storage.get_underlying_filesystem(path=self.path)
-        file_path = fs.sep.join([self.path, file_name])
+        file_path = _join_dir_and_file(fs, self.path, file_name)
         file = File[T](path=file_path)
 
-        if fs.exists(file_path):
+        if await file.exists():
             return file
         return None
 
@@ -1003,7 +1014,8 @@ class Dir(BaseModel, Generic[T], SerializableType):
         Returns:
             A File instance if the file exists, None otherwise
         """
-        file_path = os.path.join(self.path, file_name)
+        fs = storage.get_underlying_filesystem(path=self.path)
+        file_path = _join_dir_and_file(fs, self.path, file_name)
         file = File[T](path=file_path)
 
         if file.exists_sync():
