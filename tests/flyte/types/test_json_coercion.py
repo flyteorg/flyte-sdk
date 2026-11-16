@@ -179,6 +179,10 @@ async def test_coerce_and_serialize_timedelta():
     with pytest.raises(ValueError, match="Cannot coerce bool to duration"):
         await coerce_json_value(True, datetime.timedelta)
 
+    # Invalid dict arguments raise ValueError
+    with pytest.raises(ValueError, match="Invalid duration arguments"):
+        await coerce_json_value({"days": 10**10}, datetime.timedelta)
+
 
 @pytest.mark.asyncio
 async def test_serialize_json_value_scalars():
@@ -202,5 +206,12 @@ async def test_serialize_json_value_scalars():
 
     # Direct scalar serialization of timedelta variations
     assert await serialize_json_value(datetime.timedelta(0)) == "PT0S"
+    assert await serialize_json_value(datetime.timedelta(days=1)) == "P1D"
+    assert await serialize_json_value(datetime.timedelta(days=2, hours=1, seconds=45)) == "P2DT1H45S"
     assert await serialize_json_value(datetime.timedelta(seconds=1.5)) == "PT1.5S"
     assert await serialize_json_value(-datetime.timedelta(hours=1)) == "-PT1H"
+
+    # Direct scalar serialization of date, datetime, and enum
+    assert await serialize_json_value(d) == "2026-11-16"
+    assert await serialize_json_value(dt) == "2026-11-16T12:00:00"
+    assert await serialize_json_value(Status.ACTIVE) == "ACTIVE"
