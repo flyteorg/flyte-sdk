@@ -202,22 +202,38 @@ class JSONIteratorParamType(click.ParamType):
         return value
 
 
+_ISO8601_DURATION_PATTERN = re.compile(
+    r"^(?P<sign>[-+])?P"
+    r"(?:(?P<weeks>\d+(?:\.\d+)?)W)?"
+    r"(?:(?P<days>\d+(?:\.\d+)?)D)?"
+    r"(?:T"
+    r"(?:(?P<hours>\d+(?:\.\d+)?)H)?"
+    r"(?:(?P<minutes>\d+(?:\.\d+)?)M)?"
+    r"(?:(?P<seconds>\d+(?:\.\d+)?)S)?"
+    r")?$"
+)
+
+
 def parse_iso8601_duration(iso_duration: str) -> datetime.timedelta:
-    pattern = re.compile(
-        r"^P"  # Starts with 'P'
-        r"(?:(?P<days>\d+)D)?"  # Optional days
-        r"(?:T"  # Optional time part
-        r"(?:(?P<hours>\d+)H)?"
-        r"(?:(?P<minutes>\d+)M)?"
-        r"(?:(?P<seconds>\d+)S)?"
-        r")?$"
-    )
-    match = pattern.match(iso_duration)
+    match = _ISO8601_DURATION_PATTERN.match(iso_duration)
     if not match:
         raise ValueError(f"Invalid ISO 8601 duration format: {iso_duration}")
 
-    parts = {k: int(v) if v else 0 for k, v in match.groupdict().items()}
-    return datetime.timedelta(**parts)
+    groups = match.groupdict()
+    has_components = any(v for k, v in groups.items() if k != "sign")
+    if not has_components or iso_duration.endswith("T"):
+        raise ValueError(f"Invalid ISO 8601 duration format: {iso_duration}")
+
+    weeks = float(groups["weeks"]) if groups["weeks"] else 0.0
+    days = float(groups["days"]) if groups["days"] else 0.0
+    hours = float(groups["hours"]) if groups["hours"] else 0.0
+    minutes = float(groups["minutes"]) if groups["minutes"] else 0.0
+    seconds = float(groups["seconds"]) if groups["seconds"] else 0.0
+
+    delta = datetime.timedelta(days=days + weeks * 7, hours=hours, minutes=minutes, seconds=seconds)
+    if groups.get("sign") == "-":
+        delta = -delta
+    return delta
 
 
 def parse_human_durations(text: str) -> list[datetime.timedelta]:
@@ -243,7 +259,7 @@ def parse_human_durations(text: str) -> list[datetime.timedelta]:
             durations.append(datetime.timedelta(**{unit + "s": value}))
             continue
 
-        print(f"Warning: could not parse '{part}'")
+        logger.debug(f"Could not parse duration part: {part}")
 
     return durations
 
@@ -325,7 +341,10 @@ class DurationParamType(click.ParamType):
             raise click.BadParameter("None value cannot be converted to a Duration type.")
         if isinstance(value, datetime.timedelta):
             return value
-        return parse_duration(value)
+        try:
+            return parse_duration(value)
+        except ValueError as e:
+            raise click.BadParameter(str(e)) from e
 
 
 class EnumParamType(click.Choice):

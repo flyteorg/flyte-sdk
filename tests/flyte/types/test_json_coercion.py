@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import datetime
+import enum
 import json
+from dataclasses import dataclass
 
 import pytest
 
@@ -109,3 +112,95 @@ async def test_coerces_the_scalars_json_cannot_express():
         await coerce_json_value("green", Color)
     with pytest.raises(ValueError, match="not an ISO date"):
         await coerce_json_value("tomorrow", datetime.date)
+
+
+@dataclass
+class JobConfig:
+    timeout: datetime.timedelta
+
+
+class Status(enum.Enum):
+    ACTIVE = "active"
+
+
+@dataclass
+class Event:
+    created_at: datetime.datetime
+    date: datetime.date
+    duration: datetime.timedelta
+    status: Status
+
+
+@pytest.mark.asyncio
+async def test_coerce_and_serialize_timedelta():
+    from flyte.types._json_coercion import coerce_json_value
+
+    # String ISO duration
+    td = await coerce_json_value("PT1H", datetime.timedelta)
+    assert td == datetime.timedelta(hours=1)
+
+    # Weeks and fractions
+    td_week = await coerce_json_value("P1W", datetime.timedelta)
+    assert td_week == datetime.timedelta(weeks=1)
+
+    td_frac = await coerce_json_value("PT0.5S", datetime.timedelta)
+    assert td_frac == datetime.timedelta(seconds=0.5)
+
+    # Int/float seconds
+    assert await coerce_json_value(3600, datetime.timedelta) == datetime.timedelta(hours=1)
+    assert await coerce_json_value(0.5, datetime.timedelta) == datetime.timedelta(seconds=0.5)
+
+    # Dict
+    assert await coerce_json_value({"hours": 1, "minutes": 30}, datetime.timedelta) == datetime.timedelta(
+        hours=1, minutes=30
+    )
+
+    # Passthrough
+    orig = datetime.timedelta(minutes=15)
+    assert await coerce_json_value(orig, datetime.timedelta) is orig
+
+    # Collections
+    assert await coerce_json_value(["PT1H", "PT30M"], list[datetime.timedelta]) == [
+        datetime.timedelta(hours=1),
+        datetime.timedelta(minutes=30),
+    ]
+    assert await coerce_json_value({"t": "PT1H"}, dict[str, datetime.timedelta]) == {"t": datetime.timedelta(hours=1)}
+
+    # Dataclass
+    cfg = await coerce_json_value({"timeout": "PT1H"}, JobConfig)
+    assert isinstance(cfg.timeout, datetime.timedelta)
+    assert cfg.timeout == datetime.timedelta(hours=1)
+
+    # Invalid string raises ValueError
+    with pytest.raises(ValueError, match="not a valid duration"):
+        await coerce_json_value("invalid", datetime.timedelta)
+
+    # Unsupported type raises ValueError
+    with pytest.raises(ValueError, match="Cannot coerce bool to duration"):
+        await coerce_json_value(True, datetime.timedelta)
+
+
+@pytest.mark.asyncio
+async def test_serialize_json_value_scalars():
+    from flyte.types._json_coercion import serialize_json_value
+
+    dt = datetime.datetime(2026, 11, 16, 12, 0, 0)
+    d = datetime.date(2026, 11, 16)
+    td = datetime.timedelta(hours=1, minutes=30)
+    event = Event(created_at=dt, date=d, duration=td, status=Status.ACTIVE)
+
+    payload = await serialize_json_value(event)
+    assert payload == {
+        "created_at": "2026-11-16T12:00:00",
+        "date": "2026-11-16",
+        "duration": "PT1H30M",
+        "status": "ACTIVE",
+    }
+    # Verify that payload can be dumped to json without error
+    dumped = json.dumps(payload)
+    assert "2026-11-16T12:00:00" in dumped
+
+    # Direct scalar serialization of timedelta variations
+    assert await serialize_json_value(datetime.timedelta(0)) == "PT0S"
+    assert await serialize_json_value(datetime.timedelta(seconds=1.5)) == "PT1.5S"
+    assert await serialize_json_value(-datetime.timedelta(hours=1)) == "-PT1H"
