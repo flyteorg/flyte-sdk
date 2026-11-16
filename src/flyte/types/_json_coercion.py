@@ -232,12 +232,15 @@ def _coerce_json_scalar(value: Any, py_type: Any) -> Any:
 
             try:
                 return parse_duration(value)
-            except ValueError as e:
+            except (ValueError, OverflowError) as e:
                 raise ValueError(f"{value!r} is not a valid duration: {e}") from e
         if isinstance(value, dict) and all(
             k in {"days", "seconds", "microseconds", "milliseconds", "minutes", "hours", "weeks"} for k in value
         ):
-            return datetime.timedelta(**value)
+            try:
+                return datetime.timedelta(**value)
+            except (ValueError, OverflowError) as e:
+                raise ValueError(f"Invalid duration arguments {value!r}: {e}") from e
         raise ValueError(f"Cannot coerce {type(value).__name__} to duration: {value!r}")
     if issubclass(py_type, enum.Enum) and not isinstance(value, py_type):
         name = value.name if isinstance(value, enum.Enum) else value
@@ -292,31 +295,36 @@ def format_iso8601_duration(td: datetime.timedelta) -> str:
     total_seconds = td.total_seconds()
     if total_seconds == 0:
         return "PT0S"
+
     sign = "-" if total_seconds < 0 else ""
-    total_seconds = abs(total_seconds)
-    days = int(total_seconds // 86400)
-    rem = total_seconds % 86400
-    hours = int(rem // 3600)
-    rem = rem % 3600
-    minutes = int(rem // 60)
-    seconds = rem % 60
+    abs_td = abs(td)
+
+    days = abs_td.days
+    hours = abs_td.seconds // 3600
+    minutes = (abs_td.seconds % 3600) // 60
+    secs = abs_td.seconds % 60
+    micros = abs_td.microseconds
 
     parts = [sign, "P"]
     if days:
         parts.append(f"{days}D")
+
     time_parts = []
     if hours:
         time_parts.append(f"{hours}H")
     if minutes:
         time_parts.append(f"{minutes}M")
-    if seconds or (not days and not hours and not minutes):
-        if seconds.is_integer():
-            time_parts.append(f"{int(seconds)}S")
-        else:
-            time_parts.append(f"{seconds:g}S")
+
+    if micros:
+        sec_str = f"{secs}.{micros:06d}".rstrip("0")
+        time_parts.append(f"{sec_str}S")
+    elif secs or (not days and not hours and not minutes):
+        time_parts.append(f"{secs}S")
+
     if time_parts:
         parts.append("T")
         parts.extend(time_parts)
+
     return "".join(parts)
 
 

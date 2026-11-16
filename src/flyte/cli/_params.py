@@ -259,7 +259,7 @@ def parse_human_durations(text: str) -> list[datetime.timedelta]:
             durations.append(datetime.timedelta(**{unit + "s": value}))
             continue
 
-        logger.debug(f"Could not parse duration part: {part}")
+        raise ValueError(f"Could not parse duration part: '{part.strip()}'")
 
     return durations
 
@@ -343,7 +343,7 @@ class DurationParamType(click.ParamType):
             return value
         try:
             return parse_duration(value)
-        except ValueError as e:
+        except (ValueError, OverflowError) as e:
             raise click.BadParameter(str(e)) from e
 
 

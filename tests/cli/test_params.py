@@ -418,11 +418,11 @@ def test_duration_param_type():
     assert param_type.convert("10 days", None, None) == datetime.timedelta(days=10)
     assert param_type.convert("1:24", None, None) == datetime.timedelta(minutes=1, seconds=24)
 
-    # Human readable with unparseable part logged
+    # Human readable with invalid part raises ValueError
     from flyte.cli._params import parse_human_durations
 
-    durations = parse_human_durations("10 days | unparseable_part")
-    assert durations == [datetime.timedelta(days=10)]
+    with pytest.raises(ValueError, match="Could not parse duration part"):
+        parse_human_durations("10 days | invalid_part")
 
     # Invalid values raise click.BadParameter
     with pytest.raises(click.BadParameter):
