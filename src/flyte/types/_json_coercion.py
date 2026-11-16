@@ -226,7 +226,10 @@ def _coerce_json_scalar(value: Any, py_type: Any) -> Any:
         if isinstance(value, datetime.timedelta):
             return value
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return datetime.timedelta(seconds=value)
+            try:
+                return datetime.timedelta(seconds=value)
+            except OverflowError as e:
+                raise ValueError(f"{value!r} is not a valid duration: {e}") from e
         if isinstance(value, str):
             from flyte.cli._params import parse_duration
 
@@ -375,13 +378,7 @@ async def serialize_json_value(value: Any, py_type: Any | None = None) -> Any:
         model_type = py_type if isinstance(py_type, type) else type(value)
         return await serialize_json_value(value.model_dump(), model_type)
 
-    if isinstance(value, (datetime.datetime, datetime.date)):
-        return value.isoformat()
-
     if isinstance(value, datetime.timedelta):
         return format_iso8601_duration(value)
-
-    if isinstance(value, enum.Enum):
-        return value.name
 
     return value

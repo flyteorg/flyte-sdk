@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import datetime
-import enum
 import json
 from dataclasses import dataclass
 
@@ -119,18 +118,6 @@ class JobConfig:
     timeout: datetime.timedelta
 
 
-class Status(enum.Enum):
-    ACTIVE = "active"
-
-
-@dataclass
-class Event:
-    created_at: datetime.datetime
-    date: datetime.date
-    duration: datetime.timedelta
-    status: Status
-
-
 @pytest.mark.asyncio
 async def test_coerce_and_serialize_timedelta():
     from flyte.types._json_coercion import coerce_json_value
@@ -183,26 +170,22 @@ async def test_coerce_and_serialize_timedelta():
     with pytest.raises(ValueError, match="Invalid duration arguments"):
         await coerce_json_value({"days": 10**10}, datetime.timedelta)
 
+    # Large numeric duration causing OverflowError raises ValueError
+    with pytest.raises(ValueError, match="is not a valid duration"):
+        await coerce_json_value(10**20, datetime.timedelta)
+
 
 @pytest.mark.asyncio
 async def test_serialize_json_value_scalars():
     from flyte.types._json_coercion import serialize_json_value
 
-    dt = datetime.datetime(2026, 11, 16, 12, 0, 0)
-    d = datetime.date(2026, 11, 16)
     td = datetime.timedelta(hours=1, minutes=30)
-    event = Event(created_at=dt, date=d, duration=td, status=Status.ACTIVE)
+    config = JobConfig(timeout=td)
 
-    payload = await serialize_json_value(event)
-    assert payload == {
-        "created_at": "2026-11-16T12:00:00",
-        "date": "2026-11-16",
-        "duration": "PT1H30M",
-        "status": "ACTIVE",
-    }
+    payload = await serialize_json_value(config)
+    assert payload == {"timeout": "PT1H30M"}
     # Verify that payload can be dumped to json without error
-    dumped = json.dumps(payload)
-    assert "2026-11-16T12:00:00" in dumped
+    assert json.dumps(payload) == '{"timeout": "PT1H30M"}'
 
     # Direct scalar serialization of timedelta variations
     assert await serialize_json_value(datetime.timedelta(0)) == "PT0S"
@@ -210,8 +193,3 @@ async def test_serialize_json_value_scalars():
     assert await serialize_json_value(datetime.timedelta(days=2, hours=1, seconds=45)) == "P2DT1H45S"
     assert await serialize_json_value(datetime.timedelta(seconds=1.5)) == "PT1.5S"
     assert await serialize_json_value(-datetime.timedelta(hours=1)) == "-PT1H"
-
-    # Direct scalar serialization of date, datetime, and enum
-    assert await serialize_json_value(d) == "2026-11-16"
-    assert await serialize_json_value(dt) == "2026-11-16T12:00:00"
-    assert await serialize_json_value(Status.ACTIVE) == "ACTIVE"
