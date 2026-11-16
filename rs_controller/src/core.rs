@@ -46,13 +46,36 @@ use crate::{
     informer::{Informer, InformerCache},
 };
 
+/// HTTP/2 PING interval for every controller channel. 30s, as the Python
+/// client pings.
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
+/// How long a PING may go unanswered before the connection is closed.
+const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Ping the server so a connection the network drops silently is detected.
+///
+/// `keep_alive_while_idle` alone does nothing: tonic sends no PINGs until an
+/// interval is set. Without them a watch on a dropped connection waits
+/// forever, and no informer error or reconnect ever happens.
+fn with_keepalive(endpoint: Endpoint) -> Endpoint {
+    keepalive(endpoint, KEEPALIVE_INTERVAL, KEEPALIVE_TIMEOUT)
+}
+
+fn keepalive(endpoint: Endpoint, interval: Duration, timeout: Duration) -> Endpoint {
+    endpoint
+        .keep_alive_while_idle(true)
+        .http2_keep_alive_interval(interval)
+        .keep_alive_timeout(timeout)
+}
+
 // Helper to create TLS-configured channel
 // todo: support no verify https://github.com/flyteorg/flyte-sdk/pull/299/files
 pub async fn create_tls_channel(url: &'static str) -> Result<Channel, ControllerError> {
-    let endpoint = Endpoint::from_static(url)
-        .tls_config(ClientTlsConfig::new().with_native_roots())
-        .map_err(|e| ControllerError::SystemError(format!("TLS config error: {}", e)))?
-        .keep_alive_while_idle(true);
+    let endpoint = with_keepalive(
+        Endpoint::from_static(url)
+            .tls_config(ClientTlsConfig::new().with_native_roots())
+            .map_err(|e| ControllerError::SystemError(format!("TLS config error: {}", e)))?,
+    );
 
     let channel = endpoint.connect().await.map_err(ControllerError::from)?;
 
@@ -254,8 +277,7 @@ impl CoreBaseController {
         let rt = get_runtime();
         let channel = rt.block_on(async {
             let channel = if endpoint.starts_with("http://") {
-                Endpoint::from_static(endpoint_static)
-                    .keep_alive_while_idle(true)
+                with_keepalive(Endpoint::from_static(endpoint_static))
                     .connect()
                     .await
                     .map_err(ControllerError::from)?
@@ -342,7 +364,7 @@ impl CoreBaseController {
         let rt = get_runtime();
         let channel = rt.block_on(async {
             let chan = if endpoint.starts_with("http://") {
-                let endpoint = Endpoint::from_static(endpoint_static).keep_alive_while_idle(true);
+                let endpoint = with_keepalive(Endpoint::from_static(endpoint_static));
                 endpoint.connect().await.map_err(ControllerError::from)?
             } else if endpoint.starts_with("https://") {
                 // Create TLS-configured channel
@@ -1298,5 +1320,166 @@ mod map_enqueue_error_tests {
         )
         .unwrap_err();
         assert!(matches!(err, ControllerError::RuntimeError(_)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
+    use flyteidl2::flyteidl::workflow::{
+        state_service_server::{StateService, StateServiceServer},
+        watch_response, ControlMessage, GetRequest, GetResponse, PutRequest, PutResponse,
+        WatchRequest, WatchResponse,
+    };
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::{TcpListener, TcpStream},
+    };
+    use tonic::codegen::tokio_stream::{self, Stream, StreamExt};
+
+    use super::*;
+
+    /// Sends one message, then holds the stream open, as a live server does
+    /// while no child changes state.
+    struct QuietWatch;
+
+    #[tonic::async_trait]
+    impl StateService for QuietWatch {
+        async fn put(
+            &self,
+            _: tonic::Request<PutRequest>,
+        ) -> Result<tonic::Response<PutResponse>, tonic::Status> {
+            Err(tonic::Status::unimplemented("put"))
+        }
+        async fn get(
+            &self,
+            _: tonic::Request<GetRequest>,
+        ) -> Result<tonic::Response<GetResponse>, tonic::Status> {
+            Err(tonic::Status::unimplemented("get"))
+        }
+        type WatchStream =
+            std::pin::Pin<Box<dyn Stream<Item = Result<WatchResponse, tonic::Status>> + Send>>;
+        async fn watch(
+            &self,
+            _: tonic::Request<WatchRequest>,
+        ) -> Result<tonic::Response<Self::WatchStream>, tonic::Status> {
+            let sentinel = WatchResponse {
+                message: Some(watch_response::Message::ControlMessage(
+                    ControlMessage::default(),
+                )),
+            };
+            Ok(tonic::Response::new(Box::pin(
+                tokio_stream::once(Ok(sentinel)).chain(tokio_stream::pending()),
+            )))
+        }
+    }
+
+    /// Copy one direction until `dropped` is set, then swallow everything: the
+    /// connection stays open but nothing gets through, as when a NAT or load
+    /// balancer forgets it without sending a FIN or RST.
+    async fn pipe(
+        mut from: tokio::net::tcp::OwnedReadHalf,
+        mut to: tokio::net::tcp::OwnedWriteHalf,
+        dropped: Arc<AtomicBool>,
+    ) {
+        let mut buf = [0u8; 16 * 1024];
+        while let Ok(n) = from.read(&mut buf).await {
+            if n == 0 {
+                return;
+            }
+            if !dropped.load(Ordering::SeqCst) && to.write_all(&buf[..n]).await.is_err() {
+                return;
+            }
+        }
+    }
+
+    /// A proxy to `upstream` that can be made to drop traffic silently.
+    async fn droppable_proxy(
+        upstream: std::net::SocketAddr,
+    ) -> (std::net::SocketAddr, Arc<AtomicBool>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let flag = dropped.clone();
+        tokio::spawn(async move {
+            while let Ok((client, _)) = listener.accept().await {
+                let server = TcpStream::connect(upstream).await.unwrap();
+                let (cr, cw) = client.into_split();
+                let (sr, sw) = server.into_split();
+                tokio::spawn(pipe(cr, sw, flag.clone()));
+                tokio::spawn(pipe(sr, cw, flag.clone()));
+            }
+        });
+        (addr, dropped)
+    }
+
+    /// Open a watch through a proxy, receive its first message, then drop the
+    /// connection silently. Returns whether the next `message()` failed within
+    /// `wait` (true) or was still pending (false).
+    async fn watch_notices_a_silent_drop(
+        endpoint: impl Fn(String) -> Endpoint,
+        wait: Duration,
+    ) -> bool {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server_addr = listener.local_addr().unwrap();
+        tokio::spawn(
+            tonic::transport::Server::builder()
+                .add_service(StateServiceServer::new(QuietWatch))
+                .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
+        );
+        let (proxy, dropped) = droppable_proxy(server_addr).await;
+
+        let channel = endpoint(format!("http://{proxy}")).connect().await.unwrap();
+        let mut client =
+            flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient::new(channel);
+        let mut stream = client
+            .watch(WatchRequest::default())
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(stream.message().await.unwrap().is_some());
+
+        dropped.store(true, Ordering::SeqCst);
+        match tokio::time::timeout(wait, stream.message()).await {
+            Ok(r) => {
+                assert!(
+                    r.is_err(),
+                    "a dropped connection must surface as an error: {r:?}"
+                );
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    #[tokio::test]
+    async fn keepalive_detects_a_connection_dropped_silently() {
+        let short = |url: String| {
+            keepalive(
+                Endpoint::from_shared(url).unwrap(),
+                Duration::from_millis(200),
+                Duration::from_millis(500),
+            )
+        };
+        assert!(
+            watch_notices_a_silent_drop(short, Duration::from_secs(5)).await,
+            "with keepalive, the watch must fail once PINGs go unanswered"
+        );
+    }
+
+    /// The control: what every channel did before. Without an interval,
+    /// `keep_alive_while_idle` sends nothing, and the watch waits forever.
+    #[tokio::test]
+    async fn without_an_interval_a_dropped_connection_hangs_the_watch() {
+        let idle_only = |url: String| {
+            Endpoint::from_shared(url)
+                .unwrap()
+                .keep_alive_while_idle(true)
+        };
+        assert!(!watch_notices_a_silent_drop(idle_only, Duration::from_secs(3)).await);
     }
 }
