@@ -378,7 +378,13 @@ async def serialize_json_value(value: Any, py_type: Any | None = None) -> Any:
         model_type = py_type if isinstance(py_type, type) else type(value)
         return await serialize_json_value(value.model_dump(), model_type)
 
+    if isinstance(value, (datetime.datetime, datetime.date)):
+        return value.isoformat()
+
     if isinstance(value, datetime.timedelta):
         return format_iso8601_duration(value)
+
+    if isinstance(value, enum.Enum):
+        return value.name
 
     return value

@@ -193,3 +193,15 @@ async def test_serialize_json_value_scalars():
     assert await serialize_json_value(datetime.timedelta(days=2, hours=1, seconds=45)) == "P2DT1H45S"
     assert await serialize_json_value(datetime.timedelta(seconds=1.5)) == "PT1.5S"
     assert await serialize_json_value(-datetime.timedelta(hours=1)) == "-PT1H"
+
+    # Direct scalar serialization of date, datetime, and enum
+    import enum
+
+    class Color(enum.Enum):
+        RED = "red"
+
+    d = datetime.date(2026, 11, 16)
+    dt = datetime.datetime(2026, 11, 16, 12, 0, 0)
+    assert await serialize_json_value(d) == "2026-11-16"
+    assert await serialize_json_value(dt) == "2026-11-16T12:00:00"
+    assert await serialize_json_value(Color.RED) == "RED"
