@@ -21,7 +21,6 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
-        uv-args: ["", "--with 'connectrpc>=0.11,<0.12'"]
       fail-fast: false
     defaults:
       run:
@@ -52,5 +51,6 @@ jobs:
         env:
           FLYTE_API_KEY: "${{ secrets.FLYTE_API_KEY }}"
         run: |
-          uv run ${{ matrix.uv-args }} python -c "from importlib.metadata import version; print('connectrpc', version('connectrpc'))"
-          uv run ${{ matrix.uv-args }} python -m pytest -n 10 -v examples/integration_tests.py
+          uv pip install 'connectrpc>=0.11,<0.12'
+          uv run --no-sync python -c "from importlib.metadata import version; print('connectrpc', version('connectrpc'))"
+          uv run --no-sync python -m pytest -n 10 -v examples/integration_tests.py
