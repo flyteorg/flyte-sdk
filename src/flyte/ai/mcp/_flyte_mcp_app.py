@@ -27,6 +27,8 @@ from flyte.ai.mcp._protected_resource import (
 from flyte.ai.mcp._secret_input import SecretInputStore, SecretValidator, secret_input_routes
 from flyte.ai.mcp._tools import (
     LOG_COLLECT_TIMEOUT_S,
+    LOG_IDLE_TIMEOUT_S,
+    LOG_READ_TIMEOUT_CEILING_S,
     MAX_LOG_LINES,
     ToolError,
     _is_app_allowed,
@@ -50,6 +52,8 @@ __all__ = [
     "ALL_MCP_TOOLS",
     "ALL_MCP_TOOL_GROUPS",
     "LOG_COLLECT_TIMEOUT_S",
+    "LOG_IDLE_TIMEOUT_S",
+    "LOG_READ_TIMEOUT_CEILING_S",
     "MAX_LOG_LINES",
     "READ_ONLY_MCP_TOOLS",
     "TOOL_GROUP_MAPPING",
@@ -137,6 +141,7 @@ MCPTool = Literal[
     "delete_secret",
     # condition
     "list_conditions",
+    "get_condition",
     "signal_condition",
     # identity
     "whoami",
@@ -244,6 +249,7 @@ TOOL_REGISTRY: dict[MCPTool, ToolInfo] = {
     "delete_secret": ToolInfo("secret", "Delete a secret", destructive=True, idempotent=True),
     # ---- condition ----
     "list_conditions": ToolInfo("condition", "List the conditions of a run", read_only=True, idempotent=True),
+    "get_condition": ToolInfo("condition", "Get a condition of a run", read_only=True, idempotent=True),
     "signal_condition": ToolInfo("condition", "Signal a waiting condition", read_only=False),
     # ---- identity ----
     "whoami": ToolInfo("identity", "Show the caller's identity", read_only=True, idempotent=True),
@@ -427,6 +433,13 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     reachable over HTTP wants it. When neither is configured the protection stays off,
     preserving the behavior existing deployments were built against.
 
+    **Log reads**
+
+    `get_logs` reads for at most the caller's `timeout_s` (default 30), clamped to
+    `[1, log_read_timeout_ceiling_s]` (default 120). Once lines are flowing, a gap of
+    `log_idle_timeout_s` (default 5) ends the read. Both are server settings; callers cannot
+    raise them.
+
     **OAuth discovery for MCP clients**
 
     Set `protected_resource_metadata` to let MCP clients that implement the MCP authorization
@@ -498,6 +511,11 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     docs_examples_path: str | None = "/root/unionai-examples/v2"
     full_docs_path: str | None = "/root/llms.txt"
 
+    # How long one `get_logs` call may spend reading. A caller picks its own `timeout_s`, which is
+    # clamped to [1, log_read_timeout_ceiling_s]; the ceiling and the idle gap are server-side only.
+    log_read_timeout_ceiling_s: float = LOG_READ_TIMEOUT_CEILING_S
+    log_idle_timeout_s: float = LOG_IDLE_TIMEOUT_S
+
     # The Flyte config file this server was initialized from, as resolved by `flyte-mcp`.
     # It is informational: whoami reports it so a caller can tell which tenant the server
     # is pointed at. Setting it does not change how Flyte is initialized.
@@ -511,6 +529,10 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     def __post_init__(self):
         if self.tools is not None and self.tool_groups is not None:
             raise ValueError("Cannot specify both tools and tool_groups.")
+        if not self.log_read_timeout_ceiling_s >= 1:
+            raise ValueError(f"log_read_timeout_ceiling_s must be at least 1, got {self.log_read_timeout_ceiling_s}.")
+        if not self.log_idle_timeout_s > 0:
+            raise ValueError(f"log_idle_timeout_s must be positive, got {self.log_idle_timeout_s}.")
 
         if self.protected_resource_metadata is not None and self.transport == "stdio":
             raise ValueError("protected_resource_metadata requires an HTTP transport; stdio has no HTTP surface.")

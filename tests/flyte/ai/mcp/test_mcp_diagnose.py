@@ -516,69 +516,12 @@ class TestListConditions:
         await _fn(env, "list_conditions")(run_name="r1", action_name="a2", limit=5)
         assert listall.calls == [{"run_name": "r1", "limit": 5, "action_name": "a2"}]
 
-    @pytest.mark.asyncio
-    async def test_entries_carry_prompt_and_type_and_keep_existing_keys(self, env, monkeypatch):
-        cond, details = _condition()
-        monkeypatch.setattr(flyte.remote.Condition, "listall", _ListAll([cond]))
-        details_get = _Aio(details)
-        monkeypatch.setattr(flyte.remote.ActionDetails, "get", details_get)
-
-        [entry] = await _fn(env, "list_conditions")(run_name="r1")
-
-        assert entry["name"] == "approve"
-        assert entry["action_name"] == "a5"
-        assert entry["run_name"] == "r1"
-        assert {"phase", "expected_type"} <= entry.keys()
-        assert entry["prompt"] == "Ship it?"
-        assert entry["prompt_type"] == "markdown"
-        assert "prompt_error" not in entry
-        assert details_get.calls == [{"run_name": "r1", "name": "a5"}]
-
-    @pytest.mark.asyncio
-    async def test_unset_prompt_type_is_null(self, env, monkeypatch):
-        cond, details = _condition(prompt="", prompt_type=run_definition_pb2.CONDITION_PROMPT_TYPE_UNSPECIFIED)
-        monkeypatch.setattr(flyte.remote.Condition, "listall", _ListAll([cond]))
-        monkeypatch.setattr(flyte.remote.ActionDetails, "get", _Aio(details))
-        [entry] = await _fn(env, "list_conditions")(run_name="r1")
-        assert entry["prompt"] is None
-        assert entry["prompt_type"] is None
-
-    @pytest.mark.asyncio
-    async def test_details_without_a_condition_leave_the_prompt_null(self, env, monkeypatch):
-        cond, details = _condition()
-        details.pb2.ClearField("condition")
-        monkeypatch.setattr(flyte.remote.Condition, "listall", _ListAll([cond]))
-        monkeypatch.setattr(flyte.remote.ActionDetails, "get", _Aio(details))
-        [entry] = await _fn(env, "list_conditions")(run_name="r1")
-        assert entry["prompt"] is None
-        assert entry["prompt_type"] is None
-        assert "prompt_error" not in entry
-
-    @pytest.mark.asyncio
-    async def test_prompt_lookup_failure_keeps_the_entry(self, env, monkeypatch):
-        cond, _ = _condition()
-
-        def _boom():
-            raise RuntimeError("rpc down")
-
-        monkeypatch.setattr(flyte.remote.Condition, "listall", _ListAll([cond]))
-        monkeypatch.setattr(flyte.remote.ActionDetails, "get", _Aio(_boom))
-        [entry] = await _fn(env, "list_conditions")(run_name="r1")
-        assert entry["name"] == "approve"
-        assert entry["prompt"] is None
-        assert entry["prompt_error"] == "RuntimeError: rpc down"
-
-
-# ------------------------------
-# get_logs
-# ------------------------------
-
 
 class _LogAction:
     def __init__(self):
         self.seen: list[dict] = []
         self.get_logs = SimpleNamespace(aio=self._get_logs)
-        self.details = _Aio(SimpleNamespace(logs_available=lambda attempt=None: True, phase="RUNNING"))
+        self.details = _Aio(SimpleNamespace(logs_available=lambda attempt=None: True, phase="RUNNING", attempts=1))
 
     def _get_logs(self, **kwargs):
         self.seen.append(kwargs)

@@ -280,31 +280,3 @@ async def rerun(
         runner = flyte.with_runcontext(mode="remote", name=name, env_vars=env_vars, labels=labels)
         return await runner.rerun.aio(run_name, **rerun_args)
     return await flyte.rerun.aio(run_name, **rerun_args)
-
-
-# ------------------------------
-# list_conditions
-# ------------------------------
-
-
-async def add_condition_prompt(entry: dict[str, Any], run_name: str, action_name: str) -> None:
-    """Add the run author's prompt to a `list_conditions` entry, or `prompt_error` if the lookup fails."""
-    from flyteidl2.workflow import run_definition_pb2
-
-    entry["prompt"] = None
-    entry["prompt_type"] = None
-    # The prompt is on the action's details, not on the listed action (as `flyte signal
-    # condition` does).
-    try:
-        details = await flyte.remote.ActionDetails.get.aio(run_name=run_name, name=action_name)
-        if details.pb2.HasField("condition"):
-            cond = details.pb2.condition
-            entry["prompt"] = cond.prompt or None
-            prompt_type = (
-                run_definition_pb2.ConditionPromptType.Name(cond.prompt_type)
-                .removeprefix("CONDITION_PROMPT_TYPE_")
-                .lower()
-            )
-            entry["prompt_type"] = None if prompt_type == "unspecified" else prompt_type
-    except Exception as e:
-        entry["prompt_error"] = f"{type(e).__name__}: {e}"
