@@ -13,13 +13,20 @@ agent audience: when to reach for the tool, and what it hands back.
 from __future__ import annotations
 
 import asyncio
+import logging
 import pathlib
 import time
+from collections import deque
+from dataclasses import dataclass
 from datetime import timedelta, timezone
 from typing import TYPE_CHECKING, Any, Callable, cast
 
+from connectrpc.errors import ConnectError
+
 import flyte
 import flyte.remote
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from flyte.ai.mcp._flyte_mcp_app import FlyteMCPAppEnvironment
@@ -27,8 +34,26 @@ if TYPE_CHECKING:
 #: Hard ceiling on ``get_logs(max_lines=...)`` so a chatty action cannot blow the context window.
 MAX_LOG_LINES = 2000
 
-#: Overall budget for collecting log lines before returning what we have.
+#: Default budget for collecting log lines before returning what we have. Callers can pass their
+#: own `timeout_s`, clamped to [`MIN_LOG_COLLECT_TIMEOUT_S`, the server's
+#: `log_read_timeout_ceiling_s`].
 LOG_COLLECT_TIMEOUT_S = 30.0
+MIN_LOG_COLLECT_TIMEOUT_S = 1.0
+
+#: Default for `FlyteMCPAppEnvironment.log_read_timeout_ceiling_s`, the most a caller's
+#: `timeout_s` can buy.
+LOG_READ_TIMEOUT_CEILING_S = 120.0
+
+#: Default for `FlyteMCPAppEnvironment.log_idle_timeout_s`. Once lines are flowing, a gap this long
+#: is taken as the end of the stream. The log plane keeps the stream open after a pod exits, so
+#: without this every read would run the full budget.
+LOG_IDLE_TIMEOUT_S = 5.0
+
+#: How many condition-details requests `list_conditions` keeps in flight at once.
+CONDITION_DETAILS_CONCURRENCY = 8
+
+#: Ceiling on the characters of log text in one `get_logs` response; the oldest lines go first.
+MAX_LOG_CHARS = 100_000
 
 #: How many server-side entries the ``list_*`` tools scan when an allowlist is configured.
 #: The allowlist is applied client-side, so passing the caller's ``limit`` straight through would
@@ -156,6 +181,22 @@ def _pb_to_dict(message: Any) -> dict | None:
     from google.protobuf.json_format import MessageToDict
 
     return MessageToDict(message, preserving_proto_field_name=True)
+
+
+def _condition_dict(c: Any) -> dict:
+    """Serialize a `flyte.remote.Condition`; the detail fields are null until `fetch_details` has run."""
+    expected = c.expected_type
+    return {
+        "name": c.name,
+        "action_name": c.action_name,
+        "run_name": c.run_name,
+        "phase": c.phase,
+        "expected_type": expected.__name__ if expected is not None else None,
+        "prompt": c.prompt,
+        "prompt_type": c.prompt_type,
+        "description": c.description,
+        "timeout_s": _seconds(c.timeout),
+    }
 
 
 # ------------------------------
@@ -342,38 +383,103 @@ def _search_files_blocking(
 # ------------------------------
 
 
-async def _collect_log_lines(source: Any, max_lines: int, timeout_s: float) -> str:
-    """Drain at most `max_lines` lines from an async log iterator within `timeout_s`.
+@dataclass
+class _LogWindow:
+    """A contiguous run of log lines, addressed by their position in the stream (0 = oldest)."""
 
-    Returns the joined lines with a trailing marker when the stream was cut short, so the caller
-    can tell "that's all of it" apart from "there is more". Partial output survives the timeout:
-    lines land in a list owned by this function, not by the cancelled inner coroutine.
+    lines: list[str]
+    first_line: int
+    #: Why reading stopped: "end_of_stream", "idle", "time_limit" or "before_line".
+    stopped: str
+    size_capped: bool = False
+
+    @property
+    def end_line(self) -> int:
+        return self.first_line + len(self.lines)
+
+
+async def _read_log_window(
+    source: Any,
+    max_lines: int,
+    before_line: int | None,
+    timeout_s: float,
+    idle_s: float,
+) -> _LogWindow:
+    """Read the last `max_lines` lines of an async log iterator that precede `before_line`.
+
+    With `before_line=None` that is the newest lines: the log service streams from the start
+    and has no offset or tail request, so the whole stream has to be read to find its end.
+    Memory stays bounded because only a `max_lines` ring buffer is kept, never the stream. With
+    a `before_line` the read stops as soon as it gets there.
+
+    The log plane holds the stream open after a pod exits, and a running action never closes it,
+    so "the end" is decided by time: once lines have started arriving, a gap of `idle_s` ends
+    the read, and `timeout_s` bounds the whole call. Lines collected so far survive either.
     """
-    lines: list[str] = []
-    truncated = False
-
-    async def _drain() -> None:
-        nonlocal truncated
-        async for line in source:
-            lines.append(line)
-            if len(lines) >= max_lines:
-                truncated = True
-                return
-
-    timed_out = False
+    window: deque[str] = deque(maxlen=max_lines)
+    seen = 0
+    stream = source.__aiter__()
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
     try:
-        await asyncio.wait_for(_drain(), timeout=timeout_s)
-    except asyncio.TimeoutError:
-        timed_out = True
+        while True:
+            if before_line is not None and seen >= before_line:
+                stopped = "before_line"
+                break
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                stopped = "time_limit"
+                break
+            # Before the first line the stream may still be connecting (the SDK retries a missing
+            # stream for several seconds), so only the overall budget applies until something arrives.
+            wait_s = remaining if seen == 0 else min(idle_s, remaining)
+            try:
+                line = await asyncio.wait_for(stream.__anext__(), timeout=wait_s)
+            except StopAsyncIteration:
+                stopped = "end_of_stream"
+                break
+            except asyncio.TimeoutError:
+                stopped = "idle" if seen > 0 and wait_s < remaining else "time_limit"
+                break
+            window.append(line)
+            seen += 1
+    finally:
+        # Stopping early leaves the generator suspended with its log stream still open until
+        # garbage collection; close it now.
+        aclose = getattr(stream, "aclose", None)
+        if aclose is not None:
+            await aclose()
+    return _LogWindow(lines=list(window), first_line=seen - len(window), stopped=stopped)
 
-    body = "\n".join(lines)
-    if truncated:
-        body += f"\n...truncated at {max_lines} lines"
-    if timed_out:
-        body += f"\n...stopped after {timeout_s:g}s; {len(lines)} lines collected so far"
-    if not lines and not timed_out:
-        return "No log lines were returned."
-    return body
+
+def _cap_log_window(window: _LogWindow, max_chars: int) -> _LogWindow:
+    """Drop the oldest lines until the joined text fits in `max_chars`.
+
+    Cutting from the old end keeps the paging cursor exact: the dropped lines are simply the
+    next page back. A single line longer than the cap is cut to its last `max_chars` characters,
+    since there is no smaller unit to page by.
+    """
+    kept: list[str] = []
+    total = 0
+    capped = False
+    for line in reversed(window.lines):
+        cost = len(line) + (1 if kept else 0)  # +1 for the joining newline
+        if total + cost > max_chars:
+            if not kept:
+                kept.append(line[-max_chars:])
+            capped = True
+            break
+        kept.append(line)
+        total += cost
+    if not capped:
+        return window
+    kept.reverse()
+    return _LogWindow(
+        lines=kept,
+        first_line=window.end_line - len(kept),
+        stopped=window.stopped,
+        size_capped=True,
+    )
 
 
 # ------------------------------
@@ -789,20 +895,36 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         action_name: str | None = None,
         attempt: int | None = None,
         max_lines: int = 200,
+        before_line: int | None = None,
+        timeout_s: float = LOG_COLLECT_TIMEOUT_S,
         filter_system: bool = True,
         wait_for_logs: bool = False,
         project: str | None = None,
         domain: str | None = None,
         ctx: MCPContext | None = None,
-    ) -> str:
-        """Read an action's logs as text. Omit `action_name` for the run's root action.
+    ) -> dict:
+        """Read the newest lines of an action's logs. Omit `action_name` for the run's root action.
 
-        Returns at most `max_lines` lines (hard cap 2000) and gives up after ~30s, marking
-        the output when it was cut short. If the logs are not up yet this returns a short
-        status string right away rather than blocking; pass `wait_for_logs=True` only when
-        you actually want to wait for a queued action to start.
+        Returns the last `max_lines` lines, oldest first, (hard cap 2000, and at most ~100k characters, cut
+        from the oldest end). Lines are numbered from 0 at the start of the log; `first_line`
+        and `end_line` give the returned range. To step back, call again with
+        `before_line=next_before_line` while `has_more_before` is true, keeping `attempt` and
+        `filter_system` the same so the numbering does not shift. `before_line=max_lines`
+        reads the log from the start.
+
+        Reading stops when the stream goes quiet or after `timeout_s` seconds (default 30,
+        clamped to at least 1 and at most the server's ceiling, 120 unless configured otherwise);
+        `stopped` says which, and `timeout_s` in the response is the budget actually used. The
+        log service has no tail request, so finding the newest lines means reading the whole
+        log: on a large log a larger `timeout_s` gets closer to the true newest lines. When
+        `stopped` is "time_limit", newer lines may exist; retry with more time. Many MCP
+        clients cancel a tool call at around 60s, so stay under that unless yours allows more.
+        If the logs are not up yet this returns `available: false` right away rather than blocking;
+        pass `wait_for_logs=True` only when you actually want to wait for a queued action to
+        start.
         """
         bounded_lines = max(1, min(int(max_lines), MAX_LOG_LINES))
+        budget_s = float(max(MIN_LOG_COLLECT_TIMEOUT_S, min(float(timeout_s), env.log_read_timeout_ceiling_s)))
         with env._scoped(project, domain):
             if action_name is None:
                 target: Any = await flyte.remote.Run.get.aio(name=run_name)
@@ -813,14 +935,72 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
                 details = await target.details.aio()
                 label = f"action '{action_name}' in run '{run_name}'"
 
+            # Pinning the attempt in the response lets a client keep paging the same log after a
+            # retry starts and "latest" moves on.
+            resolved_attempt = attempt if attempt is not None else details.attempts
+            response: dict = {
+                "run_name": run_name,
+                "action_name": action_name,
+                "attempt": resolved_attempt,
+                "timeout_s": budget_s,
+            }
+
             if not wait_for_logs and not details.logs_available(attempt):
-                return (
-                    f"Logs are not available yet for {label} (phase {_phase_str(details.phase)}). "
-                    f"Call get_logs again once it is running, or pass wait_for_logs=true to block."
+                response.update(
+                    available=False,
+                    logs="",
+                    message=(
+                        f"Logs are not available yet for {label} (phase {_phase_str(details.phase)}). "
+                        f"Call get_logs again once it is running, or pass wait_for_logs=true to block."
+                    ),
                 )
+                return response
 
             source = cast(Any, target.get_logs).aio(attempt=attempt, filter_system=filter_system)
-            return await _collect_log_lines(source, bounded_lines, LOG_COLLECT_TIMEOUT_S)
+            window = await _read_log_window(
+                source,
+                bounded_lines,
+                None if before_line is None else max(0, int(before_line)),
+                budget_s,
+                env.log_idle_timeout_s,
+            )
+            window = _cap_log_window(window, MAX_LOG_CHARS)
+
+            has_more_before = window.first_line > 0
+            if not window.lines:
+                message = (
+                    f"No log lines arrived within {budget_s:g}s."
+                    if window.stopped == "time_limit"
+                    else "No log lines were returned."
+                )
+            else:
+                message = f"Lines {window.first_line}-{window.end_line - 1}."
+                if window.stopped == "time_limit":
+                    message += (
+                        f" Reading stopped after {budget_s:g}s while lines were still arriving,"
+                        " so newer lines may exist."
+                    )
+                if window.size_capped:
+                    message += f" Older lines were dropped to stay under {MAX_LOG_CHARS} characters."
+                if has_more_before:
+                    message += (
+                        f" Older lines exist: call get_logs with before_line={window.first_line}"
+                        f" and attempt={resolved_attempt}."
+                    )
+
+            response.update(
+                available=True,
+                logs="\n".join(window.lines),
+                first_line=window.first_line,
+                end_line=window.end_line,
+                lines_returned=len(window.lines),
+                has_more_before=has_more_before,
+                next_before_line=window.first_line if has_more_before else None,
+                size_capped=window.size_capped,
+                stopped=window.stopped,
+                message=message,
+            )
+            return response
 
     # ------------------------------
     # app
@@ -1132,27 +1312,63 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
     ) -> list[dict]:
         """List the conditions of a run — the points where it is paused for external input.
 
-        `expected_type` is the payload type `signal_condition` will coerce to. A run stuck in
-        a paused phase usually has an unsignalled condition here.
-        """
-        from flyte.remote._condition import resolve_condition_expected_type
+        Each entry carries what the condition is asking: `prompt` (render as markdown when
+        `prompt_type` is "markdown"), `description`, `timeout_s` (null when it waits forever)
+        and `expected_type`, the payload type `signal_condition` will coerce to. A run stuck
+        in a paused phase usually has an unsignalled condition here.
 
+        Those details are loaded per condition. When loading one fails, its entry still comes
+        back with the listing fields, null `prompt`/`prompt_type`/`description`/`timeout_s`, and
+        `details_error` saying why; `details_error` is null on every other entry. Call
+        `get_condition` to retry that one.
+        """
         with env._scoped(project, domain):
-            out: list[dict] = []
+            conditions: list[Any] = []
             async for c in cast(Any, flyte.remote.Condition.listall).aio(run_name=run_name, limit=limit):
-                expected = resolve_condition_expected_type(c.pb2)
-                out.append(
-                    {
-                        "name": c.name,
-                        "action_name": c.action_name,
-                        "run_name": c.run_name,
-                        "phase": c.phase,
-                        "expected_type": expected.__name__ if expected is not None else None,
-                    }
-                )
-                if len(out) >= limit:
+                conditions.append(c)
+                if len(conditions) >= limit:
                     break
-            return out
+
+            # The prompt and timeout are only on the action-details RPC, one call per condition.
+            # Bounded so a large `limit` does not open that many requests at once.
+            slots = asyncio.Semaphore(CONDITION_DETAILS_CONCURRENCY)
+
+            async def _with_details(c: Any) -> dict:
+                # One failed lookup must not cost the caller the whole list, so the entry keeps
+                # what the listing already had and says why the rest is missing.
+                try:
+                    async with slots:
+                        detailed = await c.fetch_details.aio()
+                except Exception as e:
+                    logger.exception("Could not load condition details.")
+                    error = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+                    return {**_condition_dict(c), "details_error": error}
+                return {**_condition_dict(detailed), "details_error": None}
+
+            return list(await asyncio.gather(*(_with_details(c) for c in conditions)))
+
+    async def get_condition(
+        name: str,
+        run_name: str,
+        project: str | None = None,
+        domain: str | None = None,
+        ctx: MCPContext | None = None,
+    ) -> dict:
+        """Get one condition of a run by name: what it asks, its payload type and its timeout.
+
+        Same fields as a `list_conditions` entry except `details_error`: a failure to load the
+        details is raised as an error here. Use it before `signal_condition` to read the
+        prompt the signal is answering.
+        """
+        with env._scoped(project, domain):
+            condition = await cast(Any, flyte.remote.Condition.get).aio(name, run_name=run_name)
+            if condition is None:
+                raise ToolError(f"Condition '{name}' was not found in run '{run_name}'.")
+            try:
+                detailed = await condition.fetch_details.aio()
+            except (ConnectError, RuntimeError) as e:
+                raise ToolError(f"Could not load the details of condition '{name}' in run '{run_name}': {e}") from e
+            return _condition_dict(detailed)
 
     async def signal_condition(
         name: str,
@@ -1300,6 +1516,7 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         "create_secret": create_secret,
         "delete_secret": delete_secret,
         "list_conditions": list_conditions,
+        "get_condition": get_condition,
         "signal_condition": signal_condition,
         "whoami": whoami,
         "search_flyte_sdk_examples": search_flyte_sdk_examples,

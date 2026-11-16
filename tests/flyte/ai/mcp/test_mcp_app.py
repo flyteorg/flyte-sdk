@@ -463,7 +463,7 @@ class TestToolGroupMappingConsistency:
 
     def test_total_tool_count(self):
         # Keep this in sync with the MCPTool literal in _flyte_mcp_app.py.
-        assert len(ALL_MCP_TOOLS) == 32
+        assert len(ALL_MCP_TOOLS) == 33
 
 
 class TestHealthEndpoint:
