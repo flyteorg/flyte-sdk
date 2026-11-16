@@ -64,13 +64,24 @@ from flyte.ai.mcp._tools import (
 )
 
 # Tools the spec pins to specific hints; asserted individually so a careless registry edit shows up.
-DESTRUCTIVE_TOOLS = {"abort_run", "abort_action", "delete_secret", "deactivate_app", "deactivate_trigger"}
+DESTRUCTIVE_TOOLS = {
+    "abort_run",
+    "abort_action",
+    "delete_secret",
+    "deactivate_app",
+    "deactivate_trigger",
+    "delete_app",
+    "delete_trigger",
+}
 WRITE_NON_DESTRUCTIVE_TOOLS = {
     "run_task",
     "rerun_run",
     "create_secret",
+    "update_secret",
+    "generate_secret",
     "activate_app",
     "activate_trigger",
+    "create_trigger",
     "signal_condition",
 }
 
@@ -173,17 +184,36 @@ class TestGroups:
             ("action", {"list_actions", "get_action", "abort_action"}),
             ("logs", {"get_logs"}),
             ("project", {"list_projects", "get_project"}),
-            ("secret", {"list_secrets", "create_secret", "delete_secret"}),
+            (
+                "secret",
+                {"list_secrets", "get_secret", "create_secret", "update_secret", "generate_secret", "delete_secret"},
+            ),
             ("condition", {"list_conditions", "get_condition", "signal_condition"}),
             ("identity", {"whoami"}),
             (
                 "run",
                 {"get_run", "get_run_io", "abort_run", "list_runs", "wait_for_run", "rerun_run"},
             ),
-            ("app", {"get_app", "list_apps", "activate_app", "deactivate_app"}),
+            (
+                "app",
+                {
+                    "get_app",
+                    "list_apps",
+                    "activate_app",
+                    "deactivate_app",
+                    "delete_app",
+                },
+            ),
             (
                 "trigger",
-                {"list_triggers", "get_trigger", "activate_trigger", "deactivate_trigger"},
+                {
+                    "list_triggers",
+                    "get_trigger",
+                    "activate_trigger",
+                    "deactivate_trigger",
+                    "create_trigger",
+                    "delete_trigger",
+                },
             ),
         ],
     )
@@ -217,7 +247,7 @@ class TestReadOnlyDerivation:
 
     def test_read_only_intersects_with_groups(self):
         env = FlyteMCPAppEnvironment(name="test-mcp", tool_groups=["secret"], read_only=True)
-        assert env.enabled_tools == {"list_secrets"}
+        assert env.enabled_tools == {"list_secrets", "get_secret"}
 
     def test_read_only_intersects_with_explicit_tools(self):
         assert resolve_tools(None, ["get_run", "abort_run"], read_only=True) == {"get_run"}
@@ -1244,12 +1274,18 @@ class TestScopedToolSignatures:
         "list_apps",
         "activate_app",
         "deactivate_app",
+        "delete_app",
         "list_triggers",
         "get_trigger",
         "activate_trigger",
         "deactivate_trigger",
+        "create_trigger",
+        "delete_trigger",
         "list_secrets",
+        "get_secret",
         "create_secret",
+        "update_secret",
+        "generate_secret",
         "delete_secret",
         "list_conditions",
         "get_condition",
@@ -1445,6 +1481,11 @@ class _UpdateRecorder:
         self.calls.append(kwargs)
 
 
+class _SecretNotFound:
+    async def aio(self, *args, **kwargs):
+        raise ConnectError(Code.NOT_FOUND, "no such secret")
+
+
 class TestTriggerActivation:
     @pytest.fixture
     def env(self, init_config):
@@ -1564,19 +1605,20 @@ class TestRerunAllowlist:
 
 
 # ------------------------------
-# create_secret type validation
+# create_secret type validation (opt-in inline-value path)
 # ------------------------------
 
 
 class TestCreateSecretType:
     @pytest.fixture
     def env(self, init_config):
-        return FlyteMCPAppEnvironment(name="test-mcp", tool_groups=["secret"])
+        return FlyteMCPAppEnvironment(name="test-mcp", tool_groups=["secret"], allow_inline_secret_values=True)
 
     @pytest.mark.asyncio
     async def test_regular_is_created(self, env, monkeypatch):
         recorder = _UpdateRecorder()
         monkeypatch.setattr(flyte.remote.Secret, "create", recorder)
+        monkeypatch.setattr(flyte.remote.Secret, "get", _SecretNotFound())
 
         result = await _fn(env, "create_secret")(name="s", value="v", project="p", domain="d")
         assert result == {"name": "s", "created": True}
