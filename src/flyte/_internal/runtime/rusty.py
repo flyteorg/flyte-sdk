@@ -82,7 +82,7 @@ def load_task_from_code_bundle(resolver: str, resolver_args: List[str]) -> TaskT
 
 
 async def create_controller(
-    endpoint: str = "host.docker.internal:8090",
+    endpoint: str | None = None,
     insecure: bool = False,
     api_key: str | None = None,
 ) -> Controller:
@@ -90,7 +90,9 @@ async def create_controller(
     Creates a controller instance for remote operations.
 
     Args:
-        endpoint:
+        endpoint: The control plane endpoint. None leaves it to init_in_cluster, which reads the
+            platform's `_U_EP_OVERRIDE` (an api key carries its own). A default here would win
+            over `_U_EP_OVERRIDE` whenever there is no api key, as with workload identity.
         insecure:
         api_key:
     """

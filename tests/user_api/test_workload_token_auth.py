@@ -287,3 +287,24 @@ class TestRustController:
         kwargs = fake_rust.call_args.kwargs
         assert kwargs["endpoint"] == "http://localhost:8090"
         assert kwargs["workload_token"] is False
+
+
+def test_rusty_controller_takes_the_platform_endpoint_without_an_api_key(monkeypatch, tmp_path):
+    """A reusable worker (rusty) with no api key, as under workload identity, connects to the
+    endpoint the platform injected (`_U_EP_OVERRIDE`), not a hard-coded default."""
+    import asyncio
+
+    from flyte._internal.runtime import rusty
+
+    token = tmp_path / "token"
+    token.write_text("t")
+    monkeypatch.setenv("_U_WORKLOAD", "pod/acme/p/development/c1/ns/env-0")
+    monkeypatch.setenv("_U_WORKLOAD_TOKEN_FILE", str(token))
+    monkeypatch.setenv("_U_EP_OVERRIDE", "dns:///acme.cloud.union.ai")
+    monkeypatch.delenv("EAGER_API_KEY", raising=False)
+    monkeypatch.delenv("_UNION_EAGER_API_KEY", raising=False)
+    seen = {}
+    monkeypatch.setattr(rusty, "_create_controller", lambda ct, **kw: seen.update(kw) or object())
+    asyncio.run(rusty.create_controller())
+    assert seen["endpoint"] == "dns:///acme.cloud.union.ai"
+    assert seen.get("auth_type") == "WorkloadToken"
