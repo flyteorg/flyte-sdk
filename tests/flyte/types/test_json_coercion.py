@@ -293,3 +293,25 @@ async def test_coerce_and_serialize_nested_collections():
     coerced_args = await coerce_json_args(args, inputs)
     assert coerced_args["point"] == (3.5, 4.5)
     assert coerced_args["tags"] == {"alpha", "beta"}
+
+
+@pytest.mark.asyncio
+async def test_coerce_json_value_generic_passthrough():
+    import typing
+
+    from flyte.types._json_coercion import coerce_json_value
+
+    _T = typing.TypeVar("_T")
+
+    class CustomBox(typing.Generic[_T]):
+        def __init__(self, value: _T):
+            self.value = value
+
+    box = CustomBox[int](42)
+    # Parameterized generic where origin is CustomBox
+    res = await coerce_json_value(box, CustomBox[int])
+    assert res is box
+
+    # Any and None passthrough
+    assert await coerce_json_value(123, typing.Any) == 123
+    assert await coerce_json_value("foo", None) == "foo"
