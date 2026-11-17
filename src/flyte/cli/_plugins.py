@@ -171,7 +171,7 @@ def _load_command_plugins(root_group: click.Group, top_level_name: str):
                 logger.info(f"Registered plugin command: flyte {ep.name}")
 
         except Exception as e:
-            logger.error(f"Failed to load plugin command {ep.name}: {e}")
+            logger.error(f"Failed to load plugin command {ep.name}: {e!r}")
 
 
 def _load_hook_plugins(root_group: click.Group, top_level_name: str):
@@ -203,7 +203,7 @@ def _load_hook_plugins(root_group: click.Group, top_level_name: str):
                 _apply_hook_to_command(root_group, ep.name, hook)
 
         except Exception as e:
-            logger.error(f"Failed to apply hook {ep.name}: {e}")
+            logger.error(f"Failed to apply hook {ep.name}: {e!r}")
 
 
 def _add_subcommand_to_group(root_group: click.Group, group_name: str, command_name: str, command: click.Command):

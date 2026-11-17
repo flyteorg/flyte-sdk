@@ -27,7 +27,10 @@ class LazyGroup(click.RichGroup):
         self._resolved: set[str] = set()
 
     def list_commands(self, ctx: click.Context) -> list[str]:
-        return sorted({*self.commands, *self._lazy_commands, *_plugins.plugin_command_names()})
+        names = {*self.commands, *self._lazy_commands, *_plugins.plugin_command_names()}
+        # A name whose resolution came back empty (a plugin command that failed to import) is not
+        # listed. rich_click's help rendering calls get_command() on each listed name and fails on None.
+        return sorted(name for name in names if name not in self._resolved or name in self.commands)
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
         if cmd_name not in self._resolved:
@@ -38,3 +41,10 @@ class LazyGroup(click.RichGroup):
                 self.add_command(getattr(importlib.import_module(module_name), attribute), name=cmd_name)
             _plugins.register_plugins(self, cmd_name)
         return self.commands.get(cmd_name)
+
+    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        # Help needs every command's summary anyway, so resolve them all first. That way the
+        # listing below already leaves out the ones that failed to load.
+        for name in self.list_commands(ctx):
+            self.get_command(ctx, name)
+        super().format_commands(ctx, formatter)

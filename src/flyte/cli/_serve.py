@@ -5,16 +5,18 @@ import signal
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Dict, List, cast
+from typing import TYPE_CHECKING, Any, Dict, List, cast
 
 import rich_click as click
 from typing_extensions import get_args
 
 from flyte._code_bundle._utils import CopyFiles
-from flyte.app import AppEnvironment
 
 from . import _common as common
 from ._common import CLIConfig
+
+if TYPE_CHECKING:
+    from flyte.app import AppEnvironment
 
 HELLO_CMD = common.HELLO_CMD
 
@@ -145,7 +147,7 @@ class ServeArguments:
 class ServeAppCommand(click.RichCommand):
     def __init__(self, obj_name: str, obj: AppEnvironment, serve_args: ServeArguments, *args, **kwargs):
         self.obj_name = obj_name
-        self.obj = cast(AppEnvironment, obj)
+        self.obj = cast("AppEnvironment", obj)
         self.serve_args = serve_args
         kwargs.pop("name", None)
         super().__init__(obj_name, *args, **kwargs)
@@ -287,6 +289,8 @@ class AppPerFileGroup(common.ObjectsPerFileGroup):
         self.serve_args = serve_args
 
     def _filter_objects(self, module: ModuleType) -> Dict[str, Any]:
+        from flyte.app import AppEnvironment
+
         return {k: v for k, v in module.__dict__.items() if isinstance(v, AppEnvironment)}
 
     def list_commands(self, ctx):
@@ -310,7 +314,7 @@ class AppPerFileGroup(common.ObjectsPerFileGroup):
         return super().get_command(ctx, obj_name)
 
     def _get_command_for_obj(self, ctx: click.Context, obj_name: str, obj: Any) -> click.Command:
-        obj = cast(AppEnvironment, obj)
+        obj = cast("AppEnvironment", obj)
         return ServeAppCommand(
             obj_name=obj_name,
             obj=obj,
