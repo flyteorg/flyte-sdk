@@ -90,12 +90,17 @@ async def create_controller(
     Creates a controller instance for remote operations.
 
     Args:
-        endpoint: The control plane endpoint. None leaves it to init_in_cluster, which reads the
-            platform's `_U_EP_OVERRIDE` (an api key carries its own). A default here would win
-            over `_U_EP_OVERRIDE` whenever there is no api key, as with workload identity.
-        insecure:
+        endpoint: The control plane endpoint, used when the platform names none. Without an api
+            key (which carries its own endpoint), the platform's `_U_EP_OVERRIDE` wins over it:
+            callers such as the reusable-worker executor pass a local default
+            (`host.docker.internal:8090`) whenever they have no api key, which in a task pod that
+            authenticates another way (workload identity) is never the right endpoint.
+        insecure: Plaintext channel, for the caller's endpoint; with `_U_EP_OVERRIDE` it comes from
+            the platform (`_U_INSECURE`) instead.
         api_key:
     """
+    if api_key is None and os.getenv("_U_EP_OVERRIDE"):
+        endpoint, insecure = None, False
     logger.info(f"[rusty] Creating controller with endpoint {endpoint}")
     import flyte.errors
     from flyte._initialize import init_in_cluster
