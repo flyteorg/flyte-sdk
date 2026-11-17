@@ -992,9 +992,8 @@ def test_bad_request_carrying_details_still_reports():
     """A real Connect JSON error body yields details; from_http_status never does."""
     from connectrpc.code import Code
     from connectrpc.errors import ConnectError
-    from flyteidl2.common import identity_pb2
 
-    err = ConnectError(Code.INTERNAL, "Bad Request", details=[identity_pb2.Identity()])
+    err = ConnectError(Code.INTERNAL, "Bad Request", details=[_error_detail()])
     assert not _sentry._is_non_connect_endpoint_response(err)
 
 
