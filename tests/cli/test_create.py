@@ -609,3 +609,16 @@ def test_create_config_devbox_rejects_explicit_endpoint(runner: CliRunner, tmp_p
     # rich_click wraps and colorizes the error panel; strip ANSI codes and newlines before matching.
     plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output).replace("\n", " ")
     assert "--devbox already implies --endpoint" in re.sub(r"\s+", " ", plain)
+
+
+def test_click_choices_match_the_literal_types():
+    """_create.py repeats these Literal values so that loading it does not import their modules."""
+    from typing import get_args
+
+    from flyte.artifacts import CardFormat, CardType
+    from flyte.cli import _create
+    from flyte.remote import SecretTypes
+
+    assert _create.CARD_FORMATS == get_args(CardFormat)
+    assert _create.CARD_TYPES == get_args(CardType)
+    assert _create.SECRET_TYPES == get_args(SecretTypes)
