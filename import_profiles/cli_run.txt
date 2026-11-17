@@ -104,10 +104,6 @@ flyte.config._config
 flyte.config._internal
 flyte.config._reader
 flyte.errors
-flyte.io
-flyte.io._dir
-flyte.io._file
-flyte.io._hashing_io
 flyte.models
 flyte.remote
 flyte.remote._action
