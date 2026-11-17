@@ -154,7 +154,9 @@ def test_plugin_command_that_fails_to_load_is_left_out_of_help(lazy_module, plug
 
     assert result.exit_code == 0, result.output
     assert broken.loaded
-    # Match command-table rows, not the "Failed to load plugin command broken" log line.
-    assert re.search(r"│ greet\b", result.output)
-    assert not re.search(r"│ broken\b", result.output)
+    # Match command-table rows, not the "Failed to load plugin command broken" log line. CI forces
+    # color, so strip ANSI styling first.
+    output = click.unstyle(result.output)
+    assert re.search(r"│ greet\b", output)
+    assert not re.search(r"│ broken\b", output)
     assert "broken" not in group.list_commands(None)
