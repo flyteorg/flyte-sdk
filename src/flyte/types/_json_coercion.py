@@ -141,6 +141,8 @@ async def coerce_json_value(
         return None
 
     py_type = unwrap_optional_type(py_type)
+    if py_type is Any or py_type is None:
+        return value
     origin = get_origin(py_type)
     args = get_args(py_type)
 
