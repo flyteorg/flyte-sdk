@@ -101,19 +101,40 @@ async def isolate_local_cache(tmp_path):
         await LocalTaskCache.close()
 
 
+def _connect_detail(type_url: str, value: bytes):
+    """A ConnectError detail in the form the installed connectrpc carries."""
+    if hasattr(connectrpc.errors, "ErrorDetail"):
+        # connectrpc 0.11 carries details as protobuf-py messages.
+        from protobuf.wkt import Any as ProtobufPyAny
+
+        return ProtobufPyAny(type_url=type_url, value=value)
+    return Any(type_url=type_url, value=value)
+
+
 @pytest.fixture
 def org_limit_detail():
-    """Builds a cloudidl.common.OrgLimitExceeded ConnectError detail in the form the installed connectrpc carries."""
+    """Builds a cloudidl.common.OrgLimitExceeded ConnectError detail. With no fields its payload is empty, as from a
+    server whose detail the SDK can't read; fields (limit, ceiling, ...) are encoded as the server would."""
 
-    def build(type_url_prefix: str = "type.googleapis.com/"):
-        # The open-source SDK has no cloudidl protos; only the type URL identifies the detail.
-        type_url = type_url_prefix + "cloudidl.common.OrgLimitExceeded"
-        if hasattr(connectrpc.errors, "ErrorDetail"):
-            # connectrpc 0.11 carries details as protobuf-py messages.
-            from protobuf.wkt import Any as ProtobufPyAny
+    def build(type_url_prefix: str = "type.googleapis.com/", **fields):
+        # The open-source SDK has no cloudidl protos; it decodes the detail with descriptors of its own.
+        from flyte._internal.controllers.remote._org_limits import _DETAILS, ORG_LIMIT_EXCEEDED_TYPE
 
-            return ProtobufPyAny(type_url=type_url, value=b"")
-        return Any(type_url=type_url, value=b"")
+        value = _DETAILS[ORG_LIMIT_EXCEEDED_TYPE](**fields).SerializeToString() if fields else b""
+        return _connect_detail(type_url_prefix + ORG_LIMIT_EXCEEDED_TYPE, value)
+
+    return build
+
+
+@pytest.fixture
+def org_entitlement_detail():
+    """Builds a cloudidl.common.OrgEntitlementRequired ConnectError detail with the given fields."""
+
+    def build(**fields):
+        from flyte._internal.controllers.remote._org_limits import _DETAILS, ORG_ENTITLEMENT_REQUIRED_TYPE
+
+        value = _DETAILS[ORG_ENTITLEMENT_REQUIRED_TYPE](**fields).SerializeToString()
+        return _connect_detail("type.googleapis.com/" + ORG_ENTITLEMENT_REQUIRED_TYPE, value)
 
     return build
 

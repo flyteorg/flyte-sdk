@@ -546,13 +546,13 @@ class Controller:
                         logger.info(f"Action {action.name} already exists, continuing to monitor.")
                         action.mark_started()
                         return
-                    from ._org_limits import org_limit_exceeded
+                    from ._org_limits import org_limit_exceeded, resource_exhausted
 
                     if (org_limit := org_limit_exceeded(e)) is not None:
                         # The org is at a limit (e.g. max_actions_per_run): no retry can clear it.
                         raise org_limit from e
-                    if e.code == Code.RESOURCE_EXHAUSTED:
-                        raise flyte.errors.ResourceExhaustedError(e.message) from e
+                    if (exhausted := resource_exhausted(e)) is not None:
+                        raise exhausted from e
                     if e.code == Code.ABORTED:
                         # The run was aborted; engine will auto-abort other in-flight actions.
                         # Surface as a system error — outer handler in _bg_run wraps and exits.
