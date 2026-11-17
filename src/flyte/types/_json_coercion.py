@@ -204,13 +204,8 @@ async def coerce_json_value(
     if scalar is not _NOT_A_SCALAR:
         return scalar
 
-    raw_type = origin if origin is not None else py_type
-    if isinstance(raw_type, type):
-        try:
-            if isinstance(value, raw_type):
-                return value
-        except TypeError:
-            pass
+    if isinstance(py_type, type) and isinstance(value, py_type):
+        return value
 
     if isinstance(value, str):
         if string_blob_converter is not None and _is_io_python_type(unwrap_optional_type(py_type)):
