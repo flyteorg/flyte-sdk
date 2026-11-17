@@ -409,7 +409,7 @@ class TestAuthorizationServerDiscovery:
         constructed = {}
 
         class FakeAuthMetadataServiceClient:
-            def __init__(self, address, http_client):
+            def __init__(self, address, http_client, **_kwargs):
                 constructed.update(address=address, http_client=http_client)
 
             async def get_o_auth2_metadata(self, request):
@@ -442,7 +442,7 @@ class TestAuthorizationServerDiscovery:
         from flyte.ai.mcp._protected_resource import discover_authorization_server
 
         class FakeAuthMetadataServiceClient:
-            def __init__(self, address, http_client):
+            def __init__(self, address, http_client, **_kwargs):
                 pass
 
             async def get_o_auth2_metadata(self, request):
@@ -682,7 +682,7 @@ class TestDiscoveryFailureBoundaries:
         import flyte._initialize
 
         class FakeAuthMetadataServiceClient:
-            def __init__(self, address, http_client):
+            def __init__(self, address, http_client, **_kwargs):
                 pass
 
             async def get_o_auth2_metadata(self, request):

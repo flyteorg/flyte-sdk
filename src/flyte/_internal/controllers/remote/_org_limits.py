@@ -11,6 +11,7 @@ from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 
 import flyte.errors
+from flyte.remote._client._connect_compat import detail_type_name
 
 ORG_LIMIT_EXCEEDED_TYPE = "cloudidl.common.OrgLimitExceeded"
 
@@ -31,7 +32,7 @@ def org_limit_exceeded(e: ConnectError) -> flyte.errors.OrgLimitExceededError | 
     if e.code != Code.FAILED_PRECONDITION:
         return None
     for detail in e.details:
-        if detail.type_url.rsplit("/", 1)[-1] == ORG_LIMIT_EXCEEDED_TYPE:
+        if detail_type_name(detail) == ORG_LIMIT_EXCEEDED_TYPE:
             return flyte.errors.OrgLimitExceededError(e.message)
     return None
 

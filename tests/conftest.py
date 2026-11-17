@@ -3,8 +3,10 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+import connectrpc.errors
 import pytest
 import pytest_asyncio
+from google.protobuf.any_pb2 import Any
 
 from flyte._cache.local_cache import LocalTaskCache
 from flyte._context import Context, ContextData, internal_ctx
@@ -97,6 +99,23 @@ async def isolate_local_cache(tmp_path):
         LocalDB._conn_sync = None
         yield
         await LocalTaskCache.close()
+
+
+@pytest.fixture
+def org_limit_detail():
+    """Builds a cloudidl.common.OrgLimitExceeded ConnectError detail in the form the installed connectrpc carries."""
+
+    def build(type_url_prefix: str = "type.googleapis.com/"):
+        # The open-source SDK has no cloudidl protos; only the type URL identifies the detail.
+        type_url = type_url_prefix + "cloudidl.common.OrgLimitExceeded"
+        if hasattr(connectrpc.errors, "ErrorDetail"):
+            # connectrpc 0.11 carries details as protobuf-py messages.
+            from protobuf.wkt import Any as ProtobufPyAny
+
+            return ProtobufPyAny(type_url=type_url, value=b"")
+        return Any(type_url=type_url, value=b"")
+
+    return build
 
 
 @pytest.fixture
