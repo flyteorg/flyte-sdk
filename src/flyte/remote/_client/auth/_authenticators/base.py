@@ -186,11 +186,15 @@ class Authenticator(object):
             # Credentials have been refreshed by another thread/coroutine since caller read them
             return
 
+        creds_id_before_wait = self._creds_id
         # Use the async lock to ensure coroutine safety
         async with self._async_lock:
             # Double-check pattern to avoid unnecessary work
             if creds_id and creds_id != self._creds_id:
                 # Another thread/coroutine refreshed credentials while we were waiting for the lock
+                return
+            if not creds_id and self._creds_id != creds_id_before_wait:
+                # A caller with no credentials yet waited behind another refresh: use its result.
                 return
 
             # Perform the actual credential refresh

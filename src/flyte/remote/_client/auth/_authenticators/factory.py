@@ -7,6 +7,20 @@ from flyte.remote._client.auth._authenticators.external_command import (
 from flyte.remote._client.auth._client_config import AuthType, ClientConfigStore, RemoteClientConfigStore
 
 
+def _shared(factory: typing.Callable[[], Authenticator]) -> typing.Callable[[], Authenticator]:
+    """Returns a factory that builds one authenticator and hands the same one to every interceptor, so
+    unary and streaming calls share a token instead of each fetching their own."""
+    authenticator: Authenticator | None = None
+
+    def get() -> Authenticator:
+        nonlocal authenticator
+        if authenticator is None:
+            authenticator = factory()
+        return authenticator
+
+    return get
+
+
 def create_auth_interceptors(endpoint: str, http_client=None, **kwargs) -> list:
     """
     Returns a list of ConnectRPC interceptors to perform an OAuth2.0 auth flow.
@@ -53,11 +67,12 @@ def create_auth_interceptors(endpoint: str, http_client=None, **kwargs) -> list:
             endpoint=endpoint, cfg_store=RemoteClientConfigStore(endpoint, http_client=http_client), **kwargs
         )
 
+    get_authenticator = _shared(authenticator_factory)
     return [
-        AuthUnaryInterceptor(authenticator_factory),
-        AuthClientStreamInterceptor(authenticator_factory),
-        AuthServerStreamInterceptor(authenticator_factory),
-        AuthBidiStreamInterceptor(authenticator_factory),
+        AuthUnaryInterceptor(get_authenticator),
+        AuthClientStreamInterceptor(get_authenticator),
+        AuthServerStreamInterceptor(get_authenticator),
+        AuthBidiStreamInterceptor(get_authenticator),
     ]
 
 
@@ -89,11 +104,12 @@ def create_proxy_auth_interceptors(endpoint: str, proxy_command: typing.List[str
     def authenticator_factory() -> Authenticator:
         return get_async_proxy_authenticator(endpoint=endpoint, proxy_command=proxy_command, **kwargs)
 
+    get_authenticator = _shared(authenticator_factory)
     return [
-        AuthUnaryInterceptor(authenticator_factory),
-        AuthClientStreamInterceptor(authenticator_factory),
-        AuthServerStreamInterceptor(authenticator_factory),
-        AuthBidiStreamInterceptor(authenticator_factory),
+        AuthUnaryInterceptor(get_authenticator),
+        AuthClientStreamInterceptor(get_authenticator),
+        AuthServerStreamInterceptor(get_authenticator),
+        AuthBidiStreamInterceptor(get_authenticator),
     ]
 
 
