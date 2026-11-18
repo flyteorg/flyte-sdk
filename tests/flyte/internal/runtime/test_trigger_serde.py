@@ -42,6 +42,11 @@ class Settings(BaseModel):
     retries: int
 
 
+class Window(typing.NamedTuple):
+    days: int
+    region: str
+
+
 class TestToSchedule:
     """Test the _to_schedule function"""
 
@@ -212,6 +217,7 @@ class TestProcessDefaultInputs:
             pytest.param(Settings, Settings(name="n", retries=2), id="pydantic-model"),
             pytest.param(File, File(path="s3://bucket/key/data.csv"), id="flyte-file-remote-uri"),
             pytest.param(list[dict[str, int]], [{"a": 1}, {"b": 2}], id="nested-list-dict"),
+            pytest.param(Window, Window(days=7, region="us"), id="namedtuple"),
         ],
     )
     async def test_default_input_round_trips_to_task(self, python_type, value):

@@ -115,7 +115,8 @@ async def process_default_inputs(
             # A tuple is the same case as a list: its runtime type would pickle it into an
             # untagged binary that the task cannot decode as the declared list.
             python_type = type(v)
-            if isinstance(v, (list, tuple, dict)) or literal_type.HasField("union_type"):
+            tuple_for_list = isinstance(v, tuple) and literal_type.HasField("collection_type")
+            if isinstance(v, (list, dict)) or tuple_for_list or literal_type.HasField("union_type"):
                 try:
                     python_type = flyte.types.TypeEngine.guess_python_type(literal_type)
                 except ValueError:
