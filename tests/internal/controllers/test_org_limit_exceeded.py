@@ -1,4 +1,4 @@
-"""An enqueue refused by an org limit (FAILED_PRECONDITION with a cloudidl.common.OrgLimitExceeded detail)
+"""An enqueue refused by an org limit (FAILED_PRECONDITION with an OrgLimitExceeded detail)
 fails the child at once with a user error the parent can catch, instead of retrying and surfacing as a
 system error that makes the platform retry the whole parent."""
 
@@ -49,6 +49,33 @@ def _action() -> Action:
         action_id=identifier_pb2.ActionIdentifier(name="child", run=identifier_pb2.RunIdentifier(name="r1")),
         type="trace",
     )
+
+
+@pytest.mark.asyncio
+async def test_entitlement_refusal_fails_child_once_as_user_error(org_entitlement_detail):
+    controller = _controller()
+    action = _action()
+    await controller._shared_queue.put(action)
+    attempts = 0
+
+    async def enqueue(*_args, **_kwargs):
+        nonlocal attempts
+        attempts += 1
+        controller._running = False
+        detail = org_entitlement_detail(entitlement="allowed_clouds", values=["coreweave"])
+        raise ConnectError(Code.PERMISSION_DENIED, "org is not entitled to allowed_clouds", details=[detail])
+
+    controller._actions_service.enqueue.side_effect = enqueue
+
+    with patch("flyte._internal.controllers.remote._core.asyncio.sleep", new_callable=AsyncMock) as sleep:
+        await controller._bg_run(worker_id="w1")
+
+    assert attempts == 1, "an entitlement refusal is not retried"
+    sleep.assert_not_awaited()
+    assert isinstance(action.client_err, flyte.errors.OrgEntitlementRequiredError)
+    assert isinstance(action.client_err, flyte.errors.RuntimeUserError)
+    assert action.client_err.entitlement == "allowed_clouds"
+    assert "This org isn't entitled to allowed_clouds (coreweave)." in str(action.client_err)
 
 
 @pytest.mark.asyncio

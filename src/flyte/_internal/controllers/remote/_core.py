@@ -546,13 +546,16 @@ class Controller:
                         logger.info(f"Action {action.name} already exists, continuing to monitor.")
                         action.mark_started()
                         return
-                    from ._org_limits import org_limit_exceeded
+                    from ._org_limits import org_entitlement_required, org_limit_exceeded, resource_exhausted
 
                     if (org_limit := org_limit_exceeded(e)) is not None:
                         # The org is at a limit (e.g. max_actions_per_run): no retry can clear it.
                         raise org_limit from e
-                    if e.code == Code.RESOURCE_EXHAUSTED:
-                        raise flyte.errors.ResourceExhaustedError(e.message) from e
+                    if (entitlement := org_entitlement_required(e)) is not None:
+                        # The org isn't entitled to what the action needs: no retry can clear that either.
+                        raise entitlement from e
+                    if (exhausted := resource_exhausted(e)) is not None:
+                        raise exhausted from e
                     if e.code == Code.ABORTED:
                         # The run was aborted; engine will auto-abort other in-flight actions.
                         # Surface as a system error — outer handler in _bg_run wraps and exits.
@@ -644,12 +647,16 @@ class Controller:
                     logger.warning(f"[{worker_id}] Retrying action {action.name} after backoff")
                     await self._shared_queue.put(action)
             except Exception as e:
-                if isinstance(e, flyte.errors.OrgLimitExceededError):
-                    # Expected when a run fans out past its org's limit: one per refused child, so not an error.
-                    logger.warning(f"[{worker_id}] Action {action.name} refused at an org limit: {e}")
+                org_refusal = isinstance(
+                    e, (flyte.errors.OrgLimitExceededError, flyte.errors.OrgEntitlementRequiredError)
+                )
+                if org_refusal:
+                    # Expected when a run fans out past its org's limit or entitlements: one per refused child, so not
+                    # an error.
+                    logger.warning(f"[{worker_id}] Action {action.name} refused for the org: {e}")
                 else:
                     logger.error(f"[{worker_id}] Error in controller loop for {action.name}: {e}")
-                if isinstance(e, flyte.errors.OrgLimitExceededError):
+                if org_refusal:
                     # A user error the parent can catch, not a controller failure: wrapping it as a system error
                     # would make the platform retry the whole parent.
                     err: Exception = e

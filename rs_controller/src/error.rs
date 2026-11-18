@@ -36,11 +36,16 @@ pub(crate) struct RpcStatus {
     pub details: Vec<prost_types::Any>,
 }
 
-const ORG_LIMIT_EXCEEDED_TYPE: &str = "cloudidl.common.OrgLimitExceeded";
+/// The org limit detail's type names: `flyteidl2.org.OrgLimitExceeded`, and `cloudidl.common.OrgLimitExceeded`,
+/// which servers from before the flyteidl2 detail send alone.
+const ORG_LIMIT_EXCEEDED_TYPES: [&str; 2] = [
+    "flyteidl2.org.OrgLimitExceeded",
+    "cloudidl.common.OrgLimitExceeded",
+];
 
-/// Returns the server's message when `status` is an org limit refusal: a `cloudidl.common.OrgLimitExceeded`
-/// detail, recognized by its type URL since the SDK has no cloudidl protos, on a `FailedPrecondition`. The same
-/// detail with `ResourceExhausted` (max_concurrent_runs) means "later", not "never", and is retried.
+/// Returns the server's message when `status` is an org limit refusal: an OrgLimitExceeded detail (see
+/// `ORG_LIMIT_EXCEEDED_TYPES`), recognized by its type URL, on a `FailedPrecondition`. The same detail with
+/// `ResourceExhausted` (max_concurrent_runs) means "later", not "never", and is retried.
 pub fn org_limit_message(status: &tonic::Status) -> Option<String> {
     use prost::Message;
     if status.code() != tonic::Code::FailedPrecondition || status.details().is_empty() {
@@ -50,7 +55,12 @@ pub fn org_limit_message(status: &tonic::Status) -> Option<String> {
     rpc_status
         .details
         .iter()
-        .any(|d| d.type_url.rsplit('/').next() == Some(ORG_LIMIT_EXCEEDED_TYPE))
+        .any(|d| {
+            d.type_url
+                .rsplit('/')
+                .next()
+                .is_some_and(|name| ORG_LIMIT_EXCEEDED_TYPES.contains(&name))
+        })
         .then(|| status.message().to_string())
 }
 
@@ -117,9 +127,14 @@ mod org_limit_tests {
 
     #[test]
     fn org_limit_detail_is_recognized() {
-        let s = status_with_detail("type.googleapis.com/cloudidl.common.OrgLimitExceeded");
-        let msg = org_limit_message(&s).expect("org limit refusal");
-        assert!(msg.contains("max_actions_per_run"));
+        for type_url in [
+            "type.googleapis.com/flyteidl2.org.OrgLimitExceeded",
+            "type.googleapis.com/cloudidl.common.OrgLimitExceeded",
+        ] {
+            let s = status_with_detail(type_url);
+            let msg = org_limit_message(&s).expect("org limit refusal");
+            assert!(msg.contains("max_actions_per_run"), "{type_url}");
+        }
     }
 
     #[test]
