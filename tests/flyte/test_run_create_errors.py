@@ -49,7 +49,7 @@ async def test_max_concurrent_runs_refusal_names_the_limit(org_limit_detail):
         current=1000,
         requested=1,
         tier_default=1000,
-        upgrade_url="https://www.union.ai/contact",
+        upgrade_url="https://www.union.ai/get-a-quote",
     )
     err = ConnectError(Code.RESOURCE_EXHAUSTED, 'org "acme" is at its max_concurrent_runs limit', details=[detail])
     with pytest.raises(flyte.errors.ResourceExhaustedError) as exc_info:
@@ -58,18 +58,18 @@ async def test_max_concurrent_runs_refusal_names_the_limit(org_limit_detail):
     assert exc_info.value.org_limit.ceiling == 1000
     assert str(exc_info.value) == (
         "Org limit max_concurrent_runs (1000) reached: 1000 in use, 1 more requested. "
-        "Wait for running work to finish, or contact Union to raise it: https://www.union.ai/contact"
+        "Wait for running work to finish, or contact sales to raise it: https://www.union.ai/get-a-quote"
     )
 
 
 @pytest.mark.asyncio
 async def test_entitlement_refusal_is_a_user_error(org_entitlement_detail):
-    detail = org_entitlement_detail(entitlement="committed_capacity", upgrade_url="https://www.union.ai/contact")
+    detail = org_entitlement_detail(entitlement="committed_capacity", upgrade_url="https://www.union.ai/get-a-quote")
     err = ConnectError(Code.PERMISSION_DENIED, 'org "acme" is not entitled to committed_capacity', details=[detail])
     with pytest.raises(flyte.errors.OrgEntitlementRequiredError) as exc_info:
         await _rerun_with_create_run_error(err)
     assert exc_info.value.entitlement == "committed_capacity"
-    assert "Contact Union to enable it: https://www.union.ai/contact" in str(exc_info.value)
+    assert "Contact sales to enable it: https://www.union.ai/get-a-quote" in str(exc_info.value)
 
 
 @pytest.mark.asyncio

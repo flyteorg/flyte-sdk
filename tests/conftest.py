@@ -113,28 +113,38 @@ def _connect_detail(type_url: str, value: bytes):
 
 @pytest.fixture
 def org_limit_detail():
-    """Builds a cloudidl.common.OrgLimitExceeded ConnectError detail. With no fields its payload is empty, as from a
+    """Builds a flyteidl2.org.OrgLimitExceeded ConnectError detail. With no fields its payload is empty, as from a
     server whose detail the SDK can't read; fields (limit, ceiling, ...) are encoded as the server would."""
 
     def build(type_url_prefix: str = "type.googleapis.com/", **fields):
-        # The open-source SDK has no cloudidl protos; it decodes the detail with descriptors of its own.
-        from flyte._internal.controllers.remote._org_limits import _DETAILS, ORG_LIMIT_EXCEEDED_TYPE
+        from flyteidl2.org import limits_pb2
 
-        value = _DETAILS[ORG_LIMIT_EXCEEDED_TYPE](**fields).SerializeToString() if fields else b""
-        return _connect_detail(type_url_prefix + ORG_LIMIT_EXCEEDED_TYPE, value)
+        value = limits_pb2.OrgLimitExceeded(**fields).SerializeToString() if fields else b""
+        return _connect_detail(type_url_prefix + limits_pb2.OrgLimitExceeded.DESCRIPTOR.full_name, value)
+
+    return build
+
+
+@pytest.fixture
+def legacy_org_limit_detail():
+    """Builds the cloudidl.common.OrgLimitExceeded detail a server from before the flyteidl2 details sends alone. The
+    SDK recognises it by type name only, so its payload is empty."""
+
+    def build():
+        return _connect_detail("type.googleapis.com/cloudidl.common.OrgLimitExceeded", b"")
 
     return build
 
 
 @pytest.fixture
 def org_entitlement_detail():
-    """Builds a cloudidl.common.OrgEntitlementRequired ConnectError detail with the given fields."""
+    """Builds a flyteidl2.org.OrgEntitlementRequired ConnectError detail with the given fields."""
 
     def build(**fields):
-        from flyte._internal.controllers.remote._org_limits import _DETAILS, ORG_ENTITLEMENT_REQUIRED_TYPE
+        from flyteidl2.org import limits_pb2
 
-        value = _DETAILS[ORG_ENTITLEMENT_REQUIRED_TYPE](**fields).SerializeToString()
-        return _connect_detail("type.googleapis.com/" + ORG_ENTITLEMENT_REQUIRED_TYPE, value)
+        value = limits_pb2.OrgEntitlementRequired(**fields).SerializeToString()
+        return _connect_detail("type.googleapis.com/" + limits_pb2.OrgEntitlementRequired.DESCRIPTOR.full_name, value)
 
     return build
 

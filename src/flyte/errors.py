@@ -424,6 +424,7 @@ class OrgLimit:
         tier_default: The limit's default for the org's tier; None when the server didn't say or the org's plan has
             no tier defaults. It differs from `ceiling` when the org's limit was raised (or lowered) for it.
         upgrade_url: Where to ask for the limit to be raised; empty when the server didn't say.
+        tier: The tier `tier_default` belongs to, e.g. `Teams` or `Enterprise`; empty when the server didn't say.
     """
 
     limit: str
@@ -432,6 +433,7 @@ class OrgLimit:
     requested: int
     tier_default: int | None = None
     upgrade_url: str = ""
+    tier: str = ""
 
 
 class OrgLimitExceededError(RuntimeUserError):

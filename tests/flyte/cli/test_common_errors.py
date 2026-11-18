@@ -49,7 +49,7 @@ def _invoke_raising(exc: Exception):
         return CliRunner().invoke(failing_command)
 
 
-_URL = "https://www.union.ai/contact"
+_URL = "https://www.union.ai/get-a-quote"
 
 
 def test_org_limit_refusal_prints_the_limit_and_upgrade_path(org_limit_detail):
@@ -89,8 +89,9 @@ def test_sdk_org_errors_print_without_the_kind_and_code_prefix():
         flyte.errors.OrgEntitlementRequiredError("Org limit reached.", entitlement="byok"),
     ):
         result = _invoke_raising(exc)
-        assert "│ Org limit reached." in result.output, result.output
-        assert "user failure" not in result.output
+        output = click.unstyle(result.output)  # rich colors the panel border when CI forces color
+        assert "│ Org limit reached." in output, output
+        assert "user failure" not in output
 
     result = _invoke_raising(flyte.errors.ResourceExhaustedError("slow down"))
     assert "user failure, SlowDownError. slow down" in result.output

@@ -9,7 +9,6 @@ from connectrpc.errors import ConnectError
 import flyte.errors
 from flyte._internal.controllers.remote._org_limits import (
     _DETAILS,
-    ORG_LIMIT_EXCEEDED_TYPE,
     describe_limit,
     org_entitlement_required,
     org_limit_exceeded,
@@ -17,21 +16,47 @@ from flyte._internal.controllers.remote._org_limits import (
     resource_exhausted,
 )
 
-_URL = "https://www.union.ai/contact"
+_URL = "https://www.union.ai/get-a-quote"
 _SERVER_MSG = 'org "acme" would exceed its max_clusters quota (2 current + 1 requested > 2)'
 
 
 def test_org_limit_exceeded_decodes_every_field(org_limit_detail):
-    detail = org_limit_detail(limit="max_clusters", ceiling=4, current=4, requested=1, tier_default=2, upgrade_url=_URL)
+    detail = org_limit_detail(
+        limit="max_clusters", ceiling=4, current=4, requested=1, tier_default=2, upgrade_url=_URL, tier="Teams"
+    )
     err = org_limit_exceeded(ConnectError(Code.FAILED_PRECONDITION, _SERVER_MSG, details=[detail]))
 
     assert err.org_limit == flyte.errors.OrgLimit(
-        limit="max_clusters", ceiling=4, current=4, requested=1, tier_default=2, upgrade_url=_URL
+        limit="max_clusters", ceiling=4, current=4, requested=1, tier_default=2, upgrade_url=_URL, tier="Teams"
     )
     assert str(err) == (
-        "Org limit max_clusters (4) reached: 4 in use, 1 more requested. Its tier default is 2. "
-        f"Contact Union to raise it: {_URL}"
+        "Org limit max_clusters (4) reached: 4 in use, 1 more requested. The Teams tier default is 2. "
+        f"Contact sales to raise it: {_URL}"
     )
+
+
+def test_tier_default_without_a_tier_name(org_limit_detail):
+    detail = org_limit_detail(limit="max_clusters", ceiling=4, current=4, requested=1, tier_default=2)
+    err = org_limit_exceeded(ConnectError(Code.FAILED_PRECONDITION, _SERVER_MSG, details=[detail]))
+
+    assert err.org_limit.tier == ""
+    assert "The org's tier default is 2." in str(err)
+
+
+def test_legacy_detail_alone_is_a_refusal_with_the_servers_message(legacy_org_limit_detail):
+    """A server from before the flyteidl2 details sends only cloudidl.common.OrgLimitExceeded."""
+    err = org_limit_exceeded(ConnectError(Code.FAILED_PRECONDITION, _SERVER_MSG, details=[legacy_org_limit_detail()]))
+
+    assert isinstance(err, flyte.errors.OrgLimitExceededError)
+    assert err.org_limit is None
+    assert str(err) == _SERVER_MSG
+
+
+def test_legacy_detail_alongside_reads_the_public_one(org_limit_detail, legacy_org_limit_detail):
+    detail = org_limit_detail(limit="max_clusters", ceiling=4, current=4, requested=1)
+    error = ConnectError(Code.FAILED_PRECONDITION, _SERVER_MSG, details=[legacy_org_limit_detail(), detail])
+
+    assert org_limit_exceeded(error).org_limit.limit == "max_clusters"
 
 
 def test_tier_default_equal_to_ceiling_is_not_repeated(org_limit_detail):
@@ -40,7 +65,7 @@ def test_tier_default_equal_to_ceiling_is_not_repeated(org_limit_detail):
 
     assert err.org_limit.tier_default == 2
     assert (
-        str(err) == f"Org limit max_clusters (2) reached: 2 in use, 1 more requested. Contact Union to raise it: {_URL}"
+        str(err) == f"Org limit max_clusters (2) reached: 2 in use, 1 more requested. Contact sales to raise it: {_URL}"
     )
 
 
@@ -61,7 +86,7 @@ def test_older_server_without_tier_default_or_url(org_limit_detail):
     err = org_limit_exceeded(ConnectError(Code.FAILED_PRECONDITION, _SERVER_MSG, details=[detail]))
 
     assert err.org_limit.upgrade_url == ""
-    assert str(err) == "Org limit max_clusters (2) reached: 2 in use, 1 more requested. Contact Union to raise it."
+    assert str(err) == "Org limit max_clusters (2) reached: 2 in use, 1 more requested. Contact sales to raise it."
 
 
 def test_unreadable_detail_falls_back_to_the_server_message(org_limit_detail):
@@ -70,18 +95,6 @@ def test_unreadable_detail_falls_back_to_the_server_message(org_limit_detail):
     assert isinstance(err, flyte.errors.OrgLimitExceededError)
     assert err.org_limit is None
     assert str(err) == _SERVER_MSG
-
-
-def test_a_field_the_sdk_does_not_know_is_skipped(org_limit_detail):
-    known = _DETAILS[ORG_LIMIT_EXCEEDED_TYPE](limit="max_clusters", ceiling=2, current=2, requested=1)
-    # Field 99, a varint, as a newer server might add.
-    payload = known.SerializeToString() + bytes([99 << 3 & 0x7F | 0x80, 99 << 3 >> 7, 7])
-    detail = org_limit_detail(limit="x")
-    if hasattr(detail, "value"):
-        detail.value = payload
-    err = org_limit_exceeded(ConnectError(Code.FAILED_PRECONDITION, _SERVER_MSG, details=[detail]))
-
-    assert err.org_limit.limit == "max_clusters"
 
 
 def test_resource_exhausted_with_detail_says_to_wait(org_limit_detail):
@@ -95,7 +108,7 @@ def test_resource_exhausted_with_detail_says_to_wait(org_limit_detail):
     assert err.org_limit.limit == "max_concurrent_runs"
     assert str(err) == (
         "Org limit max_concurrent_runs (1000) reached: 1000 in use, 1 more requested. "
-        f"Wait for running work to finish, or contact Union to raise it: {_URL}"
+        f"Wait for running work to finish, or contact sales to raise it: {_URL}"
     )
 
 
@@ -121,7 +134,7 @@ def test_entitlement_refusal(org_entitlement_detail):
     assert isinstance(err, flyte.errors.RuntimeUserError)
     assert (err.entitlement, err.values, err.upgrade_url) == ("allowed_clouds", ["coreweave", "nebius"], _URL)
     assert (
-        str(err) == f"This org isn't entitled to allowed_clouds (coreweave, nebius). Contact Union to enable it: {_URL}"
+        str(err) == f"This org isn't entitled to allowed_clouds (coreweave, nebius). Contact sales to enable it: {_URL}"
     )
 
 
@@ -129,7 +142,7 @@ def test_bool_entitlement_without_url(org_entitlement_detail):
     detail = org_entitlement_detail(entitlement="private_control_plane_endpoint")
     err = org_entitlement_required(ConnectError(Code.PERMISSION_DENIED, "no", details=[detail]))
 
-    assert str(err) == "This org isn't entitled to private_control_plane_endpoint. Contact Union to enable it."
+    assert str(err) == "This org isn't entitled to private_control_plane_endpoint. Contact sales to enable it."
 
 
 def test_permission_denied_without_detail_is_not_an_entitlement_refusal():
@@ -156,7 +169,7 @@ def test_describe_limit_without_requested():
     limit = flyte.errors.OrgLimit(limit="max_users", ceiling=5, current=5, requested=0)
     assert (
         describe_limit(limit, retry_later=False)
-        == "Org limit max_users (5) reached: 5 in use. Contact Union to raise it."
+        == "Org limit max_users (5) reached: 5 in use. Contact sales to raise it."
     )
 
 
@@ -174,3 +187,8 @@ def test_errors_pickle_with_their_fields(err):
     assert type(back) is type(err)
     assert back.__dict__ == err.__dict__
     assert str(back) == str(err)
+
+
+def test_detail_type_names_are_the_generated_messages():
+    for type_name, cls in _DETAILS.items():
+        assert cls.DESCRIPTOR.full_name == type_name
