@@ -1,5 +1,7 @@
 import asyncio
-from typing import Optional, Union, cast
+import enum
+import types
+from typing import Any, Optional, Union, cast, get_args, get_origin
 
 from flyteidl2.common import identifier_pb2
 from flyteidl2.common import run_pb2 as common_run_pb2
@@ -42,6 +44,36 @@ def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None)
         )
 
 
+def _coerce_to_declared_type(v: Any, python_type: Any) -> Any:
+    """
+    Reshape a trigger default input so it converts under the type recovered from the task's
+    literal type by TypeEngine.guess_python_type.
+
+    The recovered type is only a stand-in for the user's real annotation: an enum comes back as a
+    DynamicEnum whose members are the wire names, so the user's own enum members are not in it.
+    Converting them by name (what goes on the wire for an enum anyway) avoids that. Union
+    conversion is strict about types, so an int for a float is widened as plain conversion would,
+    and a tuple for a list is read as the list it stands for.
+    """
+    if v is None:
+        return v
+    origin = get_origin(python_type)
+    args = get_args(python_type)
+    if isinstance(python_type, enum.EnumMeta):
+        return v.name if isinstance(v, enum.Enum) else v
+    if python_type is float:
+        return float(v) if isinstance(v, int) and not isinstance(v, bool) else v
+    if origin is list and args and isinstance(v, (list, tuple)):
+        return [_coerce_to_declared_type(x, args[0]) for x in v]
+    if origin is dict and len(args) == 2 and isinstance(v, dict):
+        return {k: _coerce_to_declared_type(x, args[1]) for k, x in v.items()}
+    if origin in (Union, types.UnionType):
+        variants = [a for a in args if a is not type(None)]
+        if len(variants) == 1:
+            return _coerce_to_declared_type(v, variants[0])
+    return v
+
+
 async def process_default_inputs(
     default_inputs: dict,
     task_name: str,
@@ -79,8 +111,11 @@ async def process_default_inputs(
             #     would serialize to a bare NONE scalar with no union tag, which cannot be
             #     read back unambiguously (e.g. for `list[str] | None`).
             # In both cases the declared type, recovered from the literal type, is authoritative.
+            value = v
+            # A tuple is the same case as a list: its runtime type would pickle it into an
+            # untagged binary that the task cannot decode as the declared list.
             python_type = type(v)
-            if isinstance(v, (list, dict)) or literal_type.HasField("union_type"):
+            if isinstance(v, (list, tuple, dict)) or literal_type.HasField("union_type"):
                 try:
                     python_type = flyte.types.TypeEngine.guess_python_type(literal_type)
                 except ValueError:
@@ -88,7 +123,9 @@ async def process_default_inputs(
                     # reverse the literal type. Fall back to the runtime type so such an input
                     # keeps converting exactly as it does today instead of failing the deploy.
                     python_type = type(v)
-            literal_coros.append(flyte.types.TypeEngine.to_literal(v, python_type, literal_type))
+                else:
+                    value = _coerce_to_declared_type(v, python_type)
+            literal_coros.append(flyte.types.TypeEngine.to_literal(value, python_type, literal_type))
             keys.append(k)
 
     final_literals: list[literals_pb2.Literal] = cast(

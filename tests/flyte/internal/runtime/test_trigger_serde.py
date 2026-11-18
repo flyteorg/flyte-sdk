@@ -21,7 +21,7 @@ from flyte._internal.runtime.trigger_serde import (
 from flyte.io import File
 from flyte.models import ActionPhase, NativeInterface
 from flyte.notify import Email, Slack, Webhook
-from flyte.types import TypeEngine, TypeTransformerFailedError
+from flyte.types import TypeEngine
 
 DEFAULT_TIMEZONE = "UTC"
 
@@ -40,22 +40,6 @@ class Point:
 class Settings(BaseModel):
     name: str
     retries: int
-
-
-# Known trigger default-input bugs. The xfails below are strict, so a fix turns them into XPASS
-# failures: remove the mark when that happens.
-_ENUM_REBUILT = (
-    "guess_python_type rebuilds the enum from its literal type as a DynamicEnum, so to_literal "
-    "rejects the real member: 'Value Color.RED is not in Enum <enum DynamicEnum>'"
-)
-_OPTIONAL_ENUM_REGRESSION = (
-    "#1754 regression: union inputs now convert with guess_python_type's DynamicEnum, which rejects "
-    "the real member: 'Value Color.RED is not of type typing.Optional[DynamicEnum]'"
-)
-_OPTIONAL_FLOAT_REGRESSION = (
-    "#1754 regression: union inputs now convert with the declared type, and UnionTransformer rejects "
-    "an int for Optional[float]: 'Value 3 is not of type typing.Optional[float]'"
-)
 
 
 class TestToSchedule:
@@ -199,33 +183,28 @@ class TestProcessDefaultInputs:
                 list[Color],
                 [Color.RED, Color.GREEN],
                 id="list-enum",
-                marks=pytest.mark.xfail(strict=True, reason=_ENUM_REBUILT),
             ),
             pytest.param(
                 dict[str, Color],
                 {"a": Color.RED},
                 id="dict-enum",
-                marks=pytest.mark.xfail(strict=True, reason=_ENUM_REBUILT),
             ),
             pytest.param(
                 typing.Optional[Color],
                 Color.RED,
                 id="optional-enum-member",
-                marks=pytest.mark.xfail(strict=True, reason=_OPTIONAL_ENUM_REGRESSION),
             ),
             pytest.param(typing.Optional[Color], None, id="optional-enum-none"),
             pytest.param(
                 typing.Optional[list[Color]],
                 [Color.RED],
                 id="optional-list-enum-value",
-                marks=pytest.mark.xfail(strict=True, reason=_ENUM_REBUILT),
             ),
             pytest.param(typing.Optional[list[Color]], None, id="optional-list-enum-none"),
             pytest.param(
                 typing.Optional[float],
                 3,
                 id="optional-float-given-int",
-                marks=pytest.mark.xfail(strict=True, reason=_OPTIONAL_FLOAT_REGRESSION),
             ),
             pytest.param(typing.Optional[float], 3.5, id="optional-float-given-float"),
             pytest.param(typing.Optional[int], 3, id="optional-int-given-int"),
@@ -253,12 +232,8 @@ class TestProcessDefaultInputs:
         assert decoded["data"] == value
 
     @pytest.mark.asyncio
-    async def test_tuple_for_list_input_deploys_but_fails_to_decode(self):
-        """Pins today's behavior for a tuple given for a `list[int]` input.
-
-        Only list and dict values take the declared type, so a tuple converts with its runtime type
-        and is pickled into an untagged binary. Deploy succeeds; the task pod then fails to decode it.
-        """
+    async def test_tuple_for_list_input_round_trips_as_list(self):
+        """A tuple given for a `list[int]` input converts under the declared type, not as a pickle."""
         python_type = list[int]
         literal_type = TypeEngine.to_literal_type(python_type)
         task_inputs = interface_pb2.VariableMap(
@@ -267,11 +242,10 @@ class TestProcessDefaultInputs:
 
         result = await process_default_inputs({"data": (1, 2)}, "test_task", task_inputs, [])
 
-        assert result[0].value.scalar.HasField("binary")
-        assert result[0].value.scalar.binary.tag == ""
+        assert result[0].value.HasField("collection")
         interface = NativeInterface.from_types({"data": (python_type, inspect.Parameter.empty)}, {})
-        with pytest.raises(TypeTransformerFailedError, match="Unsupported binary format"):
-            await convert_inputs_to_native(Inputs(proto_inputs=common_pb2.Inputs(literals=result)), interface)
+        decoded = await convert_inputs_to_native(Inputs(proto_inputs=common_pb2.Inputs(literals=result)), interface)
+        assert decoded["data"] == [1, 2]
 
     @pytest.mark.asyncio
     async def test_empty_default_inputs(self):
