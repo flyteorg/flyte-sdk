@@ -1,24 +1,61 @@
+import enum
+import inspect
 import typing
+from dataclasses import dataclass
 from datetime import datetime
 
 import pytest
 from flyteidl2.core import interface_pb2, literals_pb2, types_pb2
 from flyteidl2.core.interface_pb2 import VariableEntry
 from flyteidl2.task import common_pb2, task_definition_pb2
+from pydantic import BaseModel
 
 from flyte import Cron, FixedRate, OnArtifact, TaskEnvironment, Trigger, TriggeredArtifact, TriggerTime
-from flyte._internal.runtime.convert import convert_upload_default_inputs
+from flyte._internal.runtime.convert import Inputs, convert_inputs_to_native, convert_upload_default_inputs
 from flyte._internal.runtime.trigger_serde import (
     KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY,
     _to_schedule,
     process_default_inputs,
     to_task_trigger,
 )
-from flyte.models import ActionPhase
+from flyte.io import File
+from flyte.models import ActionPhase, NativeInterface
 from flyte.notify import Email, Slack, Webhook
-from flyte.types import TypeEngine
+from flyte.types import TypeEngine, TypeTransformerFailedError
 
 DEFAULT_TIMEZONE = "UTC"
+
+
+class Color(enum.Enum):
+    RED = "red"
+    GREEN = "green"
+
+
+@dataclass
+class Point:
+    x: int
+    y: str
+
+
+class Settings(BaseModel):
+    name: str
+    retries: int
+
+
+# Known trigger default-input bugs. The xfails below are strict, so a fix turns them into XPASS
+# failures: remove the mark when that happens.
+_ENUM_REBUILT = (
+    "guess_python_type rebuilds the enum from its literal type as a DynamicEnum, so to_literal "
+    "rejects the real member: 'Value Color.RED is not in Enum <enum DynamicEnum>'"
+)
+_OPTIONAL_ENUM_REGRESSION = (
+    "#1754 regression: union inputs now convert with guess_python_type's DynamicEnum, which rejects "
+    "the real member: 'Value Color.RED is not of type typing.Optional[DynamicEnum]'"
+)
+_OPTIONAL_FLOAT_REGRESSION = (
+    "#1754 regression: union inputs now convert with the declared type, and UnionTransformer rejects "
+    "an int for Optional[float]: 'Value 3 is not of type typing.Optional[float]'"
+)
 
 
 class TestToSchedule:
@@ -153,6 +190,88 @@ class TestProcessDefaultInputs:
         assert result[0].value.scalar.HasField("union"), f"{python_type} / {value!r} lost its union wrapper"
         assert result[0].value.scalar.union.type.structure.tag
         assert await TypeEngine.to_python_value(result[0].value, python_type) == value
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "python_type,value",
+        [
+            pytest.param(
+                list[Color],
+                [Color.RED, Color.GREEN],
+                id="list-enum",
+                marks=pytest.mark.xfail(strict=True, reason=_ENUM_REBUILT),
+            ),
+            pytest.param(
+                dict[str, Color],
+                {"a": Color.RED},
+                id="dict-enum",
+                marks=pytest.mark.xfail(strict=True, reason=_ENUM_REBUILT),
+            ),
+            pytest.param(
+                typing.Optional[Color],
+                Color.RED,
+                id="optional-enum-member",
+                marks=pytest.mark.xfail(strict=True, reason=_OPTIONAL_ENUM_REGRESSION),
+            ),
+            pytest.param(typing.Optional[Color], None, id="optional-enum-none"),
+            pytest.param(
+                typing.Optional[list[Color]],
+                [Color.RED],
+                id="optional-list-enum-value",
+                marks=pytest.mark.xfail(strict=True, reason=_ENUM_REBUILT),
+            ),
+            pytest.param(typing.Optional[list[Color]], None, id="optional-list-enum-none"),
+            pytest.param(
+                typing.Optional[float],
+                3,
+                id="optional-float-given-int",
+                marks=pytest.mark.xfail(strict=True, reason=_OPTIONAL_FLOAT_REGRESSION),
+            ),
+            pytest.param(typing.Optional[float], 3.5, id="optional-float-given-float"),
+            pytest.param(typing.Optional[int], 3, id="optional-int-given-int"),
+            pytest.param(Point, Point(x=1, y="a"), id="dataclass"),
+            pytest.param(Settings, Settings(name="n", retries=2), id="pydantic-model"),
+            pytest.param(File, File(path="s3://bucket/key/data.csv"), id="flyte-file-remote-uri"),
+            pytest.param(list[dict[str, int]], [{"a": 1}, {"b": 2}], id="nested-list-dict"),
+        ],
+    )
+    async def test_default_input_round_trips_to_task(self, python_type, value):
+        """A trigger default input must decode, in the task pod, to the value the trigger declared.
+
+        Serializes the input with `process_default_inputs` as `flyte deploy` does, then decodes the
+        resulting literals with `convert_inputs_to_native`, the decoder the task runner uses.
+        """
+        literal_type = TypeEngine.to_literal_type(python_type)
+        task_inputs = interface_pb2.VariableMap(
+            variables=[VariableEntry(key="data", value=interface_pb2.Variable(type=literal_type))]
+        )
+
+        result = await process_default_inputs({"data": value}, "test_task", task_inputs, [])
+
+        interface = NativeInterface.from_types({"data": (python_type, inspect.Parameter.empty)}, {})
+        decoded = await convert_inputs_to_native(Inputs(proto_inputs=common_pb2.Inputs(literals=result)), interface)
+        assert decoded["data"] == value
+
+    @pytest.mark.asyncio
+    async def test_tuple_for_list_input_deploys_but_fails_to_decode(self):
+        """Pins today's behavior for a tuple given for a `list[int]` input.
+
+        Only list and dict values take the declared type, so a tuple converts with its runtime type
+        and is pickled into an untagged binary. Deploy succeeds; the task pod then fails to decode it.
+        """
+        python_type = list[int]
+        literal_type = TypeEngine.to_literal_type(python_type)
+        task_inputs = interface_pb2.VariableMap(
+            variables=[VariableEntry(key="data", value=interface_pb2.Variable(type=literal_type))]
+        )
+
+        result = await process_default_inputs({"data": (1, 2)}, "test_task", task_inputs, [])
+
+        assert result[0].value.scalar.HasField("binary")
+        assert result[0].value.scalar.binary.tag == ""
+        interface = NativeInterface.from_types({"data": (python_type, inspect.Parameter.empty)}, {})
+        with pytest.raises(TypeTransformerFailedError, match="Unsupported binary format"):
+            await convert_inputs_to_native(Inputs(proto_inputs=common_pb2.Inputs(literals=result)), interface)
 
     @pytest.mark.asyncio
     async def test_empty_default_inputs(self):
