@@ -32,3 +32,11 @@ def detail_type_name(detail: Any) -> str:
     if type_name is None:
         type_name = detail.type_url
     return type_name.rsplit("/", 1)[-1]
+
+
+def detail_bytes(detail: Any) -> bytes:
+    """The serialized message of a `ConnectError` detail: an `Any`'s value before 0.11, `message_bytes` since."""
+    data = getattr(detail, "message_bytes", None)
+    if data is None:
+        data = detail.value
+    return bytes(data)
