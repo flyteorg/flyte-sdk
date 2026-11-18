@@ -38,6 +38,11 @@ from ._service_protocol import (
 _LAUNCH_TIMEOUTS_BEFORE_NEW_CONNECTION = 3
 
 
+def _trace_record_unconfirmed(reason: str) -> dict[str, str]:
+    """Log fields that count a trace the server has not confirmed, in the form `flyte._metrics` emits."""
+    return {"metric_type": "counter", "metric_name": "trace_record_unconfirmed", "reason": reason}
+
+
 def _actions_metadata(action: Action) -> dict[str, str]:
     """Build request headers for Actions service calls."""
     run = action.action_id.run
@@ -351,9 +356,14 @@ class Controller:
             try:
                 await asyncio.wait_for(informer.wait_for_action_completion(action.name), timeout=_trace_timeout)
             except asyncio.TimeoutError:
+                # A trace not launched yet has no record on the server: count it, since a task that
+                # exits now loses it.
+                current = await informer.get(action.name)
+                unconfirmed = current is not None and not current.is_started()
                 logger.warning(
                     f"{threading.current_thread().name} Trace completion wait timed out after {_trace_timeout}s "
-                    f"for {action.name}, continuing anyway"
+                    f"for {action.name}, continuing anyway",
+                    extra=_trace_record_unconfirmed("launch_pending") if unconfirmed else None,
                 )
                 await informer.fire_completion_event(action.name)
         else:
