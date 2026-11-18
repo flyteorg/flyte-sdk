@@ -8,8 +8,6 @@ from connectrpc.errors import ConnectError
 
 from flyte._logging import logger
 
-from ..errors import AuthenticationTransientError
-
 RETRYABLE_CODES = frozenset({Code.UNAVAILABLE, Code.INTERNAL})
 
 
@@ -19,6 +17,8 @@ def _is_retryable(e: Exception) -> bool:
     Besides transient RPC codes, this covers AuthenticationTransientError: the token endpoint answered 5xx/429
     while the auth interceptor (which sits inside this one) was refreshing credentials.
     """
+    from ..errors import AuthenticationTransientError
+
     if isinstance(e, ConnectError):
         return e.code in RETRYABLE_CODES
     return isinstance(e, AuthenticationTransientError)
@@ -59,7 +59,7 @@ class RetryUnaryInterceptor:
         for attempt in range(self._max_attempts):
             try:
                 return await call_next(request, ctx)
-            except (ConnectError, AuthenticationTransientError) as e:
+            except Exception as e:
                 if not _is_retryable(e) or attempt == self._max_attempts - 1:
                     raise
                 delay = backoff * (0.5 + random.random())
@@ -90,7 +90,7 @@ class RetryServerStreamInterceptor:
                 async for response in call_next(request, ctx):
                     yield response
                 return  # Stream completed successfully
-            except (ConnectError, AuthenticationTransientError) as e:
+            except Exception as e:
                 if not _is_retryable(e) or attempt == self._max_attempts - 1:
                     raise
                 delay = backoff * (0.5 + random.random())
