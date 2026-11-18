@@ -101,19 +101,50 @@ async def isolate_local_cache(tmp_path):
         await LocalTaskCache.close()
 
 
+def _connect_detail(type_url: str, value: bytes):
+    """A ConnectError detail in the form the installed connectrpc carries."""
+    if hasattr(connectrpc.errors, "ErrorDetail"):
+        # connectrpc 0.11 carries details as protobuf-py messages.
+        from protobuf.wkt import Any as ProtobufPyAny
+
+        return ProtobufPyAny(type_url=type_url, value=value)
+    return Any(type_url=type_url, value=value)
+
+
 @pytest.fixture
 def org_limit_detail():
-    """Builds a cloudidl.common.OrgLimitExceeded ConnectError detail in the form the installed connectrpc carries."""
+    """Builds a flyteidl2.org.OrgLimitExceeded ConnectError detail. With no fields its payload is empty, as from a
+    server whose detail the SDK can't read; fields (limit, ceiling, ...) are encoded as the server would."""
 
-    def build(type_url_prefix: str = "type.googleapis.com/"):
-        # The open-source SDK has no cloudidl protos; only the type URL identifies the detail.
-        type_url = type_url_prefix + "cloudidl.common.OrgLimitExceeded"
-        if hasattr(connectrpc.errors, "ErrorDetail"):
-            # connectrpc 0.11 carries details as protobuf-py messages.
-            from protobuf.wkt import Any as ProtobufPyAny
+    def build(type_url_prefix: str = "type.googleapis.com/", **fields):
+        from flyteidl2.org import limits_pb2
 
-            return ProtobufPyAny(type_url=type_url, value=b"")
-        return Any(type_url=type_url, value=b"")
+        value = limits_pb2.OrgLimitExceeded(**fields).SerializeToString() if fields else b""
+        return _connect_detail(type_url_prefix + limits_pb2.OrgLimitExceeded.DESCRIPTOR.full_name, value)
+
+    return build
+
+
+@pytest.fixture
+def legacy_org_limit_detail():
+    """Builds the cloudidl.common.OrgLimitExceeded detail a server from before the flyteidl2 details sends alone. The
+    SDK recognises it by type name only, so its payload is empty."""
+
+    def build():
+        return _connect_detail("type.googleapis.com/cloudidl.common.OrgLimitExceeded", b"")
+
+    return build
+
+
+@pytest.fixture
+def org_entitlement_detail():
+    """Builds a flyteidl2.org.OrgEntitlementRequired ConnectError detail with the given fields."""
+
+    def build(**fields):
+        from flyteidl2.org import limits_pb2
+
+        value = limits_pb2.OrgEntitlementRequired(**fields).SerializeToString()
+        return _connect_detail("type.googleapis.com/" + limits_pb2.OrgEntitlementRequired.DESCRIPTOR.full_name, value)
 
     return build
 

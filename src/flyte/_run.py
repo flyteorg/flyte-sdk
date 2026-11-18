@@ -855,15 +855,22 @@ class _Runner:
                 resp = await get_client().run_service.create_run(create_req)
             return Run(pb2=resp.run, _preserve_original_types=self._preserve_original_types)
         except ConnectError as e:
-            from flyte._internal.controllers.remote._org_limits import org_limit_exceeded
+            from flyte._internal.controllers.remote._org_limits import (
+                org_entitlement_required,
+                org_limit_exceeded,
+                resource_exhausted,
+            )
 
             if (org_limit := org_limit_exceeded(e)) is not None:
                 # The org is at a hard limit; no retry can clear it.
                 raise org_limit from e
-            if e.code == Code.RESOURCE_EXHAUSTED:
+            if (exhausted := resource_exhausted(e, prefix="Failed to create run: ")) is not None:
                 # The org is at a quota such as max_queue_depth or max_concurrent_runs ("retry later"): the
-                # user waits for runs to drain. Not an SDK failure; the server's message names the limit.
-                raise flyte.errors.ResourceExhaustedError(f"Failed to create run: {e.message}") from e
+                # user waits for runs to drain. Not an SDK failure; the message names the limit.
+                raise exhausted from e
+            if (entitlement := org_entitlement_required(e)) is not None:
+                # The org's plan doesn't include something the run needs.
+                raise entitlement from e
             if e.code == Code.UNAVAILABLE:
                 raise flyte.errors.RuntimeSystemError(
                     "SystemUnavailableError",

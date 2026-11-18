@@ -495,3 +495,23 @@ class TestClientSetSessionConfig:
         assert cfg.endpoint == "https://example.com"
         assert cfg.interceptors == ("a",)
         assert cfg.http_client == "fake"
+
+
+@pytest.mark.asyncio
+@patch("flyte.remote._client.auth._session.create_auth_interceptors", return_value=["auth1"])
+@patch("flyte.remote._client.auth._session.create_proxy_auth_interceptors", return_value=[])
+@patch("flyte.remote._client.auth._session.get_async_session")
+async def test_retry_interceptors_wrap_auth_interceptors(mock_get_session, mock_proxy, mock_auth):
+    """Retry must be outside auth so a transient failure while refreshing credentials is retried."""
+    from flyte.remote._client.auth._interceptors.retry import RetryServerStreamInterceptor, RetryUnaryInterceptor
+
+    mock_get_session.return_value = MagicMock()
+    result = await create_session_config("example.com:443", insecure=False, rpc_retries=3)
+    interceptors = list(result.interceptors)
+
+    auth_idx = interceptors.index("auth1")
+    retry_idx = [
+        i for i, x in enumerate(interceptors) if isinstance(x, (RetryUnaryInterceptor, RetryServerStreamInterceptor))
+    ]
+    assert len(retry_idx) == 2
+    assert all(i < auth_idx for i in retry_idx)
