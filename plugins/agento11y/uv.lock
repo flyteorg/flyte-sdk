@@ -155,7 +155,7 @@ resolution-markers = [
 ]
 dependencies = [
     { name = "agento11y", version = "0.13.0", source = { registry = "https://pypi.org/simple" } },
-    { name = "pydantic-ai", version = "1.106.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "pydantic-ai" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/2b/d5/fe4602ea0e1e085185519e324cfdb1d03c401cffb96011809595345f25d7/agento11y_pydantic_ai-0.13.0.tar.gz", hash = "sha256:db689917645fec856a423ff5759e46ea180ecbed16d08f1127a553529836d99c", size = 12956, upload-time = "2026-08-05T16:00:38.387Z" }
 wheels = [
@@ -171,7 +171,7 @@ resolution-markers = [
 ]
 dependencies = [
     { name = "agento11y", version = "0.23.0", source = { registry = "https://pypi.org/simple" } },
-    { name = "pydantic-ai", version = "2.31.1", source = { registry = "https://pypi.org/simple" } },
+    { name = "pydantic-ai" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b4/1f/05d7f2636aa096795faca15b6680dd1735a10d45e0a152ae48e1a3c9b1f2/agento11y_pydantic_ai-0.23.0.tar.gz", hash = "sha256:7e9f667af048030ecd22046903f1135eae964c775b8b58e0185bba1632fd486e", size = 12978, upload-time = "2026-11-16T18:49:34.22Z" }
 wheels = [
@@ -706,11 +706,11 @@ wheels = [
 
 [[package]]
 name = "certifi"
-version = "2026.10.19"
+version = "2026.10.23"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a6/bd/1436c50cc46699de0230fbaacc1d1de7bfec413176099949e9d5112e88f2/certifi-2026.10.19.tar.gz", hash = "sha256:035c1e85572b141bf1c3a3eff0e33a8eb74917522f2559075ff8d2fea780a1ae", size = 137598, upload-time = "2026-10-20T02:24:16.604Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fd/11/b524cbd9bbdaca58608e4cf4053fd463417549e1959fa8d3aa18319f9555/certifi-2026.10.23.tar.gz", hash = "sha256:a9895e6e2758b371e0545e321a3a8fd1fcfd9829ada8824a936dfb16aaaf36cd", size = 136225, upload-time = "2026-10-23T11:36:16.478Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c4/51/29046e48f693c54e5b7412216d447a1d8362c9653148d98c02cdf65fa733/certifi-2026.10.19-py3-none-any.whl", hash = "sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b", size = 136464, upload-time = "2026-10-20T02:24:15.072Z" },
+    { url = "https://files.pythonhosted.org/packages/32/d1/a3652fe2c19134d0d15922177821d863cbd7e842d53a21bbe7e8e3a1b5ac/certifi-2026.10.23-py3-none-any.whl", hash = "sha256:e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1", size = 135082, upload-time = "2026-10-23T11:36:14.763Z" },
 ]
 
 [[package]]
@@ -1057,6 +1057,8 @@ dependencies = [
     { name = "docstring-parser" },
     { name = "rich" },
     { name = "rich-rst" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/be/05/689617b7e86503417c172f577d791524cb13b9697303d5d44409a971ba10/cyclopts-4.22.5.tar.gz", hash = "sha256:94044506317462cad90fb01a917dadce1f48a0915ba3605dc8d178dea1229e24", size = 195144, upload-time = "2026-08-04T13:53:00.303Z" }
 wheels = [
@@ -1274,7 +1276,8 @@ server = [
     { name = "jsonschema-path" },
     { name = "mcp" },
     { name = "openapi-pydantic" },
-    { name = "opentelemetry-api", version = "1.45.2", source = { registry = "https://pypi.org/simple" } },
+    { name = "opentelemetry-api", version = "1.39.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "opentelemetry-api", version = "1.45.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "packaging" },
     { name = "py-key-value-aio", extra = ["filetree", "keyring", "memory"] },
     { name = "pyperclip" },
@@ -1289,8 +1292,27 @@ server = [
 
 [[package]]
 name = "filelock"
+version = "4.1.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.11'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4c/58/6fd434bec86eff7c38a3168454cb132b762b2bea9b3ac094101a2f7bc32a/filelock-4.1.0.tar.gz", hash = "sha256:ad7f724afef953e731b1cc39bcd3a09166d72ed7fcdf29e6e88b1c3235c6715d", size = 561277, upload-time = "2026-10-09T19:57:20.34Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ee/86/032133892a5de43b5a98200b01aadcad68cc255e274a762f08b8a76d2912/filelock-4.1.0-py3-none-any.whl", hash = "sha256:2ce9818e3e2d8f284c1a964414447ef148d42a5fd5e2a477a7118e574b293ec1", size = 133003, upload-time = "2026-10-09T19:57:18.716Z" },
+]
+
+[[package]]
+name = "filelock"
 version = "4.2.12"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.15'",
+    "python_full_version == '3.14.*'",
+    "python_full_version == '3.13.*'",
+    "python_full_version == '3.12.*'",
+    "python_full_version == '3.11.*'",
+]
 sdist = { url = "https://files.pythonhosted.org/packages/52/aa/8ccff8da9a27e089727fcffd3c5b61708383217e47eb1e1b8af37b1dd166/filelock-4.2.12.tar.gz", hash = "sha256:7e7da24d3ac39268b0f156e56870001de44886318f092f9d851e692f7114d6dd", size = 680837, upload-time = "2026-11-18T01:20:03.951Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8a/c9/eb6b6528c7edb958d4c24ac47a8b94113d9de36e4cfc6eecd599b1a4f349/filelock-4.2.12-py3-none-any.whl", hash = "sha256:21decfec02f116ed4c954433cdb31f28c3b346b784543177b6d7059da2702ee9", size = 222442, upload-time = "2026-11-18T01:20:02.439Z" },
@@ -1658,16 +1680,16 @@ wheels = [
 
 [[package]]
 name = "genai-prices"
-version = "0.1.1"
+version = "0.0.73"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx2", version = "2.14.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "httpx2", version = "2.16.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/83/9b/85e646305a90a2da18f1edf055498668391e71f9849d3e1754d66559a311/genai_prices-0.1.1.tar.gz", hash = "sha256:54a2237691e0aaefb057d10a0c3c20160accc9fc09521c64c03fcdb7a4a69f68", size = 91182, upload-time = "2026-08-01T09:02:49.552Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/84/0b/4b430d9c6ff0c76e42b91fc4cedff84dfbefa1a35b885fad45a22d29303f/genai_prices-0.0.73.tar.gz", hash = "sha256:ddad5b23dadd7aac8a58ab5af7506addb062114037e96427324703e50bc35077", size = 88406, upload-time = "2026-07-29T12:48:58.215Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6e/5e/cfe36dff790ffad6aeff8a069b6f36743987ac17053579035ee0a67635dd/genai_prices-0.1.1-py3-none-any.whl", hash = "sha256:de2e3d8ea3ca1d0d292025995c598da447a74e94f22cd3342df46941aeb5416b", size = 95300, upload-time = "2026-08-01T09:02:48.308Z" },
+    { url = "https://files.pythonhosted.org/packages/a8/85/527a729ecd58b7169430e47febdab2e3f91193d0e3f5a56d721c04525709/genai_prices-0.0.73-py3-none-any.whl", hash = "sha256:64dfbbf55df91db6b74ff2b24ac752b8154952e0aed4e62868d6cd42710bf742", size = 92507, upload-time = "2026-07-29T12:48:57.194Z" },
 ]
 
 [[package]]
@@ -2166,7 +2188,8 @@ version = "1.18.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
-    { name = "filelock" },
+    { name = "filelock", version = "4.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "filelock", version = "4.2.12", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "fsspec" },
     { name = "hf-xet", marker = "platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'" },
     { name = "httpx" },
@@ -2748,8 +2771,37 @@ wheels = [
 
 [[package]]
 name = "mistralai"
+version = "3.2.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.11'",
+]
+dependencies = [
+    { name = "eval-type-backport" },
+    { name = "httpx2", version = "2.14.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "jsonpath-python" },
+    { name = "opentelemetry-api", version = "1.39.1", source = { registry = "https://pypi.org/simple" } },
+    { name = "opentelemetry-semantic-conventions", version = "0.60b1", source = { registry = "https://pypi.org/simple" } },
+    { name = "pydantic" },
+    { name = "python-dateutil" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5a/dc/7756ce9cf855ec0db089770a176ed652cded4c5ecd61931fb0b9331e655f/mistralai-3.2.0.tar.gz", hash = "sha256:b3f2139bde538fe8ed4a19e2adb624fd46dfd175b609231c0836bba21d738730", size = 643870, upload-time = "2026-10-09T09:41:12.157Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ff/d7/c499fb9a610f4abe2f8e7ad7e18f7f0254ddec49c7971116fe1e110da37b/mistralai-3.2.0-py3-none-any.whl", hash = "sha256:66c1cd32e886b2bc55f67d61cdba6d8c2c38e68720a6b6d69bb3fe7b10034779", size = 1532235, upload-time = "2026-10-09T09:41:10.005Z" },
+]
+
+[[package]]
+name = "mistralai"
 version = "3.8.0"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.15'",
+    "python_full_version == '3.14.*'",
+    "python_full_version == '3.13.*'",
+    "python_full_version == '3.12.*'",
+    "python_full_version == '3.11.*'",
+]
 dependencies = [
     { name = "eval-type-backport" },
     { name = "httpx2", version = "2.16.2", source = { registry = "https://pypi.org/simple" } },
@@ -4257,61 +4309,34 @@ email = [
 
 [[package]]
 name = "pydantic-ai"
-version = "1.106.0"
+version = "1.107.7"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.15'",
-    "python_full_version == '3.14.*'",
-    "python_full_version == '3.13.*'",
-    "python_full_version == '3.12.*'",
-    "python_full_version == '3.11.*'",
-]
 dependencies = [
-    { name = "pydantic-ai-slim", version = "1.106.0", source = { registry = "https://pypi.org/simple" }, extra = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "spec", "temporal", "ui", "vertexai", "xai"] },
+    { name = "pydantic-ai-slim", extra = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "spec", "temporal", "ui", "vertexai", "xai"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/45/f1/6a0db6d336af199b436caa48d01ff63eeb6dbab14d5c50035ab5393a42f2/pydantic_ai-1.106.0.tar.gz", hash = "sha256:fb2b4bba143f924f2272926428ed173e456b00e0e5b3b125d7fd757f11b21fee", size = 18368, upload-time = "2026-06-05T01:29:06.762Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/dc/84/1c219ab89d42a80c77d4437704bf15a8372ee0f251924d149a7baad33c22/pydantic_ai-1.107.7.tar.gz", hash = "sha256:aa5d170bfd772d0bb31609ac8b1d9b7588bffaf6643c4a7598475312ccd75c95", size = 18747, upload-time = "2026-09-30T01:14:17.459Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/36/ca/bc39ecda2f1aa6544ec8559cfc50405462b241428ad06f77f44c776cdd39/pydantic_ai-1.106.0-py3-none-any.whl", hash = "sha256:c8c93979acab85b087dc3499e40249d5de4333f2212eb792c52a6c05c2448d69", size = 7589, upload-time = "2026-06-05T01:28:56.426Z" },
-]
-
-[[package]]
-name = "pydantic-ai"
-version = "2.31.1"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version < '3.11'",
-]
-dependencies = [
-    { name = "pydantic-ai-slim", version = "2.31.1", source = { registry = "https://pypi.org/simple" }, extra = ["anthropic", "cli", "evals", "google", "logfire", "mcp", "openai", "retries", "web"] },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/10/5c/cd8bc734394b671de56b4b5ef51b8b0c19a40f7e10c7597fea3b2952efb0/pydantic_ai-2.31.1.tar.gz", hash = "sha256:2d2ba6f71b2665e12cf59113f4a2dab684def3ff72a5ff12069dab9b13fb7c4d", size = 23062, upload-time = "2026-08-18T03:39:50.985Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/1f/45/39ea151b0c611450ffab5922e8626deecf0d27af200d1834f2ca0760c01f/pydantic_ai-2.31.1-py3-none-any.whl", hash = "sha256:ff3428ee3837784f9602091acb92900b39b3499a1f19d89829cae17a331e5805", size = 9340, upload-time = "2026-08-18T03:39:43.416Z" },
+    { url = "https://files.pythonhosted.org/packages/db/90/5cd0849fc5a2f2e72051da99cf8be126cf4da25e225b459fd2d48e708d51/pydantic_ai-1.107.7-py3-none-any.whl", hash = "sha256:ddd9b72e4e3486fc1e0cb9fe84efef46f3a5453a4861f9d07b95f401fd7a7c1a", size = 7608, upload-time = "2026-09-30T01:14:08.826Z" },
 ]
 
 [[package]]
 name = "pydantic-ai-slim"
-version = "1.106.0"
+version = "1.107.7"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.15'",
-    "python_full_version == '3.14.*'",
-    "python_full_version == '3.13.*'",
-    "python_full_version == '3.12.*'",
-    "python_full_version == '3.11.*'",
-]
 dependencies = [
+    { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
     { name = "genai-prices" },
     { name = "griffelib" },
     { name = "httpx" },
-    { name = "opentelemetry-api", version = "1.45.2", source = { registry = "https://pypi.org/simple" } },
+    { name = "opentelemetry-api", version = "1.39.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "opentelemetry-api", version = "1.45.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pydantic" },
-    { name = "pydantic-graph", version = "1.106.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "pydantic-graph" },
     { name = "typing-inspection" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2b/45/2afc9100a7c370d8ac37bdfccfb54f46fc99da3bdce63f07c32c37807ebc/pydantic_ai_slim-1.106.0.tar.gz", hash = "sha256:e265598c8ee0e903ebb02d0494bb232be4cc8aa463ba1a55aa743cf34135dacf", size = 773504, upload-time = "2026-06-05T01:29:09.129Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/91/fd/8e5a8f207d1d397eaf26d68fe16d7916c4cfadc7be0d8e9825949c8fa19c/pydantic_ai_slim-1.107.7.tar.gz", hash = "sha256:92aa6087e190017348f9b6354d30f0e67998992c0273e778930005bc31e04794", size = 800463, upload-time = "2026-09-30T01:14:19.355Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/72/d9/a2785c576e3519a72a5bbc0e12027c542b265ef6eea1aa72b9c440ac2531/pydantic_ai_slim-1.106.0-py3-none-any.whl", hash = "sha256:0dd7a99ea3fa89b490098406c2240ba7d75c327eea094c3fd057dd7aa9f3d163", size = 957617, upload-time = "2026-06-05T01:28:59.979Z" },
+    { url = "https://files.pythonhosted.org/packages/28/6a/bd17311a6c3cb8c241de6abf43ef2ac0b4209ad46e24ee54efda44c2812c/pydantic_ai_slim-1.107.7-py3-none-any.whl", hash = "sha256:ecc02b80dcd9a4e7182e9389d21d6e559bcc324f6793b3f7171a52fb883edb5b", size = 984364, upload-time = "2026-09-30T01:14:11.694Z" },
 ]
 
 [package.optional-dependencies]
@@ -4336,13 +4361,14 @@ cohere = [
     { name = "cohere", marker = "sys_platform != 'emscripten'" },
 ]
 evals = [
-    { name = "pydantic-evals", version = "1.106.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "pydantic-evals" },
 ]
 fastmcp = [
     { name = "fastmcp" },
 ]
 google = [
-    { name = "google-genai", version = "2.34.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "google-genai", version = "2.17.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "google-genai", version = "2.34.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 groq = [
     { name = "groq" },
@@ -4352,13 +4378,15 @@ huggingface = [
     { name = "huggingface-hub" },
 ]
 logfire = [
-    { name = "logfire", version = "5.6.0", source = { registry = "https://pypi.org/simple" }, extra = ["httpx"] },
+    { name = "logfire", version = "4.40.0", source = { registry = "https://pypi.org/simple" }, extra = ["httpx"], marker = "python_full_version < '3.11'" },
+    { name = "logfire", version = "5.6.0", source = { registry = "https://pypi.org/simple" }, extra = ["httpx"], marker = "python_full_version >= '3.11'" },
 ]
 mcp = [
     { name = "fastmcp-slim", extra = ["client"] },
 ]
 mistral = [
-    { name = "mistralai" },
+    { name = "mistralai", version = "3.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "mistralai", version = "3.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 openai = [
     { name = "openai" },
@@ -4383,65 +4411,6 @@ vertexai = [
 ]
 xai = [
     { name = "xai-sdk" },
-]
-
-[[package]]
-name = "pydantic-ai-slim"
-version = "2.31.1"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version < '3.11'",
-]
-dependencies = [
-    { name = "anyio" },
-    { name = "exceptiongroup" },
-    { name = "genai-prices" },
-    { name = "griffelib" },
-    { name = "httpx" },
-    { name = "opentelemetry-api", version = "1.39.1", source = { registry = "https://pypi.org/simple" } },
-    { name = "pydantic" },
-    { name = "pydantic-graph", version = "2.31.1", source = { registry = "https://pypi.org/simple" } },
-    { name = "typing-inspection" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/28/9d/a100fed1873151d930c45ed4e394647ba4d0bad5794d24d384b20dad3bad/pydantic_ai_slim-2.31.1.tar.gz", hash = "sha256:f04611e65e9a619b077732651240753cfb058bd844bd3c4e1eea549a48d38376", size = 1214403, upload-time = "2026-08-18T03:39:52.762Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e4/76/90841be18ff357a39c27d5bee5246af6bb71f13399b55ab318c4c32cc4c8/pydantic_ai_slim-2.31.1-py3-none-any.whl", hash = "sha256:4647d801c5febbd150203d130ddff6db2c481675626b648653e832f419609702", size = 1432432, upload-time = "2026-08-18T03:39:45.947Z" },
-]
-
-[package.optional-dependencies]
-anthropic = [
-    { name = "anthropic" },
-]
-cli = [
-    { name = "argcomplete" },
-    { name = "prompt-toolkit" },
-    { name = "pyperclip" },
-    { name = "pyyaml" },
-    { name = "rich" },
-]
-evals = [
-    { name = "pydantic-evals", version = "2.31.1", source = { registry = "https://pypi.org/simple" } },
-]
-google = [
-    { name = "google-genai", version = "2.17.0", source = { registry = "https://pypi.org/simple" } },
-]
-logfire = [
-    { name = "logfire", version = "4.40.0", source = { registry = "https://pypi.org/simple" }, extra = ["httpx"] },
-]
-mcp = [
-    { name = "fastmcp-slim", extra = ["client"] },
-]
-openai = [
-    { name = "openai" },
-    { name = "tiktoken" },
-]
-retries = [
-    { name = "tenacity" },
-]
-web = [
-    { name = "httpx" },
-    { name = "starlette" },
-    { name = "uvicorn" },
 ]
 
 [[package]]
@@ -4562,87 +4531,34 @@ wheels = [
 
 [[package]]
 name = "pydantic-evals"
-version = "1.106.0"
+version = "1.107.7"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.15'",
-    "python_full_version == '3.14.*'",
-    "python_full_version == '3.13.*'",
-    "python_full_version == '3.12.*'",
-    "python_full_version == '3.11.*'",
-]
 dependencies = [
     { name = "anyio" },
     { name = "logfire-api" },
     { name = "pydantic" },
-    { name = "pydantic-ai-slim", version = "1.106.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "pydantic-ai-slim" },
     { name = "pyyaml" },
     { name = "rich" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a4/d0/103e11d2c652980817ddcd874953437cf68d269e6893c9c4faa0b14f3568/pydantic_evals-1.106.0.tar.gz", hash = "sha256:ec870c2e93e2a34aea83468a7d7c21cba3e9dacf62f145eef2229d9fd71b2cac", size = 78539, upload-time = "2026-06-05T01:29:10.538Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/1b/86b66789a04ddd382647fa0383c511214f504f652872b8b744f7b5a701a4/pydantic_evals-1.107.7.tar.gz", hash = "sha256:c42e39fec380f6126604021fa7b7da3d9b20a855746d4f17e6922d19458f35f9", size = 78541, upload-time = "2026-09-30T01:14:21.15Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/33/42/1319fdda0a120de24a544c9a76c2172005a3b53ac8e986ce149507694421/pydantic_evals-1.106.0-py3-none-any.whl", hash = "sha256:7994f8bebfac5e482fe62e5a5434b2e5f94118ca8bd766628635b84835118a78", size = 93528, upload-time = "2026-06-05T01:29:02.407Z" },
-]
-
-[[package]]
-name = "pydantic-evals"
-version = "2.31.1"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version < '3.11'",
-]
-dependencies = [
-    { name = "anyio" },
-    { name = "logfire-api" },
-    { name = "pydantic" },
-    { name = "pydantic-ai-slim", version = "2.31.1", source = { registry = "https://pypi.org/simple" } },
-    { name = "pyyaml" },
-    { name = "rich" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/0f/1e/785ebd3a275680f8c080994c47a4c28a8dd852c13e744499b52ca139a68c/pydantic_evals-2.31.1.tar.gz", hash = "sha256:38ade29acd3e204ce1c74d1490f2435bbe9ddfb415b685db563f2572345022a0", size = 86722, upload-time = "2026-08-18T03:39:53.867Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/29/68/deb3326ebf8700674ddda1f921f4492841a9b84abd5aab0024a1ff9fa271/pydantic_evals-2.31.1-py3-none-any.whl", hash = "sha256:0dcf1c1ea3bd4838bd2fe9f61c56b24baff5bb0e954045274ea6c965591839d2", size = 101914, upload-time = "2026-08-18T03:39:47.725Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/fc/3508eb8a09994edae90aa43341c989aacaf69da0269fca4e1582dc037cf9/pydantic_evals-1.107.7-py3-none-any.whl", hash = "sha256:818623cf712cb4fdc1b9e132ff238a8342c58bd158de4b4f2ec1d6b6c9dee1e5", size = 93586, upload-time = "2026-09-30T01:14:13.559Z" },
 ]
 
 [[package]]
 name = "pydantic-graph"
-version = "1.106.0"
+version = "1.107.7"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.15'",
-    "python_full_version == '3.14.*'",
-    "python_full_version == '3.13.*'",
-    "python_full_version == '3.12.*'",
-    "python_full_version == '3.11.*'",
-]
 dependencies = [
     { name = "httpx" },
     { name = "logfire-api" },
     { name = "pydantic" },
     { name = "typing-inspection" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/42/9b/dd6826cf21eedd96a7482302be51ba6087095acbe828362135de2a505092/pydantic_graph-1.106.0.tar.gz", hash = "sha256:55afa33df4f699ed5c1185f81b6a06e2161958f1aa0c20742b2dae5745e84cce", size = 62567, upload-time = "2026-06-05T01:29:11.833Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/87/d7/9ec3ab42158e5317d031c915ff06450cb58103637d8c1082f6afda43c501/pydantic_graph-1.107.7.tar.gz", hash = "sha256:f58b7dfa3bf60eb7d68946e64dff2ccbb8e8c67458e957efd7d14bc9338c9400", size = 62567, upload-time = "2026-09-30T01:14:22.16Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9b/e9/0058f0b98f5992e715a0a50128f6c3cc7946cc242d471f6e850efdf03f0c/pydantic_graph-1.106.0-py3-none-any.whl", hash = "sha256:e6bb61aef0fdb49185a81142d311f94fc3315329345471d12cab85ab5845221f", size = 80099, upload-time = "2026-06-05T01:29:04.219Z" },
-]
-
-[[package]]
-name = "pydantic-graph"
-version = "2.31.1"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version < '3.11'",
-]
-dependencies = [
-    { name = "anyio" },
-    { name = "httpx" },
-    { name = "logfire-api" },
-    { name = "pydantic" },
-    { name = "typing-inspection" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/2e/40/da6b9b7ee8c77b5c5e910ecc49a7d4ed93422a9bddb1726ed876b6abbeea/pydantic_graph-2.31.1.tar.gz", hash = "sha256:ac5f34e7bbf518a18a9c22f1e33418c3343542a8ea269ee8ee58e637e3f4fd56", size = 45179, upload-time = "2026-08-18T03:39:54.732Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c6/40/ca98101077f17c1773c1aad617d03f6a0666936a8c6aeb4aac4c3e61eb54/pydantic_graph-2.31.1-py3-none-any.whl", hash = "sha256:7a5a9a8143d52f509a917263eeb49b4466eda6caf5131d1e71143fc6e9710157", size = 52662, upload-time = "2026-08-18T03:39:49.133Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/bb/b7a252e6205d9321ac1ce11fa251d8a25fe27cd23e780afd899036047b8f/pydantic_graph-1.107.7-py3-none-any.whl", hash = "sha256:0a7b964d6895f80b51ebab5e77f59b500d39ca7b17095e2233861e6dfd338ec6", size = 80106, upload-time = "2026-09-30T01:14:15.065Z" },
 ]
 
 [[package]]
@@ -5489,6 +5405,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "nexus-rpc" },
     { name = "protobuf" },
+    { name = "python-dateutil", marker = "python_full_version < '3.11'" },
     { name = "types-protobuf" },
     { name = "typing-extensions" },
 ]
@@ -6189,7 +6106,8 @@ dependencies = [
     { name = "aiohttp" },
     { name = "googleapis-common-protos" },
     { name = "grpcio" },
-    { name = "opentelemetry-sdk", version = "1.45.2", source = { registry = "https://pypi.org/simple" } },
+    { name = "opentelemetry-sdk", version = "1.39.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "opentelemetry-sdk", version = "1.45.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "packaging" },
     { name = "protobuf" },
     { name = "pydantic" },
