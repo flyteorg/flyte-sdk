@@ -164,7 +164,6 @@ h11
 httpcore
 httpx
 idna
-importlib_metadata
 mashumaro
 mashumaro.codecs
 mashumaro.config
@@ -186,4 +185,3 @@ rich
 six
 typing_extensions
 typing_inspection
-zipp
