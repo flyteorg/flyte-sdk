@@ -4,6 +4,7 @@ import asyncio
 import os
 import sys
 import threading
+import time
 from asyncio import Event
 from typing import Awaitable, Coroutine, Optional, cast
 
@@ -353,16 +354,19 @@ class Controller:
         # run for hours, so they wait without a timeout.
         if action.type == "trace":
             _trace_timeout = float(os.getenv("_F_TRACE_COMPLETION_TIMEOUT", "60"))
+            # An unlaunched trace is waited for as long as the launch's own retries can take. Retries on
+            # ResourceExhausted have no cap of their own, so the wait needs one.
+            _launch_deadline = time.monotonic() + self._max_retries * self._max_backoff_on_err
             while True:
                 try:
                     await asyncio.wait_for(informer.wait_for_action_completion(action.name), timeout=_trace_timeout)
                     break
                 except asyncio.TimeoutError:
                     current = await informer.get(action.name)
-                    if current is not None and not current.is_started():
+                    unlaunched = current is not None and not current.is_started()
+                    if unlaunched and time.monotonic() < _launch_deadline:
                         # Not launched yet, so the server has no record and a task that exits now loses
-                        # it. The launch is still being retried: count it and keep waiting. The launch
-                        # completes the action itself once its retries run out.
+                        # it. The launch is still being retried: count it and keep waiting.
                         logger.warning(
                             f"{threading.current_thread().name} Trace {action.name} not launched after "
                             f"{_trace_timeout}s, still retrying",
@@ -371,7 +375,8 @@ class Controller:
                         continue
                     logger.warning(
                         f"{threading.current_thread().name} Trace completion wait timed out after {_trace_timeout}s "
-                        f"for {action.name}, continuing anyway"
+                        f"for {action.name}, continuing anyway",
+                        extra=_trace_record_unconfirmed("launch_pending") if unlaunched else None,
                     )
                     await informer.fire_completion_event(action.name)
                     break
