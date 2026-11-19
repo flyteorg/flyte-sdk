@@ -1505,8 +1505,9 @@ class NeverEchoesService(DummyActionsService):
         await asyncio.Event().wait()
 
 
-async def _trace_timeout_warnings(refusals: int) -> list:
-    """Submits a trace that times out waiting for completion; returns the `extra` of each timeout warning."""
+async def _trace_timeout_warnings(refusals: int) -> tuple[list, int]:
+    """Submits a trace whose watch never echoes it. Returns the `extra` of each trace warning, in order,
+    and how many times the launch was attempted by the time the wait returned."""
     from unittest.mock import patch
 
     from flyte._internal.controllers.remote import _core
@@ -1524,29 +1525,40 @@ async def _trace_timeout_warnings(refusals: int) -> list:
         inputs_uri="input_uri",
         run_output_base="run-base",
     )
-    c = Controller(client_coro=create_service(), workers=2, max_system_retries=100, min_backoff_on_err_sec=0.5)
+    c = Controller(client_coro=create_service(), workers=2, max_system_retries=10, min_backoff_on_err_sec=0.2)
+    attempts = []
 
     async def _run():
         await c.submit_action(action)
+        attempts.append(service.attempts)
         await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
         await c.stop()
 
     with patch.object(_core.logger, "warning", wraps=_core.logger.warning) as warning:
         await run_coros(_run(), c.watch_for_errors())
-    return [call.kwargs.get("extra") for call in warning.call_args_list if "continuing anyway" in call.args[0]]
+    extras = [call.kwargs.get("extra") for call in warning.call_args_list if "Trace " in call.args[0]]
+    return extras, attempts[0]
 
 
 @pytest.mark.asyncio
-async def test_a_trace_that_times_out_before_its_launch_is_counted(monkeypatch):
-    """The task continues as before; the timeout warning now carries a metric, since the server has no record."""
+async def test_a_trace_waits_for_its_launch_and_counts_the_wait(monkeypatch):
+    """Before: a trace whose launch was still retrying at the completion timeout was taken as recorded, so a
+    task that exited then lost it. Now the wait continues until the launch is accepted, and each timeout
+    spent waiting is counted."""
     monkeypatch.setenv("_F_TRACE_COMPLETION_TIMEOUT", "0.1")
-    extras = await _trace_timeout_warnings(refusals=1000)
-    assert extras == [{"metric_type": "counter", "metric_name": "trace_record_unconfirmed", "reason": "launch_pending"}]
+    extras, attempts = await _trace_timeout_warnings(refusals=3)
+    pending = {"metric_type": "counter", "metric_name": "trace_record_unconfirmed", "reason": "launch_pending"}
+    assert attempts == 4
+    assert pending in extras
+    # Once launched, only the watch echo is late: the last warning is the old one, uncounted.
+    assert extras[-1] is None
+    assert all(extra == pending for extra in extras[:-1])
 
 
 @pytest.mark.asyncio
-async def test_a_trace_that_times_out_after_its_launch_is_not_counted(monkeypatch):
-    """A launched trace is on the server; only the watch echo is late."""
+async def test_a_launched_trace_still_times_out_as_before(monkeypatch):
+    """A launched trace is on the server; a late watch echo ends the wait at the timeout, uncounted."""
     monkeypatch.setenv("_F_TRACE_COMPLETION_TIMEOUT", "0.3")
-    extras = await _trace_timeout_warnings(refusals=0)
+    extras, attempts = await _trace_timeout_warnings(refusals=0)
+    assert attempts == 1
     assert extras == [None]

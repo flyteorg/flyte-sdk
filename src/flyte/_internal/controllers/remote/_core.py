@@ -353,19 +353,28 @@ class Controller:
         # run for hours, so they wait without a timeout.
         if action.type == "trace":
             _trace_timeout = float(os.getenv("_F_TRACE_COMPLETION_TIMEOUT", "60"))
-            try:
-                await asyncio.wait_for(informer.wait_for_action_completion(action.name), timeout=_trace_timeout)
-            except asyncio.TimeoutError:
-                # A trace not launched yet has no record on the server: count it, since a task that
-                # exits now loses it.
-                current = await informer.get(action.name)
-                unconfirmed = current is not None and not current.is_started()
-                logger.warning(
-                    f"{threading.current_thread().name} Trace completion wait timed out after {_trace_timeout}s "
-                    f"for {action.name}, continuing anyway",
-                    extra=_trace_record_unconfirmed("launch_pending") if unconfirmed else None,
-                )
-                await informer.fire_completion_event(action.name)
+            while True:
+                try:
+                    await asyncio.wait_for(informer.wait_for_action_completion(action.name), timeout=_trace_timeout)
+                    break
+                except asyncio.TimeoutError:
+                    current = await informer.get(action.name)
+                    if current is not None and not current.is_started():
+                        # Not launched yet, so the server has no record and a task that exits now loses
+                        # it. The launch is still being retried: count it and keep waiting. The launch
+                        # completes the action itself once its retries run out.
+                        logger.warning(
+                            f"{threading.current_thread().name} Trace {action.name} not launched after "
+                            f"{_trace_timeout}s, still retrying",
+                            extra=_trace_record_unconfirmed("launch_pending"),
+                        )
+                        continue
+                    logger.warning(
+                        f"{threading.current_thread().name} Trace completion wait timed out after {_trace_timeout}s "
+                        f"for {action.name}, continuing anyway"
+                    )
+                    await informer.fire_completion_event(action.name)
+                    break
         else:
             await informer.wait_for_action_completion(action.name)
         logger.info(f"{threading.current_thread().name} Action {action.name} completed")
