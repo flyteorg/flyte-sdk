@@ -27,7 +27,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up the environment
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -59,7 +59,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up the environment
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
         with:
           python-version: "3.12"
 
@@ -103,7 +103,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up the environment
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -138,7 +138,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up the environment
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
         with:
           python-version: ${{ matrix.python-version }}
 

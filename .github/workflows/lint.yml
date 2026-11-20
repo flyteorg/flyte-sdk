@@ -25,7 +25,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Python 3.12
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
         with:
           python-version: '3.12'
       - name: Lint
@@ -121,7 +121,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Python 3.12
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
         with:
           python-version: '3.12'
       - name: mypy
@@ -136,7 +136,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Python 3.12
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
         with:
           python-version: '3.12'
       - name: ty
@@ -151,7 +151,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Python 3.12
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
         with:
           python-version: '3.12'
       - name: Check docstring style
@@ -166,7 +166,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Python 3.12
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
         with:
           python-version: '3.12'
       - name: Generate docs
@@ -181,7 +181,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Python 3.12
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
       - name: Check root uv.lock
         run: |
           uv lock --check
