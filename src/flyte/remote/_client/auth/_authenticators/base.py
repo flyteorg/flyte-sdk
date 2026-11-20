@@ -174,12 +174,13 @@ class Authenticator(object):
 
         Args:
             creds_id: The id of credentials when they were last accessed by the caller.
-                If None, force a refresh regardless of id.
+                If None, force a refresh regardless of id, unless another caller refreshed
+                while this one waited for the lock: its result is used then.
 
         Raises:
             Exception: Authentication-related exceptions if the refresh fails.
         """
-        # If creds_id is None, force refresh
+        # If creds_id is None, force refresh (unless one completes while we wait for the lock)
         # If creds_id matches current value, credentials need refresh
         # If creds_id doesn't match, another thread already refreshed credentials
         if creds_id and creds_id != self._creds_id:
