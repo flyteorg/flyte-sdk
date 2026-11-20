@@ -24,6 +24,18 @@ PYTHON_3_14 = (3, 14)
 
 # 0 is a file, 1 is a directory
 CopyConfigType = Literal[0, 1]
+
+#: How a project layer installs the project it was pointed at. "dependencies_only" copies just
+#: the manifest (and lock file) and installs the dependencies; "install_project" copies the whole
+#: project directory and installs it as a package.
+ProjectInstallMode = Literal["dependencies_only", "install_project"]
+
+#: Which files a deferred `CodeBundleLayer` bakes into the image.
+CodeBundleCopyStyle = Literal["loaded_modules", "all"]
+
+#: Derived from the aliases above rather than restated, so a guard can never drift from its type.
+_PROJECT_INSTALL_MODES: Tuple[str, ...] = typing.get_args(ProjectInstallMode)
+_CODE_BUNDLE_COPY_STYLES: Tuple[str, ...] = typing.get_args(CodeBundleCopyStyle)
 SOURCE_ROOT = Path(__file__).parent.parent.parent
 DIST_FOLDER = SOURCE_ROOT / "dist"
 RS_CONTROLLER_DIST_FOLDER = SOURCE_ROOT / "rs_controller" / "dist"
@@ -42,6 +54,25 @@ def _ensure_tuple(val: Union[T, List[T], Tuple[T, ...]]) -> Tuple[T] | Tuple[T, 
         return typing.cast(Tuple[T, ...], val)
     else:
         return (val,)
+
+
+def _validate_choice(owner: str, field: str, value: Any, allowed: Tuple[str, ...]) -> None:
+    """
+    Reject a value outside a layer field's `Literal` set, at construction.
+
+    Nothing enforces a `Literal` at runtime, and every consumer of these fields is a two-way
+    `if value == "<one option>": ... else: ...`, so an unrecognized value does not fail -- it
+    silently selects the other branch. `CopyConfig.__post_init__` already guards its own
+    `Literal` field (`path_type`) exactly this way; these fields were the exception.
+
+    Membership is safe to check at image-definition time in a way a *path* is not: an image
+    definition is module-level code that also runs inside the container, where the developer's
+    files are absent (see `with_dockerignore`), but a value's membership in a fixed set gives
+    the same answer everywhere.
+    """
+    if value not in allowed:
+        options = ", ".join(repr(a) for a in allowed)
+        raise ValueError(f"Invalid {field} {value!r} for {owner}, must be one of {options}")
 
 
 @rich.repr.auto
@@ -183,6 +214,16 @@ class PythonWheels(PipOption, Layer):
 class Requirements(PipPackages):
     file: Path
 
+    def validate(self):
+        # `update_hash` reads `file` unguarded, so without this a requirements file that is not there
+        # surfaced as a bare FileNotFoundError from the hashing internals (FLYTE-SDK-92), with no
+        # message for `_update_hash_for_layer` to report in its place.
+        if not self.file.exists():
+            raise FileNotFoundError(f"Requirements file {self.file.resolve()} does not exist")
+        if not self.file.is_file():
+            raise ValueError(f"Requirements file {self.file.resolve()} is not a file")
+        super().validate()
+
     def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         from ._utils import filehash_update
 
@@ -195,7 +236,11 @@ class Requirements(PipPackages):
 class UVProject(PipOption, Layer):
     pyproject: Path
     uvlock: Optional[Path] = None
-    project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only"
+    project_install_mode: ProjectInstallMode = "dependencies_only"
+
+    def __post_init__(self):
+        super().__post_init__()
+        _validate_choice(type(self).__name__, "project_install_mode", self.project_install_mode, _PROJECT_INSTALL_MODES)
 
     def validate(self):
         if not self.pyproject.exists():
@@ -232,8 +277,12 @@ class PoetryProject(Layer):
     pyproject: Path
     poetry_lock: Path
     extra_args: Optional[str] = None
-    project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only"
+    project_install_mode: ProjectInstallMode = "dependencies_only"
     secret_mounts: Optional[Tuple[str | Secret, ...]] = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        _validate_choice(type(self).__name__, "project_install_mode", self.project_install_mode, _PROJECT_INSTALL_MODES)
 
     def validate(self):
         if not self.pyproject.exists():
@@ -274,8 +323,12 @@ class PixiProject(Layer):
     pixi_lock: Optional[Path] = None
     environment: str = "default"
     extra_args: Optional[str] = None
-    project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only"
+    project_install_mode: ProjectInstallMode = "dependencies_only"
     secret_mounts: Optional[Tuple[str | Secret, ...]] = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        _validate_choice(type(self).__name__, "project_install_mode", self.project_install_mode, _PROJECT_INSTALL_MODES)
 
     def validate(self):
         if not self.manifest.exists():
@@ -457,6 +510,10 @@ class Commands(Layer):
 class WorkDir(Layer):
     workdir: str
 
+    def __post_init__(self):
+        if not isinstance(self.workdir, str):
+            object.__setattr__(self, "workdir", str(self.workdir))
+
     def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         hasher.update(self.workdir.encode("utf-8"))
 
@@ -488,6 +545,11 @@ class CopyConfig(Layer):
             raise ValueError(f"Invalid path_type {self.path_type}, must be 0 (file) or 1 (directory)")
         if not isinstance(self.src, Path):
             object.__setattr__(self, "src", Path(self.src))
+        # `dst` is a path *inside the image*, so a caller naturally reaches for a Path here just as
+        # they do for `src`. Normalizing it keeps every consumer honest: `update_hash` calls
+        # `.encode()` on it, and the remote builder already compensates with `str(layer.dst)`.
+        if not isinstance(self.dst, str):
+            object.__setattr__(self, "dst", str(self.dst))
 
     def validate(self):
         # A missing / wrong-typed source path is a user mistake in the image spec
@@ -524,9 +586,13 @@ class CodeBundleLayer(Layer):
     root_dir, the docker builder handles the actual file copying into the build context.
     """
 
-    copy_style: Literal["loaded_modules", "all"]
+    copy_style: CodeBundleCopyStyle
     dst: str = "."
     root_dir: Optional[Path] = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        _validate_choice(type(self).__name__, "copy_style", self.copy_style, _CODE_BUNDLE_COPY_STYLES)
 
     def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         hasher.update(f"code_bundle:{self.copy_style}:{self.dst}".encode("utf-8"))
@@ -561,6 +627,41 @@ class _DockerLines(Layer):
 
     def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         hasher.update("".join(self.lines).encode("utf-8"))
+
+
+def _update_hash_for_layer(layer: Layer, hasher: hashlib._Hash, ignore: Optional[Any]) -> None:
+    """
+    Fold one layer into the image hash, reporting a bad image definition the way the layer itself would.
+
+    Layers that hash file contents read those files here, unguarded. Every one of them also declares a
+    `validate()` carrying a clear, user-facing message for the mistake that makes such a read fail: a lock
+    file, manifest or source folder that is not there. Those messages almost never get to run.
+    `ImageBuildEngine.build` asks `image_exists()` for the tag before it calls `image.validate()`, and
+    computing that tag is what performs these reads, so the unguarded read always loses the race. A user who
+    names a file that does not exist gets a bare `FileNotFoundError` out of the hashing internals instead of
+    the sentence the layer wrote for them (FLYTE-SDK-8B).
+
+    Ask the layer to diagnose itself, and rewrite the error only when it actually objects. A read that fails
+    while the layer considers its own definition fine is not a mistake in the image spec, so it keeps its
+    original exception and stays reportable.
+    """
+    try:
+        layer.update_hash(hasher, ignore=ignore)
+    except OSError as read_error:
+        from flyte.errors import ImageBuildError
+
+        try:
+            layer.validate()
+        except ImageBuildError:
+            # The layer already speaks in the right error type; let its message through unchanged.
+            raise
+        except Exception as bad_definition:
+            # `validate()` predates this path and still raises plain ValueError / FileNotFoundError.
+            # Restate it as a user error so it reads clearly and is not filed as an SDK crash.
+            raise ImageBuildError(str(bad_definition)) from read_error
+        # The layer is satisfied with its own definition, so this is not a bad image spec.
+        # Leave the original error alone -- it still deserves a crash report.
+        raise
 
 
 @rich.repr.auto
@@ -830,8 +931,21 @@ class Image:
         return obj
 
     def validate(self):
+        self._validate_dockerfile()
         for layer in self._layers:
             layer.validate()
+
+    def _validate_dockerfile(self):
+        # Checked here rather than in `from_dockerfile`: image definitions are module-level code that also runs
+        # inside the container at task runtime, where the Dockerfile is not there to check.
+        if self.dockerfile is None:
+            return
+        from flyte.errors import ImageBuildError
+
+        if not self.dockerfile.exists():
+            raise ImageBuildError(f"Dockerfile {self.dockerfile.resolve()} does not exist")
+        if not self.dockerfile.is_file():
+            raise ImageBuildError(f"Dockerfile {self.dockerfile.resolve()} is not a file")
 
     @classmethod
     def _get_default_image_for(
@@ -1324,10 +1438,16 @@ class Image:
             hasher.update(self.base_image.encode("utf-8"))
         if self.dockerfile:
             # Note the location of the dockerfile shouldn't matter, only the contents
-            filehash_update(self.dockerfile, hasher)
+            try:
+                filehash_update(self.dockerfile, hasher)
+            except OSError:
+                # Same reasoning as `_update_hash_for_layer`: the tag is computed before `validate()` runs,
+                # so report a missing Dockerfile as the user error it is, and anything else as it came.
+                self._validate_dockerfile()
+                raise
         if self._layers:
             for layer in self._layers:
-                layer.update_hash(hasher, ignore=ignore)
+                _update_hash_for_layer(layer, hasher, ignore)
         return hasher.hexdigest()
 
     @property
@@ -1361,7 +1481,7 @@ class Image:
             return f"{self.registry}/{self.name}:{tag}"
         return f"{self.name}:{tag}"
 
-    def with_workdir(self, workdir: str) -> Image:
+    def with_workdir(self, workdir: str | Path) -> Image:
         """
         Use this method to create a new image with the specified working directory
         This will override any existing working directory
@@ -1369,7 +1489,7 @@ class Image:
         Args:
             workdir: working directory to use
         """
-        new_image = self.clone(addl_layer=WorkDir(workdir=workdir))
+        new_image = self.clone(addl_layer=WorkDir(workdir=str(workdir)))
         return new_image
 
     def with_requirements(
@@ -1489,7 +1609,7 @@ class Image:
         new_image = self.clone(addl_layer=Env.from_dict(env_vars))
         return new_image
 
-    def with_source_folder(self, src: Path, dst: str = ".", copy_contents_only: bool = False) -> Image:
+    def with_source_folder(self, src: str | Path, dst: str | Path = ".", copy_contents_only: bool = False) -> Image:
         """
         Use this method to create a new image with the specified local directory layered on top of the current image.
         If dest is not specified, it will be copied to the working directory of the image
@@ -1503,12 +1623,14 @@ class Image:
         Returns:
             Image
         """
+        src = Path(src)
+        dst = str(dst)
         if not copy_contents_only:
             dst = str("./" + src.name) if dst == "." else dst
         new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst))
         return new_image
 
-    def with_source_file(self, src: typing.Union[Path, typing.List[Path]], dst: str = ".") -> Image:
+    def with_source_file(self, src: typing.Union[str, Path, typing.List[Path]], dst: str | Path = ".") -> Image:
         """
         Use this method to create a new image with the specified local file(s) layered on top of the current image.
         If dest is not specified, it will be copied to the working directory of the image
@@ -1520,6 +1642,7 @@ class Image:
         Returns:
             Image
         """
+        dst = str(dst)
         if isinstance(src, list):
             names = [p.name for p in src]
             duplicates = {name for name in names if names.count(name) > 1}
@@ -1530,13 +1653,13 @@ class Image:
                 )
             image = self
             for path in src:
-                image = image.clone(addl_layer=CopyConfig(path_type=0, src=path, dst=dst))
+                image = image.clone(addl_layer=CopyConfig(path_type=0, src=Path(path), dst=dst))
             return image
-        return self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst))
+        return self.clone(addl_layer=CopyConfig(path_type=0, src=Path(src), dst=dst))
 
     def with_code_bundle(
         self,
-        copy_style: Literal["loaded_modules", "all"] = "loaded_modules",
+        copy_style: CodeBundleCopyStyle = "loaded_modules",
         dst: str = ".",
     ) -> Image:
         """
@@ -1568,13 +1691,13 @@ class Image:
     def with_uv_project(
         self,
         pyproject_file: str | Path,
-        uvlock: Path | None = None,
+        uvlock: str | Path | None = None,
         index_url: Optional[str] = None,
         extra_index_urls: Union[List[str], Tuple[str, ...], None] = None,
         pre: bool = False,
         extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
-        project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only",
+        project_install_mode: ProjectInstallMode = "dependencies_only",
     ) -> Image:
         """
         Use this method to create a new image with the specified uv.lock file layered on top of the current image
@@ -1603,6 +1726,8 @@ class Image:
         """
         if isinstance(pyproject_file, str):
             pyproject_file = Path(pyproject_file)
+        if isinstance(uvlock, str):
+            uvlock = Path(uvlock)
         # If uvlock is not provided, use the default uv.lock file in the same directory if it exists
         if uvlock is None:
             default_uvlock = pyproject_file.parent / "uv.lock"
@@ -1624,10 +1749,10 @@ class Image:
     def with_poetry_project(
         self,
         pyproject_file: str | Path,
-        poetry_lock: Path | None = None,
+        poetry_lock: str | Path | None = None,
         extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
-        project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only",
+        project_install_mode: ProjectInstallMode = "dependencies_only",
     ):
         """
         Use this method to create a new image with the specified pyproject.toml layered on top of the current image.
@@ -1656,6 +1781,8 @@ class Image:
         """
         if isinstance(pyproject_file, str):
             pyproject_file = Path(pyproject_file)
+        if isinstance(poetry_lock, str):
+            poetry_lock = Path(poetry_lock)
         new_image = self.clone(
             addl_layer=PoetryProject(
                 pyproject=pyproject_file,
@@ -1670,11 +1797,11 @@ class Image:
     def with_pixi_project(
         self,
         manifest_file: str | Path,
-        pixi_lock: Path | None = None,
+        pixi_lock: str | Path | None = None,
         environment: str = "default",
         extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
-        project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only",
+        project_install_mode: ProjectInstallMode = "dependencies_only",
     ) -> Image:
         """
         Use this method to create a new image with the specified pixi project layered on top of the current image.
@@ -1729,6 +1856,8 @@ class Image:
             # Mirror pixi's own manifest discovery: pixi.toml wins over pyproject.toml.
             pixi_toml = manifest_file / "pixi.toml"
             manifest_file = pixi_toml if pixi_toml.exists() else manifest_file / "pyproject.toml"
+        if isinstance(pixi_lock, str):
+            pixi_lock = Path(pixi_lock)
         # If pixi_lock is not provided, use the default pixi.lock file in the same directory if it exists
         if pixi_lock is None:
             default_pixi_lock = manifest_file.parent / "pixi.lock"
