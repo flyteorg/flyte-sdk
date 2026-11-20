@@ -112,6 +112,29 @@ class TestAuthOverridesFromEnv:
         with pytest.raises(InitializationError, match="FLYTE_AUTH_COMMAND"):
             _auth_overrides_from_env()
 
+    def test_unbalanced_quote_is_reported_against_the_env_var(self, clean_env):
+        """A typo in the command line must not escape as a bare `ValueError: No closing
+        quotation` from shlex, which names neither the variable nor what a good value
+        looks like. The same value reaches `PlatformConfig.auto` on the CLI path, where
+        it aborts the command before any of its own error handling runs."""
+        clean_env.setenv("FLYTE_AUTH_TYPE", "ExternalCommand")
+        clean_env.setenv("FLYTE_AUTH_COMMAND", 'mint-token --claim "team = data')
+
+        with pytest.raises(InitializationError) as exc:
+            _auth_overrides_from_env()
+
+        message = str(exc.value)
+        assert "FLYTE_AUTH_COMMAND" in message
+        assert "No closing quotation" in message, "keep shlex's account of what is wrong"
+        assert "JSON array" in message, "and say what a good value looks like"
+
+    def test_unbalanced_quote_in_proxy_command_is_reported_too(self, clean_env):
+        """PROXY_COMMAND shares the transform, so it must share the treatment."""
+        clean_env.setenv("FLYTE_AUTH_PROXY_COMMAND", "get-proxy-token --quiet '")
+
+        with pytest.raises(InitializationError, match="FLYTE_AUTH_PROXY_COMMAND"):
+            _auth_overrides_from_env()
+
 
 class TestPreferredAndDerivedNames:
     """`admin.authType` is really an auth setting, not an "admin" one, so the entries
