@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import rich.repr
 
 import flyte.app
+from flyte.app._base_path import ServeUnderBasePath, app_base_path
 from flyte.models import SerializationContext
 
 if TYPE_CHECKING:
@@ -75,6 +76,17 @@ class FastAPIAppEnvironment(flyte.app.AppEnvironment):
         elif self.uvicorn_config is not None:
             if self.uvicorn_config.port is None:
                 self.uvicorn_config.port = port
+        # An app served under a path of a shared host (a path-based app URL,
+        # e.g. https://platform.example.com/onebox/apps/<name>/): the platform
+        # tells it the path. Not uvicorn's root_path, which assumes the proxy
+        # removed the path (it prepends it again); requests may arrive either way.
+        # It wraps the loaded app, not uvicorn_config.app, which may be an
+        # import string ("main:app") or a factory; the server keeps a loaded config.
+        base_path = app_base_path()
+        if base_path and not self.uvicorn_config.root_path:
+            if not self.uvicorn_config.loaded:
+                self.uvicorn_config.load()
+            self.uvicorn_config.loaded_app = ServeUnderBasePath(self.uvicorn_config.loaded_app, base_path)
 
         await uvicorn.Server(self.uvicorn_config).serve()
 
