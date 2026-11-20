@@ -151,7 +151,7 @@ jobs:
         id: pypiwait
         run: |
           # from 'v1.2.3' get '1.2.3' and make sure it's not an empty string
-          VERSION="${{ github.ref_name }}"
+          VERSION="${GITHUB_REF_NAME}"
           VERSION="${VERSION#v}"
           if [ -z "$VERSION" ]
           then
@@ -193,8 +193,8 @@ jobs:
           version: "0.13.4"
       - name: Export constraints from uv.lock
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            VERSION="${{ github.ref_name }}"; VERSION="${VERSION#v}"
+          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
+            VERSION="${GITHUB_REF_NAME}"; VERSION="${VERSION#v}"
           else
             VERSION="0.0.0.dev0"  # non-release runs (e.g. PR validation)
           fi
@@ -228,9 +228,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ github.ref_name }}"
+          VERSION="${GITHUB_REF_NAME}"
           VERSION="${VERSION#v}"
-          gh release upload "${{ github.ref_name }}" \
+          gh release upload "${GITHUB_REF_NAME}" \
             "constraints-${VERSION}.txt" constraints.txt --clobber
 
   discover-plugin-packages:
@@ -412,6 +412,9 @@ jobs:
           private-key: ${{ secrets.DOCSY_BOT_PRIVATE_KEY }}
           owner: unionai
           repositories: unionai-docs
+          # All that `POST /repos/{owner}/{repo}/dispatches` needs; without it the
+          # token gets every permission the App installation has.
+          permission-contents: write
 
       - name: Send repository_dispatch to unionai/unionai-docs
         env:
