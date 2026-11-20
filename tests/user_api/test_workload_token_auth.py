@@ -21,7 +21,14 @@ WORKLOAD = "acme/p/development/r1/a0/1"
 @pytest.fixture
 def pod(monkeypatch, tmp_path):
     """A task pod: endpoint and api key injected, plus workload identity when enabled."""
-    for var in ("UCTL_CONFIG", "FLYTECTL_CONFIG", "FLYTE_AUTH_TYPE", "FLYTE_ADMIN_AUTHTYPE", "FLYTE_AUTH_COMMAND"):
+    for var in (
+        "UCTL_CONFIG",
+        "FLYTECTL_CONFIG",
+        "FLYTE_AUTH_TYPE",
+        "FLYTE_ADMIN_AUTHTYPE",
+        "FLYTE_AUTH_COMMAND",
+        "FLYTE_AUTH_PRECEDENCE",
+    ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("_U_EP_OVERRIDE", "dns:///acme.union.ai:443")
     monkeypatch.setenv("_UNION_EAGER_API_KEY", "legacy-composite-token")
@@ -51,6 +58,65 @@ class TestInitInCluster:
         with patch("flyte._initialize.init", new_callable=AsyncMock):
             controller_kwargs = await init_in_cluster.aio()
         assert controller_kwargs["auth_type"] == "ExternalCommand"
+
+    @pytest.mark.asyncio
+    async def test_precedence_puts_workload_identity_ahead_of_the_auth_type(self, pod):
+        """A cluster that sets one auth type on every pod opts pods with a workload identity into it."""
+        env, _ = pod
+        env.setenv("FLYTE_AUTH_TYPE", "ExternalCommand")
+        env.setenv("FLYTE_AUTH_COMMAND", "mint-token")
+        env.setenv("FLYTE_AUTH_PRECEDENCE", "workload-identity")
+        with patch("flyte._initialize.init", new_callable=AsyncMock):
+            controller_kwargs = await init_in_cluster.aio()
+        assert controller_kwargs["auth_type"] == "WorkloadToken"
+        assert "command" not in controller_kwargs
+        assert "api_key" not in controller_kwargs
+
+    @pytest.mark.asyncio
+    async def test_precedence_skips_a_source_the_pod_does_not_have(self, pod):
+        """On a pod the platform gave no workload identity, preferring it changes nothing."""
+        env, token = pod
+        token.unlink()
+        env.setenv("FLYTE_AUTH_TYPE", "ExternalCommand")
+        env.setenv("FLYTE_AUTH_COMMAND", "mint-token")
+        env.setenv("FLYTE_AUTH_PRECEDENCE", "workload-identity")
+        with patch("flyte._initialize.init", new_callable=AsyncMock):
+            controller_kwargs = await init_in_cluster.aio()
+        assert controller_kwargs["auth_type"] == "ExternalCommand"
+        assert controller_kwargs["command"] == ["mint-token"]
+        assert "api_key" not in controller_kwargs
+
+    @pytest.mark.asyncio
+    async def test_precedence_can_put_the_api_key_first(self, pod):
+        env, _ = pod
+        env.setenv("FLYTE_AUTH_TYPE", "ExternalCommand")
+        env.setenv("FLYTE_AUTH_COMMAND", "mint-token")
+        env.setenv("FLYTE_AUTH_PRECEDENCE", "api-key")
+        with patch("flyte._initialize.init", new_callable=AsyncMock):
+            controller_kwargs = await init_in_cluster.aio()
+        assert controller_kwargs["api_key"] == "legacy-composite-token"
+        assert "auth_type" not in controller_kwargs
+
+    @pytest.mark.asyncio
+    async def test_precedence_ignores_names_it_does_not_know(self, pod):
+        """A value written for a newer SDK still works: unknown sources are skipped, known ones honored."""
+        env, _ = pod
+        env.setenv("FLYTE_AUTH_TYPE", "ExternalCommand")
+        env.setenv("FLYTE_AUTH_COMMAND", "mint-token")
+        env.setenv("FLYTE_AUTH_PRECEDENCE", "some-future-source, Workload-Identity ,")
+        with patch("flyte._initialize.init", new_callable=AsyncMock):
+            controller_kwargs = await init_in_cluster.aio()
+        assert controller_kwargs["auth_type"] == "WorkloadToken"
+
+    def test_precedence_keeps_unlisted_sources_in_their_default_order(self, monkeypatch):
+        from flyte._initialize import _auth_precedence
+
+        monkeypatch.delenv("FLYTE_AUTH_PRECEDENCE", raising=False)
+        assert _auth_precedence() == ["auth-env", "workload-identity", "api-key"]
+        monkeypatch.setenv("FLYTE_AUTH_PRECEDENCE", "api-key")
+        assert _auth_precedence() == ["api-key", "auth-env", "workload-identity"]
+        monkeypatch.setenv("FLYTE_AUTH_PRECEDENCE", "api-key,workload-identity,api-key")
+        assert _auth_precedence() == ["api-key", "workload-identity", "auth-env"]
 
     @pytest.mark.asyncio
     async def test_without_a_token_file_the_api_key_is_used(self, pod):
