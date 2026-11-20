@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pathlib
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -495,6 +496,37 @@ class Artifact(ToJSONMixin):
         else:
             lit.artifact_id.CopyFrom(self.artifact_version_id)
         return lit
+
+    @syncify
+    async def download_card(self, dest: str | pathlib.Path | None = None) -> pathlib.Path:
+        """
+        Download this artifact version's card and return its local path.
+
+        The data proxy signs a download link for the card, so this works from a machine with no
+        credentials for the object store, such as a laptop. When the installed flyteidl2 or the
+        backend can't sign artifact cards, the card is read from the object store directly, which
+        needs storage credentials.
+
+        ```python
+        art = flyte.remote.Artifact.get("trained-model", version="v1")
+        local = art.download_card("./cards")
+        ```
+
+        Args:
+            dest: Where to write the card. When it ends with a path separator or is an existing
+                directory, the card is written inside it under its own file name. Otherwise it is
+                the file path, and missing parent directories are created. Defaults to the current
+                working directory.
+
+        Returns:
+            The local path of the downloaded card.
+
+        Raises:
+            ValueError: when the artifact has no card.
+        """
+        from flyte.remote._artifact_card import download_card
+
+        return await download_card(self, dest if dest is not None else pathlib.Path.cwd())
 
     @syncify
     @classmethod
