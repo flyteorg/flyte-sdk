@@ -250,19 +250,22 @@ class ObstoreParallelReader:
                         break
 
                     completed, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                    if outq_get_task in completed:
-                        yield outq_get_task.result()
-                        outq_get_task = None
-                        continue
-
+                    # Check for failures before yielding, so a failure is never skipped because a
+                    # result arrived in the same wakeup.
                     for task in completed:
-                        if task.cancelled():
+                        if task is outq_get_task or task.cancelled():
                             continue
                         exc = task.exception()
                         if exc is not None:
                             raise exc
 
-                    if done.is_set():
+                    if outq_get_task in completed:
+                        yield outq_get_task.result()
+                        outq_get_task = None
+
+                    # `done` is set as soon as any worker exits, including an idle one that took the
+                    # sentinel while others are still downloading. Only stop once every worker has exited.
+                    if all(wt.done() for wt in worker_tasks):
                         break
             except BaseException as e:
                 if not fill_task.done():
@@ -274,6 +277,9 @@ class ObstoreParallelReader:
                     outq_get_task.cancel()
                 raise e
             finally:
+                # Nothing is put on outq once the workers have exited, so a pending get would block forever.
+                if outq_get_task is not None and not outq_get_task.done():
+                    outq_get_task.cancel()
                 await asyncio.gather(
                     *(task for task in (fill_task, *worker_tasks, outq_get_task) if task is not None),
                     return_exceptions=True,
