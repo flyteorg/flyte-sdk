@@ -120,7 +120,7 @@ def _bootstrap_ssl_from_server(endpoint: str) -> bytes:
 
     Uses pyOpenSSL to connect with verification disabled and retrieve the
     full peer certificate chain (leaf + intermediates + root).  This works
-    on all supported Python versions (>= 3.10).
+    on all supported Python versions (>= 3.11).
 
     This is a blocking call.  Callers should run it via asyncio.to_thread().
     """

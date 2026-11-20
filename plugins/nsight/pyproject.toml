@@ -4,7 +4,7 @@ dynamic = ["version"]
 description = "NVIDIA Nsight Systems GPU profiling plugin for Flyte"
 readme = "README.md"
 authors = [{ name = "Samhita Alla", email = "samhita@union.ai" }]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 # nsys is a system CLI provided by the task image (e.g. NGC PyTorch); torch/nvtx are the
 # user's own runtime deps, imported lazily. The plugin itself only needs flyte.
 dependencies = [

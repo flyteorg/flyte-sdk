@@ -4,7 +4,7 @@ dynamic = ["version"]
 description = "OpenTelemetry tracing for Flyte, with traces that survive durable resume"
 readme = "README.md"
 authors = [{ name = "Samhita Alla", email = "samhita@union.ai" }]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",

@@ -4,7 +4,7 @@ dynamic = ["version"]
 description = "Receive ClickUp webhooks in Flyte."
 readme = "README.md"
 authors = [{ name = "Flyte Contributors" }]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 # The webhook receiver lives in flyte itself, at flyte.extras.webhooks.
 dependencies = ["flyte"]
 
