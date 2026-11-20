@@ -6,6 +6,7 @@ from typing import (
     Any,
     AsyncGenerator,
     AsyncIterator,
+    Callable,
     Generator,
     Generic,
     Iterable,
@@ -39,12 +40,14 @@ class MapAsyncIterator(Generic[P, R]):
         name: str,
         concurrency: int,
         return_exceptions: bool,
+        name_fn: Callable[..., str] | None = None,
     ):
         self.func = func
         self.args = args
         self.name = name
         self.concurrency = concurrency
         self.return_exceptions = return_exceptions
+        self.name_fn = name_fn
         self._current_index = 0
         self._completed_count = 0
         self._exception_count = 0
@@ -68,16 +71,17 @@ class MapAsyncIterator(Generic[P, R]):
     # Invoke helper - handles both plain func and functools.partial
     # ------------------------------------------------------------------
     async def _invoke(self, arg_tuple: tuple) -> R:
-        if isinstance(self.func, functools.partial):
-            base_func = cast(AsyncFunctionTaskTemplate, self.func.func)
-            bound_args = self.func.args
-            bound_kwargs = self.func.keywords or {}
+        func = _apply_name_fn(self.func, arg_tuple, self.name_fn)
+        if isinstance(func, functools.partial):
+            base_func = cast(AsyncFunctionTaskTemplate, func.func)
+            bound_args = func.args
+            bound_kwargs = func.keywords or {}
             merged_args = bound_args + arg_tuple
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(f"Running {base_func.name} with args: {merged_args} and kwargs: {bound_kwargs}")
             return await base_func.aio(*merged_args, **bound_kwargs)
         else:
-            return await self.func.aio(*arg_tuple)  # type: ignore[call-overload]  # ty: ignore[no-matching-overload]
+            return await func.aio(*arg_tuple)  # type: ignore[call-overload]  # ty: ignore[no-matching-overload]
 
     # ------------------------------------------------------------------
     # __anext__ - dispatches to the right path
@@ -233,6 +237,35 @@ class MapAsyncIterator(Generic[P, R]):
         return f"MapAsyncIterator(group_name='{self.name}', concurrency={self.concurrency})"
 
 
+def _apply_name_fn(
+    func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
+    arg_tuple: tuple,
+    name_fn: Callable[..., str] | None,
+) -> AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R]:
+    if name_fn is None:
+        return func
+
+    raw_name = name_fn(*arg_tuple)
+    if raw_name is None:
+        return func
+
+    item_name = str(raw_name)[:63]
+
+    if isinstance(func, functools.partial):
+        if hasattr(func.func, "override"):
+            base_func = cast(AsyncFunctionTaskTemplate, func.func)
+            overridden = base_func.override(short_name=item_name)
+            return cast(
+                functools.partial[R],
+                functools.partial(overridden, *func.args, **(func.keywords or {})),
+            )
+        return func
+    elif hasattr(func, "override"):
+        return cast(AsyncFunctionTaskTemplate, func.override(short_name=item_name))
+
+    return func
+
+
 async def _invoke_local(func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R], arg_tuple: tuple) -> R:
     """
     Await a single mapped call in local mode, handling functools.partial and the
@@ -312,6 +345,7 @@ class _Mapper(Generic[P, R]):
         self,
         func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
         *args: Iterable[Any],
+        name_fn: Callable[..., str] | None = None,
         group_name: str | None = None,
         concurrency: int = 0,
     ) -> Iterator[R]: ...
@@ -321,6 +355,7 @@ class _Mapper(Generic[P, R]):
         self,
         func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
         *args: Iterable[Any],
+        name_fn: Callable[..., str] | None = None,
         group_name: str | None = None,
         concurrency: int = 0,
         return_exceptions: bool = True,
@@ -330,6 +365,7 @@ class _Mapper(Generic[P, R]):
         self,
         func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
         *args: Iterable[Any],
+        name_fn: Callable[..., str] | None = None,
         group_name: str | None = None,
         concurrency: int = 0,
         return_exceptions: bool = True,
@@ -366,7 +402,8 @@ class _Mapper(Generic[P, R]):
                 logger.warning("Running map in local mode, which will run every task sequentially.")
                 for v in zip(*args):
                     try:
-                        yield cast(R, _invoke_local_sync(func, v))
+                        item_func = _apply_name_fn(func, v, name_fn)
+                        yield cast(R, _invoke_local_sync(item_func, v))
                     except Exception as e:
                         if return_exceptions:
                             yield e
@@ -379,6 +416,7 @@ class _Mapper(Generic[P, R]):
                 _map(
                     func,
                     *args,
+                    name_fn=name_fn,
                     name=name,
                     concurrency=concurrency,
                     return_exceptions=return_exceptions,
@@ -396,6 +434,7 @@ class _Mapper(Generic[P, R]):
         self,
         func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
         *args: Iterable[Any],
+        name_fn: Callable[..., str] | None = None,
         group_name: str | None = None,
         concurrency: int = 0,
         return_exceptions: bool = True,
@@ -418,7 +457,8 @@ class _Mapper(Generic[P, R]):
                 logger.warning("Running map in local mode, which will run every task sequentially.")
                 for v in zip(*args):
                     try:
-                        yield cast(R, await _invoke_local(func, v))
+                        item_func = _apply_name_fn(func, v, name_fn)
+                        yield cast(R, await _invoke_local(item_func, v))
                     except Exception as e:
                         if return_exceptions:
                             yield e
@@ -430,6 +470,7 @@ class _Mapper(Generic[P, R]):
                 _map.aio(
                     func,
                     *args,
+                    name_fn=name_fn,
                     name=name,
                     concurrency=concurrency,
                     return_exceptions=return_exceptions,
@@ -447,12 +488,18 @@ class _Mapper(Generic[P, R]):
 async def _map(
     func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
     *args: Iterable[Any],
+    name_fn: Callable[..., str] | None = None,
     name: str = "map",
     concurrency: int = 0,
     return_exceptions: bool = True,
 ) -> AsyncIterator[Union[R, Exception]]:
     iter = MapAsyncIterator(
-        func=func, args=args, name=name, concurrency=concurrency, return_exceptions=return_exceptions
+        func=func,
+        args=args,
+        name=name,
+        concurrency=concurrency,
+        return_exceptions=return_exceptions,
+        name_fn=name_fn,
     )
     try:
         async for result in iter:
