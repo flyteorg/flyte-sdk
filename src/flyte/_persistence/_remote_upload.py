@@ -14,7 +14,6 @@ import asyncio
 import hashlib
 import typing
 from base64 import b64encode
-from datetime import timedelta
 
 if typing.TYPE_CHECKING:
     from connectrpc.code import Code
@@ -23,7 +22,6 @@ if typing.TYPE_CHECKING:
 
     from flyte.remote._client._protocols import DataProxyService
 
-_UPLOAD_EXPIRES_IN = timedelta(seconds=60)
 
 # Backoff schedule for retrying the CreateUploadLocation RPC. Mirrors the signed-PUT
 # schedule below: the RPC leg is as exposed to proxy / gateway hiccups as the PUT leg.
@@ -97,6 +95,14 @@ async def upload_tracked_run_artifact(
         content_length=len(data),
         add_content_md5_metadata=True,
     )
+    # Use the same derived lifetime as file uploads (`flyte.remote._data`) rather than a fixed
+    # 60s. These bytes go out through the very same `_put_signed_url_with_retry`, whose retry
+    # budget alone can outlast a 60s signature -- the failure mode that FLYTE-SDK-5F / 4B / 6C /
+    # 7G / 7H / 7K were, fixed for file uploads in #1363 but never applied to this call site.
+    # Importing it here (rather than at module scope) keeps this module's cold-path import
+    # discipline and picks up the FLYTE_UPLOAD_EXPIRES_IN override for free.
+    from flyte.remote._data import _UPLOAD_EXPIRES_IN
+
     req.expires_in.FromTimedelta(_UPLOAD_EXPIRES_IN)
     resp, cluster = await _create_upload_location_with_retry(dataproxy, req, kind=kind, max_retries=max_retries)
 
