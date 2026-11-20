@@ -65,7 +65,7 @@ def test_list_all_files():
         assert len(files) == 4
 
         # Convert to relative paths for easier comparison
-        relative_files = [str(pathlib.Path(f).relative_to(test_dir)) for f in files]
+        relative_files = [pathlib.Path(f).relative_to(test_dir).as_posix() for f in files]
         relative_files.sort()
 
         expected_files = ["README.md", "main.py", "src/app.py", "src/utils/helper.py"]
@@ -916,6 +916,7 @@ def test_is_home_directory_true(monkeypatch):
     with tempfile.TemporaryDirectory() as tmpdir:
         home = pathlib.Path(tmpdir).resolve()
         monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
         assert is_home_directory(home) is True
         # A relative-looking `~` path should resolve to the same answer.
         assert is_home_directory(pathlib.Path("~")) is True
@@ -935,6 +936,7 @@ async def test_build_code_bundle_warns_when_from_dir_is_home(monkeypatch):
     with tempfile.TemporaryDirectory() as tmpdir:
         home = pathlib.Path(tmpdir).resolve()
         monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
         (home / "hello.py").write_text("print('hi')\n")
 
         with patch("flyte._code_bundle.bundle.logger.warning") as mock_warning:

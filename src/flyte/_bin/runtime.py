@@ -189,8 +189,9 @@ def _run_action(
     from flyte._logging import logger
     from flyte.models import ActionID, CheckpointPaths, CodeBundle, RawDataPath
 
-    logger.info("Registering faulthandler for SIGUSR1")
-    faulthandler.register(signal.SIGUSR1)
+    if hasattr(signal, "SIGUSR1") and hasattr(faulthandler, "register"):
+        logger.info("Registering faulthandler for SIGUSR1")
+        faulthandler.register(signal.SIGUSR1)
 
     logger.info(f"Initializing flyte runtime - version {flyte.__version__}")
     assert org, "Org is required for now"

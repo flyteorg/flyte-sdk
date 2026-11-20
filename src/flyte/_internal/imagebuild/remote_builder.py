@@ -305,7 +305,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             dst_path = copy_files_to_context(layer.wheel_dir, context_path, ["*.tar.gz", "*.tar.bz2", "*.zip"])
             wheel_layer = image_definition_pb2.Layer(
                 python_wheels=image_definition_pb2.PythonWheels(
-                    dir=str(dst_path.relative_to(context_path)),
+                    dir=dst_path.relative_to(context_path).as_posix(),
                     package_name=layer.package_name,
                     options=pip_options,
                     secret_mounts=secret_mounts,
@@ -317,7 +317,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             dst_path = copy_files_to_context(layer.file, context_path)
             requirements_layer = image_definition_pb2.Layer(
                 requirements=image_definition_pb2.Requirements(
-                    file=str(dst_path.relative_to(context_path)),
+                    file=dst_path.relative_to(context_path).as_posix(),
                     options=pip_options,
                     secret_mounts=secret_mounts,
                 )
@@ -344,13 +344,13 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                         pyproject_dst = copy_files_to_context(Path(pyproject), context_path, docker_ignore_patterns)
                         uv_lock_path = Path(pyproject) / "uv.lock"
                         uv_project_kwargs: dict[str, typing.Any] = {
-                            "pyproject": str(pyproject_dst.relative_to(context_path)),
+                            "pyproject": pyproject_dst.relative_to(context_path).as_posix(),
                             "options": pip_options,
                             "secret_mounts": secret_mounts,
                         }
                         if uv_lock_path.exists():
-                            uv_project_kwargs["uvlock"] = str(
-                                copy_files_to_context(uv_lock_path, context_path).relative_to(context_path)
+                            uv_project_kwargs["uvlock"] = (
+                                copy_files_to_context(uv_lock_path, context_path).relative_to(context_path).as_posix()
                             )
                         uv_project_layer = image_definition_pb2.Layer(
                             uv_project=image_definition_pb2.UVProject(**uv_project_kwargs)
@@ -408,13 +408,13 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 uv_project=image_definition_pb2.UVProject(
                     # NOTE: UVProject expects 'pyproject' to be the directory containing the pyproject.toml file
                     # whereas it expects 'uvlock' to be the path to the uv.lock file itself.
-                    pyproject=str(pyproject_dir_dst.relative_to(context_path)),
-                    uvlock=str(uvlock_dst.relative_to(context_path)) if uvlock_dst else None,
+                    pyproject=pyproject_dir_dst.relative_to(context_path).as_posix(),
+                    uvlock=uvlock_dst.relative_to(context_path).as_posix() if uvlock_dst else None,
                     options=pip_options,
                     secret_mounts=secret_mounts,
                     # Source dir should be the common parent directory of all the pyproject.toml files
                     # we copied for this UV project layer.
-                    source_dir=str(Path(os.path.commonpath(pyproject_dir_dsts)).relative_to(context_path)),
+                    source_dir=Path(os.path.commonpath(pyproject_dir_dsts)).relative_to(context_path).as_posix(),
                 )
             )
             layers.append(uv_layer)
@@ -431,8 +431,10 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
 
             poetry_layer = image_definition_pb2.Layer(
                 poetry_project=image_definition_pb2.PoetryProject(
-                    pyproject=str(pyproject_dst.relative_to(context_path)),
-                    poetry_lock=str(copy_files_to_context(layer.poetry_lock, context_path).relative_to(context_path)),
+                    pyproject=pyproject_dst.relative_to(context_path).as_posix(),
+                    poetry_lock=copy_files_to_context(layer.poetry_lock, context_path)
+                    .relative_to(context_path)
+                    .as_posix(),
                     extra_args=extra_args,
                     secret_mounts=secret_mounts,
                 )
@@ -463,7 +465,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             copy_layer = image_definition_pb2.Layer(
                 copy_config=image_definition_pb2.CopyConfig(
-                    src=str(dst_path.relative_to(context_path)),
+                    src=dst_path.relative_to(context_path).as_posix(),
                     dst=str(layer.dst),
                 )
             )
@@ -473,7 +475,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
 
             copy_layer = image_definition_pb2.Layer(
                 copy_config=image_definition_pb2.CopyConfig(
-                    src=str(dst_path.relative_to(context_path)),
+                    src=dst_path.relative_to(context_path).as_posix(),
                     dst=str(layer.dst),
                 )
             )

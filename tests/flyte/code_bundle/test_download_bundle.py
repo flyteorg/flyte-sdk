@@ -66,6 +66,7 @@ def assert_extracted(dest: pathlib.Path):
 
 
 @pytest.mark.asyncio
+@needs_flock
 async def test_happy_path_tgz(tmp_path, tarball, monkeypatch):
     fake = CopyingGet(tarball)
     monkeypatch.setattr(flyte.storage, "get", fake)
@@ -117,6 +118,7 @@ async def test_waiter_sees_marker_written_by_lock_holder(tmp_path, tarball, monk
 
 
 @pytest.mark.asyncio
+@needs_flock
 async def test_stale_tgz_without_marker_is_redownloaded(tmp_path, tarball, monkeypatch):
     fake = CopyingGet(tarball)
     monkeypatch.setattr(flyte.storage, "get", fake)
@@ -130,6 +132,7 @@ async def test_stale_tgz_without_marker_is_redownloaded(tmp_path, tarball, monke
 
 
 @pytest.mark.asyncio
+@needs_flock
 async def test_corrupt_bundle_leaves_no_marker_and_retry_succeeds(tmp_path, tarball, monkeypatch):
     class GarbageGet(CopyingGet):
         async def __call__(self, remote: str, local: str, **kwargs):
@@ -230,6 +233,7 @@ async def test_marker_write_failure_is_non_fatal(tmp_path, tarball, monkeypatch)
     assert_extracted(tmp_path)
 
 
+@needs_flock
 @pytest.mark.asyncio
 async def test_pkl_branch(tmp_path, tarball, monkeypatch):
     name = "fastcafe.pkl.gz"

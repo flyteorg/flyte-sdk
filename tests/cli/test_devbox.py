@@ -9,6 +9,7 @@ the status snapshot behind `flyte get devbox`, and the platform assumptions
 
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -74,7 +75,10 @@ class TestRunContainerGpuFlag:
         kube_dir = tmp_path / "real-kube-dir"
         kube_dir.mkdir()
         kube_dir_symlink = tmp_path / "kube-dir-symlink"
-        kube_dir_symlink.symlink_to(kube_dir, target_is_directory=True)
+        try:
+            kube_dir_symlink.symlink_to(kube_dir, target_is_directory=True)
+        except OSError as e:
+            pytest.skip(f"Windows symlink creation is unavailable: {e}")
 
         with patch("flyte.cli._devbox.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stderr="")
@@ -112,6 +116,9 @@ class TestMergeKubeconfigRetry:
             assert mock_flatten.call_count == 1
             mock_run.assert_not_called()
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="kubectl chown retry is specific to POSIX root-owned kubeconfig files"
+    )
     def test_called_process_error_triggers_chown_and_retry(self, tmp_path):
         """This is the bug fix: on Linux, kubectl exits non-zero (CalledProcessError),
         not PermissionError. The retry branch must fire."""
@@ -137,6 +144,9 @@ class TestMergeKubeconfigRetry:
             assert docker_cmd[:4] == ["docker", "exec", "flyte-devbox", "chown"]
             assert docker_cmd[-1] == "/.kube/kubeconfig"
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="kubectl chown retry is specific to POSIX root-owned kubeconfig files"
+    )
     def test_permission_error_still_triggers_chown_and_retry(self, tmp_path):
         """Legacy path — macOS users opening the file directly — should still work."""
         kubeconfig = tmp_path / "kubeconfig"
@@ -177,6 +187,9 @@ class TestMergeKubeconfigRetry:
 
             assert "error loading config file" in str(exc_info.value)
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="kubectl chown retry is specific to POSIX root-owned kubeconfig files"
+    )
     def test_chown_failure_surfaces_as_click_exception(self, tmp_path):
         """A failing `docker exec ... chown` must not escape as a raw CalledProcessError."""
         kubeconfig = tmp_path / "kubeconfig"

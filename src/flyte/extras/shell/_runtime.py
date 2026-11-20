@@ -39,8 +39,8 @@ class _Shell:
     defaults: dict[str, Any] = field(default_factory=dict)
     shell: str = "/bin/bash"
     debug: bool = False
-    input_data_dir: pathlib.Path = pathlib.Path("/var/inputs")
-    output_data_dir: pathlib.Path = pathlib.Path("/var/outputs")
+    input_data_dir: pathlib.PurePosixPath = field(default_factory=lambda: pathlib.PurePosixPath("/var/inputs"))
+    output_data_dir: pathlib.PurePosixPath = field(default_factory=lambda: pathlib.PurePosixPath("/var/outputs"))
     resources: flyte.Resources | None = None
     retries: int = 0
     timeout: int | None = None
