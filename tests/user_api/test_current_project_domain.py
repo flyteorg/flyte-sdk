@@ -31,6 +31,13 @@ class TestCurrentProject:
         with pytest.raises(InitializationError):
             current_project()
 
+    @pytest.mark.parametrize("blank", ["", "   ", "\t"])
+    def test_current_project_raises_when_project_blank(self, blank):
+        """Regression for FLYTE-SDK-3A: a blank project is not a project."""
+        init_module._init_config = _InitConfig(root_dir=Path("/test"), project=blank)
+        with pytest.raises(InitializationError):
+            current_project()
+
 
 class TestCurrentDomain:
     @pytest.fixture(autouse=True)
@@ -49,5 +56,12 @@ class TestCurrentDomain:
 
     def test_current_domain_raises_when_domain_none(self):
         init_module._init_config = _InitConfig(root_dir=Path("/test"), domain=None)
+        with pytest.raises(InitializationError):
+            current_domain()
+
+    @pytest.mark.parametrize("blank", ["", "   ", "\t"])
+    def test_current_domain_raises_when_domain_blank(self, blank):
+        """Regression for FLYTE-SDK-3A: a blank domain is not a domain."""
+        init_module._init_config = _InitConfig(root_dir=Path("/test"), domain=blank)
         with pytest.raises(InitializationError):
             current_domain()
