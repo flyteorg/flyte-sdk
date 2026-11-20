@@ -1484,6 +1484,134 @@ async def test_cancel_after_launch_sends_abort_without_watch_update():
     await c.stop()
 
 
+class NeverEchoesService(DummyActionsService):
+    """Refuses the first enqueues as a control plane under load does, and never echoes the action on the watch."""
+
+    def __init__(self, refusals: int):
+        super().__init__(phases={})
+        self._refusals = refusals
+        self.attempts = 0
+
+    async def enqueue(self, req, **kwargs):
+        self.attempts += 1
+        if self.attempts <= self._refusals:
+            raise ConnectError(Code.UNAVAILABLE, "Request timed out")
+        return actions_service_pb2.EnqueueResponse()
+
+    async def watch_for_updates(self, req, **kwargs):
+        yield actions_service_pb2.WatchForUpdatesResponse(
+            control_message=state_service_pb2.ControlMessage(sentinel=True),
+        )
+        await asyncio.Event().wait()
+
+
+async def _trace_timeout_warnings(refusals: int) -> tuple[list, int]:
+    """Submits a trace whose watch never echoes it. Returns the `extra` of each trace warning, in order,
+    and how many times the launch was attempted by the time the wait returned."""
+    from unittest.mock import patch
+
+    from flyte._internal.controllers.remote import _core
+
+    run_id = _ce_make_run_id()
+    service = NeverEchoesService(refusals=refusals)
+
+    async def create_service():
+        return service
+
+    action = Action(
+        action_id=identifier_pb2.ActionIdentifier(name="trace-1", run=run_id),
+        parent_action_name="parent_action",
+        type="trace",
+        inputs_uri="input_uri",
+        run_output_base="run-base",
+    )
+    c = Controller(client_coro=create_service(), workers=2, max_system_retries=10, min_backoff_on_err_sec=0.2)
+    attempts = []
+
+    async def _run():
+        await c.submit_action(action)
+        attempts.append(service.attempts)
+        await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
+        await c.stop()
+
+    with patch.object(_core.logger, "warning", wraps=_core.logger.warning) as warning:
+        await run_coros(_run(), c.watch_for_errors())
+    extras = [call.kwargs.get("extra") for call in warning.call_args_list if "Trace " in call.args[0]]
+    return extras, attempts[0]
+
+
+@pytest.mark.asyncio
+async def test_a_trace_waits_for_its_launch_and_counts_the_wait(monkeypatch):
+    """Before: a trace whose launch was still retrying at the completion timeout was taken as recorded, so a
+    task that exited then lost it. Now the wait continues until the launch is accepted, and each timeout
+    spent waiting is counted."""
+    monkeypatch.setenv("_F_TRACE_COMPLETION_TIMEOUT", "0.1")
+    extras, attempts = await _trace_timeout_warnings(refusals=3)
+    pending = {"metric_type": "counter", "metric_name": "trace_record_unconfirmed", "reason": "launch_pending"}
+    assert attempts == 4
+    assert pending in extras
+    # Once launched, only the watch echo is late: the last warning is the old one, uncounted.
+    assert extras[-1] is None
+    assert all(extra == pending for extra in extras[:-1])
+
+
+@pytest.mark.asyncio
+async def test_a_launched_trace_still_times_out_as_before(monkeypatch):
+    """A launched trace is on the server; a late watch echo ends the wait at the timeout, uncounted."""
+    monkeypatch.setenv("_F_TRACE_COMPLETION_TIMEOUT", "0.3")
+    extras, attempts = await _trace_timeout_warnings(refusals=0)
+    assert attempts == 1
+    assert extras == [None]
+
+
+class AlwaysExhaustedService(NeverEchoesService):
+    """Refuses every enqueue as resource exhausted, which the controller retries without a cap."""
+
+    async def enqueue(self, req, **kwargs):
+        self.attempts += 1
+        raise ConnectError(Code.RESOURCE_EXHAUSTED, "rate limited")
+
+
+@pytest.mark.asyncio
+async def test_the_wait_for_an_unlaunched_trace_is_capped(monkeypatch):
+    """Launch retries on resource exhaustion never run out, so the wait for an unlaunched trace has its own
+    cap: the longest the ordinary launch retries can take. Past it the trace is counted and the task continues."""
+    from unittest.mock import patch
+
+    from flyte._internal.controllers.remote import _core
+
+    monkeypatch.setenv("_F_TRACE_COMPLETION_TIMEOUT", "0.1")
+    monkeypatch.setenv("_F_MAX_BFF_ON_ERR", "0.2")
+    run_id = _ce_make_run_id()
+    service = AlwaysExhaustedService(refusals=0)
+
+    async def create_service():
+        return service
+
+    action = Action(
+        action_id=identifier_pb2.ActionIdentifier(name="trace-1", run=run_id),
+        parent_action_name="parent_action",
+        type="trace",
+        inputs_uri="input_uri",
+        run_output_base="run-base",
+    )
+    # The cap is max_system_retries * _F_MAX_BFF_ON_ERR = 0.4s.
+    c = Controller(client_coro=create_service(), workers=2, max_system_retries=2, min_backoff_on_err_sec=0.05)
+
+    async def _run():
+        await asyncio.wait_for(c.submit_action(action), timeout=5)
+        await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
+        await c.stop()
+
+    with patch.object(_core.logger, "warning", wraps=_core.logger.warning) as warning:
+        await run_coros(_run(), c.watch_for_errors())
+
+    pending = {"metric_type": "counter", "metric_name": "trace_record_unconfirmed", "reason": "launch_pending"}
+    gave_up = [call for call in warning.call_args_list if "continuing anyway" in call.args[0]]
+    assert len(gave_up) == 1
+    assert gave_up[0].kwargs.get("extra") == pending
+
+
 class SlowToSyncService(DummyActionsService):
     """A watch whose first snapshot arrives late: a child recorded by an earlier attempt, then the sentinel."""
 
