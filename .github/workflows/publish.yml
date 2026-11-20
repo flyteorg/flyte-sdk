@@ -13,6 +13,10 @@ on:
       - ".github/workflows/publish.yml"
       - "maint_tools/build_default_image.py"
 
+# Read-only by default; a job that needs more declares it (see flyte-constraints).
+permissions:
+  contents: read
+
 env:
   # Release runs use the tag they fired on; manual reruns use the tag input.
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}

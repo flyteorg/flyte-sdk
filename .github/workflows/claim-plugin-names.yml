@@ -32,6 +32,9 @@ on:
     - cron: "23 14 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   # PyPI's new-project creation limit per account per 24h.
   MAX_NEW_PROJECTS: 4

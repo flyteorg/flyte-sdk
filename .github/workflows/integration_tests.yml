@@ -9,6 +9,9 @@ on:
       - 'examples/integration_tests.py'
       - '.github/workflows/integration_tests.yml'
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
