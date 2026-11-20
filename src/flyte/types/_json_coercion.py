@@ -141,12 +141,44 @@ async def coerce_json_value(
         return None
 
     py_type = unwrap_optional_type(py_type)
+    if py_type is Any or py_type is None:
+        return value
     origin = get_origin(py_type)
     args = get_args(py_type)
 
     if origin is list and isinstance(value, list):
         elem_type = args[0] if args else Any
         return [await coerce_json_value(v, elem_type, string_blob_converter=string_blob_converter) for v in value]
+
+    if (origin in (tuple, typing.Tuple) or py_type in (tuple, typing.Tuple)) and isinstance(value, (list, tuple)):
+        if len(args) == 2 and args[1] is ...:
+            elem_type = args[0]
+            return tuple(
+                [await coerce_json_value(v, elem_type, string_blob_converter=string_blob_converter) for v in value]
+            )
+        elif args:
+            if len(value) != len(args):
+                raise ValueError(f"Expected {len(args)} elements for {py_type}, got {len(value)}")
+            return tuple(
+                [
+                    await coerce_json_value(v, arg_type, string_blob_converter=string_blob_converter)
+                    for v, arg_type in zip(value, args)
+                ]
+            )
+        else:
+            return tuple([await coerce_json_value(v, Any, string_blob_converter=string_blob_converter) for v in value])
+
+    if (origin in (set, typing.Set) or py_type in (set, typing.Set)) and isinstance(value, (list, set, tuple)):
+        elem_type = args[0] if args else Any
+        return {await coerce_json_value(v, elem_type, string_blob_converter=string_blob_converter) for v in value}
+
+    if (origin in (frozenset, typing.FrozenSet) or py_type in (frozenset, typing.FrozenSet)) and isinstance(
+        value, (list, set, tuple, frozenset)
+    ):
+        elem_type = args[0] if args else Any
+        return frozenset(
+            [await coerce_json_value(v, elem_type, string_blob_converter=string_blob_converter) for v in value]
+        )
 
     if origin is dict and isinstance(value, dict):
         val_type = args[1] if len(args) >= 2 else Any
@@ -174,7 +206,8 @@ async def coerce_json_value(
     if scalar is not _NOT_A_SCALAR:
         return scalar
 
-    if isinstance(py_type, type) and isinstance(value, py_type):
+    raw_type = origin if origin is not None else py_type
+    if isinstance(raw_type, type) and isinstance(value, raw_type):
         return value
 
     if isinstance(value, str):
@@ -293,7 +326,21 @@ async def serialize_json_value(value: Any, py_type: Any | None = None) -> Any:
 
     origin = get_origin(py_type)
 
-    if origin is list and isinstance(value, list):
+    if (origin is list or (origin is None and isinstance(value, list))) and isinstance(value, list):
+        elem_type = get_args(py_type)[0] if get_args(py_type) else Any
+        return [await serialize_json_value(v, elem_type) for v in value]
+
+    if (origin in (tuple, typing.Tuple) or (origin is None and isinstance(value, tuple))) and isinstance(value, tuple):
+        args = get_args(py_type)
+        if args and not (len(args) == 2 and args[1] is ...):
+            return [await serialize_json_value(v, args[i] if i < len(args) else Any) for i, v in enumerate(value)]
+        elem_type = args[0] if args else Any
+        return [await serialize_json_value(v, elem_type) for v in value]
+
+    if (
+        origin in (set, frozenset, typing.Set, typing.FrozenSet)
+        or (origin is None and isinstance(value, (set, frozenset)))
+    ) and isinstance(value, (set, frozenset)):
         elem_type = get_args(py_type)[0] if get_args(py_type) else Any
         return [await serialize_json_value(v, elem_type) for v in value]
 

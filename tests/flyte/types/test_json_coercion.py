@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 import pytest
 
@@ -109,3 +110,208 @@ async def test_coerces_the_scalars_json_cannot_express():
         await coerce_json_value("green", Color)
     with pytest.raises(ValueError, match="not an ISO date"):
         await coerce_json_value("tomorrow", datetime.date)
+
+
+@dataclass
+class GeometryConfig:
+    coordinates: tuple[float, float]
+    tags: set[str]
+    frozen_ids: frozenset[int]
+
+
+@pytest.mark.asyncio
+async def test_coerce_json_value_tuple():
+    from flyte.types._json_coercion import coerce_json_value
+
+    # Fixed-length tuple
+    t1 = await coerce_json_value([1, "hello"], tuple[int, str])
+    assert t1 == (1, "hello")
+    assert isinstance(t1, tuple)
+
+    # Fixed-length tuple with scalar coercion (int to float)
+    t2 = await coerce_json_value([1, 2], tuple[float, float])
+    assert t2 == (1.0, 2.0)
+    assert isinstance(t2, tuple)
+
+    # Variable-length tuple
+    t3 = await coerce_json_value([1, 2, 3], tuple[int, ...])
+    assert t3 == (1, 2, 3)
+    assert isinstance(t3, tuple)
+
+    # Bare tuple
+    t4 = await coerce_json_value([1, "a"], tuple)
+    assert t4 == (1, "a")
+    assert isinstance(t4, tuple)
+
+    # Passthrough existing tuple
+    t5 = await coerce_json_value((1, 2), tuple[int, int])
+    assert t5 == (1, 2)
+    assert isinstance(t5, tuple)
+
+    # typing.Tuple alias
+    import typing
+
+    t6 = await coerce_json_value([1, "b"], typing.Tuple[int, str])
+    assert t6 == (1, "b")
+    assert isinstance(t6, tuple)
+
+    # Length mismatch raises ValueError
+    with pytest.raises(ValueError, match=r"Expected 2 elements for tuple\[int, str\], got 3"):
+        await coerce_json_value([1, "a", "extra"], tuple[int, str])
+    with pytest.raises(ValueError, match=r"Expected 2 elements for tuple\[int, str\], got 1"):
+        await coerce_json_value([1], tuple[int, str])
+
+
+@pytest.mark.asyncio
+async def test_coerce_json_value_set_and_frozenset():
+    from flyte.types._json_coercion import coerce_json_value
+
+    # Subscripted set
+    s1 = await coerce_json_value(["a", "b"], set[str])
+    assert s1 == {"a", "b"}
+    assert isinstance(s1, set)
+
+    # Bare set
+    s2 = await coerce_json_value([1, 2], set)
+    assert s2 == {1, 2}
+    assert isinstance(s2, set)
+
+    # Passthrough existing set
+    s3 = await coerce_json_value({"x", "y"}, set[str])
+    assert s3 == {"x", "y"}
+    assert isinstance(s3, set)
+
+    # Subscripted frozenset
+    fs1 = await coerce_json_value([1, 2], frozenset[int])
+    assert fs1 == frozenset({1, 2})
+    assert isinstance(fs1, frozenset)
+
+    # Bare frozenset
+    fs2 = await coerce_json_value([10, 20], frozenset)
+    assert fs2 == frozenset({10, 20})
+    assert isinstance(fs2, frozenset)
+
+    # typing.Set and typing.FrozenSet
+    import typing
+
+    s4 = await coerce_json_value(["z"], typing.Set[str])
+    assert s4 == {"z"}
+    assert isinstance(s4, set)
+
+    fs3 = await coerce_json_value([5], typing.FrozenSet[int])
+    assert fs3 == frozenset({5})
+    assert isinstance(fs3, frozenset)
+
+
+@pytest.mark.asyncio
+async def test_coerce_and_serialize_dataclass_with_collections():
+    from flyte.types._json_coercion import coerce_json_value, serialize_json_value
+
+    payload = {
+        "coordinates": [10.5, 20.5],
+        "tags": ["geo", "v1"],
+        "frozen_ids": [1, 2, 3],
+    }
+    config = await coerce_json_value(payload, GeometryConfig)
+    assert isinstance(config, GeometryConfig)
+    assert config.coordinates == (10.5, 20.5)
+    assert config.tags == {"geo", "v1"}
+    assert config.frozen_ids == frozenset({1, 2, 3})
+
+    serialized = await serialize_json_value(config)
+    assert serialized["coordinates"] == [10.5, 20.5]
+    assert set(serialized["tags"]) == {"geo", "v1"}
+    assert set(serialized["frozen_ids"]) == {1, 2, 3}
+
+    # Verify JSON serialization works without error
+    dumped = json.dumps(serialized)
+    assert '"coordinates": [10.5, 20.5]' in dumped
+
+
+@pytest.mark.asyncio
+async def test_serialize_json_value_tuple_and_set():
+    from flyte.types._json_coercion import serialize_json_value
+
+    # Tuple serialization to list
+    assert await serialize_json_value((1, 2)) == [1, 2]
+    assert await serialize_json_value((1, "a"), tuple[int, str]) == [1, "a"]
+    assert await serialize_json_value((1, 2, 3), tuple[int, ...]) == [1, 2, 3]
+
+    # Tuple with Flyte IO
+    files = (File(path="s3://b/1.csv"), File(path="s3://b/2.csv"))
+    res = await serialize_json_value(files, tuple[File, File])
+    assert isinstance(res, list)
+    assert res[0]["uri"] == "s3://b/1.csv"
+    assert res[1]["uri"] == "s3://b/2.csv"
+
+    # Set and frozenset serialization to list
+    s_res = await serialize_json_value({"apple", "banana"})
+    assert isinstance(s_res, list)
+    assert set(s_res) == {"apple", "banana"}
+
+    fs_res = await serialize_json_value(frozenset({10, 20}))
+    assert isinstance(fs_res, list)
+    assert set(fs_res) == {10, 20}
+
+
+@pytest.mark.asyncio
+async def test_coerce_and_serialize_nested_collections():
+    from flyte.types._json_coercion import (
+        coerce_json_args,
+        coerce_json_value,
+        coerce_json_value_sync,
+        serialize_json_value,
+        serialize_json_value_sync,
+    )
+
+    # Nested: list of tuples
+    nested_t = await coerce_json_value([[1, "a"], [2, "b"]], list[tuple[int, str]])
+    assert nested_t == [(1, "a"), (2, "b")]
+    assert isinstance(nested_t[0], tuple)
+
+    # Nested: dict of sets
+    nested_s = await coerce_json_value({"odd": [1, 3], "even": [2, 4]}, dict[str, set[int]])
+    assert nested_s == {"odd": {1, 3}, "even": {2, 4}}
+    assert isinstance(nested_s["odd"], set)
+
+    # Serialize back
+    s_t = await serialize_json_value(nested_t, list[tuple[int, str]])
+    assert s_t == [[1, "a"], [2, "b"]]
+
+    s_s = await serialize_json_value(nested_s, dict[str, set[int]])
+    assert set(s_s["odd"]) == {1, 3}
+    assert set(s_s["even"]) == {2, 4}
+
+    # Synchronous wrappers
+    sync_t = coerce_json_value_sync([10, "sync"], tuple[int, str])
+    assert sync_t == (10, "sync")
+    assert serialize_json_value_sync(sync_t, tuple[int, str]) == [10, "sync"]
+
+    # coerce_json_args
+    args = {"point": [3.5, 4.5], "tags": ["alpha", "beta"]}
+    inputs = {"point": (tuple[float, float], None), "tags": (set[str], None)}
+    coerced_args = await coerce_json_args(args, inputs)
+    assert coerced_args["point"] == (3.5, 4.5)
+    assert coerced_args["tags"] == {"alpha", "beta"}
+
+
+@pytest.mark.asyncio
+async def test_coerce_json_value_generic_passthrough():
+    import typing
+
+    from flyte.types._json_coercion import coerce_json_value
+
+    _T = typing.TypeVar("_T")
+
+    class CustomBox(typing.Generic[_T]):
+        def __init__(self, value: _T):
+            self.value = value
+
+    box = CustomBox[int](42)
+    # Parameterized generic where origin is CustomBox
+    res = await coerce_json_value(box, CustomBox[int])
+    assert res is box
+
+    # Any and None passthrough
+    assert await coerce_json_value(123, typing.Any) == 123
+    assert await coerce_json_value("foo", None) == "foo"
