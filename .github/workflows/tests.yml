@@ -23,9 +23,11 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up the environment
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -53,9 +55,11 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up the environment
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
         with:
           python-version: "3.12"
 
@@ -69,6 +73,8 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Find plugins with tests
         id: find
@@ -93,9 +99,11 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up the environment
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -126,9 +134,11 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up the environment
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
         with:
           python-version: ${{ matrix.python-version }}
 

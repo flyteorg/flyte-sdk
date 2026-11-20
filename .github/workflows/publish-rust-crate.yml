@@ -37,17 +37,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Cache Cargo registry and build
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            rs_controller/target
-          key: ${{ runner.os }}-cargo-publish-${{ hashFiles('rs_controller/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-publish-
-
       - name: Install toolchain
         run: rustup toolchain install
 
