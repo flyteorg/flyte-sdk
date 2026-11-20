@@ -605,6 +605,28 @@ def _auth_overrides_from_env() -> dict[str, typing.Any]:
     return overrides
 
 
+_AUTH_PRECEDENCE_ENV_VAR = "FLYTE_AUTH_PRECEDENCE"
+# The env-resolved credential sources of a task pod, in their default order.
+_AUTH_SOURCES = ("auth-env", "workload-identity", "api-key")
+
+
+def _auth_precedence() -> list[str]:
+    """The order in which `init_in_cluster` tries a task pod's env-resolved credential sources.
+
+    `FLYTE_AUTH_PRECEDENCE` names the sources to try first, comma-separated; the ones it leaves out
+    follow in their default order. Names this SDK does not know are ignored, so a value written for a
+    newer SDK still works on this one.
+    """
+    preferred: list[str] = []
+    for entry in os.getenv(_AUTH_PRECEDENCE_ENV_VAR, "").split(","):
+        name = entry.strip().lower()
+        if name in _AUTH_SOURCES and name not in preferred:
+            preferred.append(name)
+        elif name and name not in preferred:
+            logger.debug(f"Ignoring unknown auth source '{name}' in {_AUTH_PRECEDENCE_ENV_VAR}")
+    return preferred + [source for source in _AUTH_SOURCES if source not in preferred]
+
+
 @syncify
 async def init_in_cluster(
     org: str | None = None,
@@ -644,10 +666,18 @@ async def init_in_cluster(
     an auth one, so it keeps the derived name). `FLYTE_AUTH_PROXY_COMMAND` configures a token
     command for an authenticating proxy in front of Flyte, independently of the auth type.
 
-    The order above is the default. A cluster that sets `FLYTE_AUTH_TYPE` on every pod can also set
-    `FLYTE_AUTH_PREFER_WORKLOAD_IDENTITY=1`: a pod that has a workload identity (4) then uses it
-    instead of the auth env vars (3), and a pod without one keeps them. One cluster setting then
-    serves images that predate workload identity, which ignore the flag, and newer ones.
+    The order of 3 to 5 is the default, and `FLYTE_AUTH_PRECEDENCE` changes it. It is a comma-separated
+    list of `auth-env` (3), `workload-identity` (4) and `api-key` (5): the sources named are tried first,
+    in that order, and the ones left out follow in their default order. A source the pod does not have
+    is skipped, and a name this SDK does not know is ignored. For example, a cluster that sets
+    `FLYTE_AUTH_TYPE` on every pod can add
+
+    ```
+    FLYTE_AUTH_PRECEDENCE=workload-identity
+    ```
+
+    so that a pod with a workload identity uses it and a pod without one keeps the auth type. One
+    cluster setting then serves images that predate this variable, which ignore it, and newer ones.
 
     `FLYTE_AUTH_TYPE` / `FLYTE_AUTH_COMMAND` / `FLYTE_AUTH_PROXY_COMMAND` are the preferred
     names; the ones derived from the config keys (`FLYTE_ADMIN_AUTHTYPE`, `FLYTE_ADMIN_COMMAND`,
@@ -677,7 +707,6 @@ async def init_in_cluster(
     INSECURE_OVERRIDE = "_U_INSECURE"
     _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
     EAGER_API_KEY = "EAGER_API_KEY"
-    PREFER_WORKLOAD_IDENTITY = "FLYTE_AUTH_PREFER_WORKLOAD_IDENTITY"
 
     # When the cluster mounts a credentials config file (typical for the
     # file-mounted client-secret deploy path), prefer it over the legacy
@@ -728,21 +757,28 @@ async def init_in_cluster(
     # explicit auth type wins over the injected key so the two can never fight:
     # once it is set we do not even look at EAGER_API_KEY / _UNION_EAGER_API_KEY.
     auth_overrides = _auth_overrides_from_env()
-    # A cluster that sets one auth type on every pod can ask pods that have a workload identity to
-    # use it instead. Images too old to know workload identity ignore this and keep the auth type.
-    prefer_workload_identity = str2bool(os.getenv(PREFER_WORKLOAD_IDENTITY, ""))
-    if api_key is None and ("auth_type" not in auth_overrides or prefer_workload_identity):
-        # Checked inline, not through the authenticator's module, which this path must not import at
-        # startup (the names match workload_token.WORKLOAD_ENV_VAR / TOKEN_FILE_ENV_VAR).
-        workload_token_file = os.getenv("_U_WORKLOAD_TOKEN_FILE")
-        if os.getenv("_U_WORKLOAD") and workload_token_file and os.path.exists(workload_token_file):
-            # Workload identity: authenticate as the run's creator with the pod's own projected
-            # service-account token, and ignore any injected api key.
-            auth_overrides["auth_type"] = "WorkloadToken"
-            # The token command belongs to the auth type this replaces.
-            auth_overrides.pop("command", None)
-        elif "auth_type" not in auth_overrides:
-            api_key = os.getenv(_UNION_EAGER_API_KEY_ENV_VAR) or os.getenv(EAGER_API_KEY)
+    api_key_supplied = api_key is not None
+    if not api_key_supplied:
+        # The first source this pod has wins; the rest are not consulted.
+        for source in _auth_precedence():
+            if source == "auth-env" and "auth_type" in auth_overrides:
+                break
+            if source == "workload-identity":
+                # Checked inline, not through the authenticator's module, which this path must not import
+                # at startup (the names match workload_token.WORKLOAD_ENV_VAR / TOKEN_FILE_ENV_VAR).
+                workload_token_file = os.getenv("_U_WORKLOAD_TOKEN_FILE")
+                if os.getenv("_U_WORKLOAD") and workload_token_file and os.path.exists(workload_token_file):
+                    # Workload identity: authenticate as the run's creator with the pod's own projected
+                    # service-account token, and ignore any injected api key.
+                    if "auth_type" in auth_overrides:
+                        # The token command belongs to the auth type this replaces.
+                        auth_overrides.pop("command", None)
+                    auth_overrides["auth_type"] = "WorkloadToken"
+                    break
+            if source == "api-key":
+                api_key = os.getenv(_UNION_EAGER_API_KEY_ENV_VAR) or os.getenv(EAGER_API_KEY)
+                if api_key:
+                    break
 
     remote_kwargs: dict[str, typing.Any] = {"insecure": insecure}
     if api_key:
@@ -751,9 +787,8 @@ async def init_in_cluster(
         if auth_overrides:
             # An api key is a self-contained ClientSecret credential (it decodes to
             # endpoint + client id + secret), so honoring both is not possible.
-            logger.warning(
-                f"Ignoring env-var auth override {sorted(auth_overrides)} because an api key was supplied explicitly."
-            )
+            reason = "was supplied explicitly" if api_key_supplied else "takes precedence"
+            logger.warning(f"Ignoring env-var auth override {sorted(auth_overrides)} because an api key {reason}.")
     else:
         from flyte.config import _internal
 
