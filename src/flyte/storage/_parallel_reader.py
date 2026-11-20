@@ -288,7 +288,7 @@ class ObstoreParallelReader:
 
     async def download_files(
         self,
-        src_prefix: pathlib.Path,
+        src_prefix: pathlib.PurePath,
         target_prefix: pathlib.Path,
         *paths,
         destination_file_name: str | None = None,
@@ -296,7 +296,8 @@ class ObstoreParallelReader:
     ) -> None:
         """
         src_prefix: Prefix you want to download from in the object store, not including the bucket name, nor file name.
-                    Should be replaced with string
+                    It is a remote object-store key, so pass a PurePosixPath (or "/"-joined string) to keep forward
+                    slashes on every OS.
         target_prefix: Local directory to download to
         paths: Specific paths (relative to src_prefix) to download. If empty, download everything
         exclude: List of patterns to exclude from the download.
