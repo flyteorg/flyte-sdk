@@ -13,6 +13,21 @@ from flyte._constants import FLYTE_SYS_PATH
 from flyte._logging import logger
 
 
+def _names_missing_module(err: ModuleNotFoundError, mod: str) -> bool:
+    """Whether `err` reports that `mod` itself -- rather than one of its imports -- is absent.
+
+    `importlib.import_module(mod)` raises `ModuleNotFoundError` both when `mod` does not exist
+    and when `mod` imports something that does not exist. Only the first means "this directory
+    is not an importable package"; the second is a user dependency error worth surfacing.
+    `ModuleNotFoundError.name` distinguishes them.
+    """
+    name = err.name
+    if not name:
+        # No name to compare against, so keep the historical skip-and-continue behaviour.
+        return True
+    return mod == name or mod.startswith(f"{name}.")
+
+
 def _relative_to_root(path: Path, root_dir: Path) -> Path:
     """Resolve `path` relative to `root_dir` and translate `ValueError` into a clear ClickException.
 
@@ -92,11 +107,31 @@ def load_python_modules(
             # If no .py files found, try importing as a module
             try:
                 rel_path = path.resolve().relative_to(root_dir)
+            except ValueError:
+                # Outside the root, so there is no module name to import it under.
+                rel_path = None
+            if rel_path is not None:
                 mod = ".".join(rel_path.parts)
-                imported_module = importlib.import_module(mod)
-                loaded_modules.append(imported_module)
-            except (ValueError, ModuleNotFoundError):
-                pass
+                try:
+                    imported_module = importlib.import_module(mod)
+                    loaded_modules.append(imported_module)
+                except flyte.errors.ModuleLoadError as e:
+                    failed_paths.append((path, str(e)))
+                except ModuleNotFoundError as e:
+                    # `mod` itself not being importable just means this directory is not a
+                    # package, which is the case this branch has always skipped. A module
+                    # missing from *inside* the package's `__init__.py` is a different thing
+                    # -- a user dependency error -- and swallowing it silently deploys zero
+                    # environments with no explanation.
+                    if not _names_missing_module(e, mod):
+                        failed_paths.append((path, f"{type(e).__name__}: {e}"))
+                except Exception as e:
+                    # Anything else raised inside `importlib.import_module(<user-package>)` is an
+                    # error in the user's `__init__.py` or one of its third-party imports, not an
+                    # SDK bug. Record it as a load failure (consistent with the .py-file branch
+                    # below) so deploy surfaces a clean message via `--ignore-load-errors`
+                    # instead of crash-reporting to Sentry.
+                    failed_paths.append((path, f"{type(e).__name__}: {e}"))
         else:
             with Progress(
                 TextColumn("[progress.description]{task.description}"),
