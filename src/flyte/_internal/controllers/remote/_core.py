@@ -100,7 +100,8 @@ class Controller:
         self._failure_event: Event | None = None
         self._enqueue_timeout = enqueue_timeout_sec
         self._consecutive_launch_timeouts = 0
-        self._informer_start_wait_timeout = thread_wait_timeout_sec
+        # How long to wait for an informer's first sync; a lookup made after it expires reads an unsynced cache.
+        self._informer_start_wait_timeout = float(os.getenv("_F_INFORMER_SYNC_TIMEOUT", thread_wait_timeout_sec))
         max_qps = int(os.getenv("_F_MAX_QPS", "100"))
         self._rate_limiter = AsyncLimiter(max_qps, 1.0)
 

@@ -1610,3 +1610,60 @@ async def test_the_wait_for_an_unlaunched_trace_is_capped(monkeypatch):
     gave_up = [call for call in warning.call_args_list if "continuing anyway" in call.args[0]]
     assert len(gave_up) == 1
     assert gave_up[0].kwargs.get("extra") == pending
+
+
+class SlowToSyncService(DummyActionsService):
+    """A watch whose first snapshot arrives late: a child recorded by an earlier attempt, then the sentinel."""
+
+    def __init__(self, sync_delay: float):
+        super().__init__(phases={})
+        self._sync_delay = sync_delay
+
+    async def watch_for_updates(self, req, **kwargs):
+        await asyncio.sleep(self._sync_delay)
+        yield actions_service_pb2.WatchForUpdatesResponse(
+            action_update=state_service_pb2.ActionUpdate(
+                action_id=identifier_pb2.ActionIdentifier(name="recorded", run=req.parent_action_id.run),
+                phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+                output_uri="s3://out/recorded",
+            )
+        )
+        yield actions_service_pb2.WatchForUpdatesResponse(
+            control_message=state_service_pb2.ControlMessage(sentinel=True),
+        )
+        await asyncio.Event().wait()
+
+
+async def _lookup_recorded_action(sync_delay: float):
+    run_id = _ce_make_run_id()
+    service = SlowToSyncService(sync_delay=sync_delay)
+
+    async def create_service():
+        return service
+
+    c = Controller(client_coro=create_service(), workers=2, max_system_retries=2, thread_wait_timeout_sec=0.05)
+    found = []
+
+    async def _run():
+        found.append(await c.get_action(identifier_pb2.ActionIdentifier(name="recorded", run=run_id), "parent_action"))
+        await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
+        await c.stop()
+
+    await run_coros(_run(), c.watch_for_errors())
+    return found[0]
+
+
+@pytest.mark.asyncio
+async def test_informer_sync_timeout_is_configurable(monkeypatch):
+    """_F_INFORMER_SYNC_TIMEOUT lets a lookup wait out a first sync slower than the default."""
+    monkeypatch.setenv("_F_INFORMER_SYNC_TIMEOUT", "5")
+    found = await _lookup_recorded_action(sync_delay=0.5)
+    assert found is not None
+    assert found.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
+
+
+@pytest.mark.asyncio
+async def test_informer_sync_timeout_default_is_unchanged(monkeypatch):
+    """Without the setting the wait is the controller's existing timeout, and the lookup misses as before."""
+    monkeypatch.delenv("_F_INFORMER_SYNC_TIMEOUT", raising=False)
+    assert await _lookup_recorded_action(sync_delay=0.5) is None
