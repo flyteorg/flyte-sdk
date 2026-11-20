@@ -513,8 +513,8 @@ def _stream_to_remote_dir(
                     flyte.report.flush()
                     last_flush = now
         except BaseException:
-            for f in futures:
-                f.cancel()
+            for pending in futures:
+                pending.cancel()
             raise
 
     return remote_dir_path, card
