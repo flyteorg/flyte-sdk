@@ -39,6 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: "0"
           ref: ${{ inputs.tag || github.ref }}
       - name: Set version from tag
@@ -110,6 +111,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: "0"
           ref: ${{ inputs.tag || github.ref }}
       - name: Set up Python
@@ -183,6 +185,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: "0"
           ref: ${{ inputs.tag || github.ref }}
       - name: Install uv
@@ -239,6 +242,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: "0"
           ref: ${{ inputs.tag || github.ref }}
       - name: Find every distribution that claims a flyteplugins name
@@ -278,6 +282,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: "0"
           ref: ${{ inputs.tag || github.ref }}
       - name: Set up Python
@@ -337,6 +342,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: "0"
           ref: ${{ inputs.tag || github.ref }}
       - name: Set up QEMU
