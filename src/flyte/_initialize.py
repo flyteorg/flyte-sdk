@@ -644,6 +644,11 @@ async def init_in_cluster(
     an auth one, so it keeps the derived name). `FLYTE_AUTH_PROXY_COMMAND` configures a token
     command for an authenticating proxy in front of Flyte, independently of the auth type.
 
+    The order above is the default. A cluster that sets `FLYTE_AUTH_TYPE` on every pod can also set
+    `FLYTE_AUTH_PREFER_WORKLOAD_IDENTITY=1`: a pod that has a workload identity (4) then uses it
+    instead of the auth env vars (3), and a pod without one keeps them. One cluster setting then
+    serves images that predate workload identity, which ignore the flag, and newer ones.
+
     `FLYTE_AUTH_TYPE` / `FLYTE_AUTH_COMMAND` / `FLYTE_AUTH_PROXY_COMMAND` are the preferred
     names; the ones derived from the config keys (`FLYTE_ADMIN_AUTHTYPE`, `FLYTE_ADMIN_COMMAND`,
     `FLYTE_ADMIN_PROXYCOMMAND`) remain accepted.
@@ -672,6 +677,7 @@ async def init_in_cluster(
     INSECURE_OVERRIDE = "_U_INSECURE"
     _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
     EAGER_API_KEY = "EAGER_API_KEY"
+    PREFER_WORKLOAD_IDENTITY = "FLYTE_AUTH_PREFER_WORKLOAD_IDENTITY"
 
     # When the cluster mounts a credentials config file (typical for the
     # file-mounted client-secret deploy path), prefer it over the legacy
@@ -722,7 +728,10 @@ async def init_in_cluster(
     # explicit auth type wins over the injected key so the two can never fight:
     # once it is set we do not even look at EAGER_API_KEY / _UNION_EAGER_API_KEY.
     auth_overrides = _auth_overrides_from_env()
-    if api_key is None and "auth_type" not in auth_overrides:
+    # A cluster that sets one auth type on every pod can ask pods that have a workload identity to
+    # use it instead. Images too old to know workload identity ignore this and keep the auth type.
+    prefer_workload_identity = str2bool(os.getenv(PREFER_WORKLOAD_IDENTITY, ""))
+    if api_key is None and ("auth_type" not in auth_overrides or prefer_workload_identity):
         # Checked inline, not through the authenticator's module, which this path must not import at
         # startup (the names match workload_token.WORKLOAD_ENV_VAR / TOKEN_FILE_ENV_VAR).
         workload_token_file = os.getenv("_U_WORKLOAD_TOKEN_FILE")
@@ -730,7 +739,9 @@ async def init_in_cluster(
             # Workload identity: authenticate as the run's creator with the pod's own projected
             # service-account token, and ignore any injected api key.
             auth_overrides["auth_type"] = "WorkloadToken"
-        else:
+            # The token command belongs to the auth type this replaces.
+            auth_overrides.pop("command", None)
+        elif "auth_type" not in auth_overrides:
             api_key = os.getenv(_UNION_EAGER_API_KEY_ENV_VAR) or os.getenv(EAGER_API_KEY)
 
     remote_kwargs: dict[str, typing.Any] = {"insecure": insecure}

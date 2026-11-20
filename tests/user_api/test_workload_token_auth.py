@@ -21,7 +21,14 @@ WORKLOAD = "acme/p/development/r1/a0/1"
 @pytest.fixture
 def pod(monkeypatch, tmp_path):
     """A task pod: endpoint and api key injected, plus workload identity when enabled."""
-    for var in ("UCTL_CONFIG", "FLYTECTL_CONFIG", "FLYTE_AUTH_TYPE", "FLYTE_ADMIN_AUTHTYPE", "FLYTE_AUTH_COMMAND"):
+    for var in (
+        "UCTL_CONFIG",
+        "FLYTECTL_CONFIG",
+        "FLYTE_AUTH_TYPE",
+        "FLYTE_ADMIN_AUTHTYPE",
+        "FLYTE_AUTH_COMMAND",
+        "FLYTE_AUTH_PREFER_WORKLOAD_IDENTITY",
+    ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("_U_EP_OVERRIDE", "dns:///acme.union.ai:443")
     monkeypatch.setenv("_UNION_EAGER_API_KEY", "legacy-composite-token")
@@ -51,6 +58,33 @@ class TestInitInCluster:
         with patch("flyte._initialize.init", new_callable=AsyncMock):
             controller_kwargs = await init_in_cluster.aio()
         assert controller_kwargs["auth_type"] == "ExternalCommand"
+
+    @pytest.mark.asyncio
+    async def test_workload_identity_wins_over_the_auth_type_when_preferred(self, pod):
+        """A cluster that sets one auth type on every pod opts pods with a workload identity into it."""
+        env, _ = pod
+        env.setenv("FLYTE_AUTH_TYPE", "ExternalCommand")
+        env.setenv("FLYTE_AUTH_COMMAND", "mint-token")
+        env.setenv("FLYTE_AUTH_PREFER_WORKLOAD_IDENTITY", "1")
+        with patch("flyte._initialize.init", new_callable=AsyncMock):
+            controller_kwargs = await init_in_cluster.aio()
+        assert controller_kwargs["auth_type"] == "WorkloadToken"
+        assert "command" not in controller_kwargs
+        assert "api_key" not in controller_kwargs
+
+    @pytest.mark.asyncio
+    async def test_preferring_workload_identity_keeps_the_auth_type_without_one(self, pod):
+        """On a pod the platform gave no workload identity, the preference changes nothing."""
+        env, token = pod
+        token.unlink()
+        env.setenv("FLYTE_AUTH_TYPE", "ExternalCommand")
+        env.setenv("FLYTE_AUTH_COMMAND", "mint-token")
+        env.setenv("FLYTE_AUTH_PREFER_WORKLOAD_IDENTITY", "1")
+        with patch("flyte._initialize.init", new_callable=AsyncMock):
+            controller_kwargs = await init_in_cluster.aio()
+        assert controller_kwargs["auth_type"] == "ExternalCommand"
+        assert controller_kwargs["command"] == ["mint-token"]
+        assert "api_key" not in controller_kwargs
 
     @pytest.mark.asyncio
     async def test_without_a_token_file_the_api_key_is_used(self, pod):
