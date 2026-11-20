@@ -1,5 +1,6 @@
 import math
 import os
+import pathlib
 import tempfile
 import unittest
 
@@ -263,6 +264,41 @@ async def test_put_routes_through_obstore_bypass(monkeypatch):
     assert captured[0]["remote_key"] == "path/to/obj"
     assert captured[0]["chunk_size"] == _UPLOAD_CHUNK_FLOOR
     assert captured[0]["max_concurrency"] == _UPLOAD_MAX_CONCURRENCY
+
+
+@pytest.mark.asyncio
+async def test_get_obstore_bypass_single_file_builds_posix_key(monkeypatch, tmp_path):
+    """Regression test for flyteorg/flyte#8356.
+
+    The single-file obstore download bypass must build the remote object-store key with
+    PurePosixPath (not os-dependent pathlib.Path), otherwise on Windows the key passed to
+    ObstoreParallelReader.download_files becomes backslash-separated and obstore.head_async
+    cannot find the object. This is deterministic cross-platform: on Linux a regression to
+    pathlib.Path would yield a concrete PosixPath rather than a PurePosixPath.
+    """
+    from flyte.storage import _parallel_reader, _storage
+
+    captured = {}
+
+    class _CaptureReader:
+        def __init__(self, store, **kwargs):
+            pass
+
+        async def download_files(self, src_prefix, target_prefix, *paths, destination_file_name=None, exclude=None):
+            captured["src_prefix"] = src_prefix
+            captured["paths"] = paths
+
+    monkeypatch.setattr(_storage, "get_underlying_filesystem", lambda path: _FakeObstoreFS([]))
+    monkeypatch.setattr(_parallel_reader, "ObstoreParallelReader", _CaptureReader)
+
+    await storage.get("gs://bucket/models/weights/file.pt", str(tmp_path / "out.pt"))
+
+    # The remote key must stay "/"-separated on every OS, exactly as download_files'
+    # head path reconstructs it (`src_prefix / path_`).
+    assert type(captured["src_prefix"]) is pathlib.PurePosixPath
+    reconstructed = str(captured["src_prefix"] / captured["paths"][0])
+    assert reconstructed == "models/weights/file.pt"
+    assert "\\" not in reconstructed
 
 
 class _FakeWritableFile:

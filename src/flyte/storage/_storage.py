@@ -299,8 +299,11 @@ async def _get_obstore_bypass(
 
     # if not recursive, we need to split out the file name from the prefix
     else:
-        path_for_reader = pathlib.Path(prefix).name
-        final_prefix = pathlib.Path(prefix).parent
+        # `prefix` is a remote object-store key, which is always "/"-separated. Use PurePosixPath
+        # (not os-dependent pathlib.Path) so the key keeps forward slashes on Windows; otherwise it
+        # becomes a WindowsPath and the backslash key sent to obstore.head_async is not found.
+        path_for_reader = pathlib.PurePosixPath(prefix).name
+        final_prefix = pathlib.PurePosixPath(prefix).parent
         logger.debug(f"Downloading single file {final_prefix=}, {path_for_reader=} to {target_path=}")
         await reader.download_files(
             final_prefix,
