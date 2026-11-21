@@ -20,6 +20,7 @@ from google.protobuf.wrappers_pb2 import StringValue
 import flyte.errors
 from flyte._logging import log, logger
 from flyte._utils.helpers import jittered
+from flyte._workload_action import acting_for
 
 from ._action import Action
 from ._informer import InformerCache
@@ -39,7 +40,12 @@ _LAUNCH_TIMEOUTS_BEFORE_NEW_CONNECTION = 3
 
 
 def _actions_metadata(action: Action) -> dict[str, str]:
-    """Build request headers for Actions service calls."""
+    """
+    Build request headers for Actions service calls.
+
+    They name the parent action, which makes the call; a pod workload token also names it as the action the request
+    is made for (see flyte._workload_action). Calls without them (the queue service) use `acting_for` instead.
+    """
     run = action.action_id.run
     return {
         "x-actions-project": run.project,
@@ -411,9 +417,10 @@ class Controller:
                             headers=_actions_metadata(action),
                         )
                     else:
-                        await self._queue_service.abort_queued_action(
-                            queue_service_pb2.AbortQueuedActionRequest(action_id=action.action_id),
-                        )
+                        with acting_for(action.run_name, action.parent_action_name):
+                            await self._queue_service.abort_queued_action(
+                                queue_service_pb2.AbortQueuedActionRequest(action_id=action.action_id),
+                            )
                     logger.info(f"Successfully cancelled action: {action.name}")
                 except ConnectError as e:
                     if e.code in [
@@ -501,18 +508,19 @@ class Controller:
                                 f"enqueues through the queue service, which cannot carry it. Overrides need the "
                                 f"actions service ({ACTIONS_SERVICE_CHECK_ENV_VAR}=1).",
                             )
-                        await self._queue_service.enqueue_action(
-                            queue_service_pb2.EnqueueActionRequest(
-                                action_id=action.action_id,
-                                parent_action_name=action.parent_action_name,
-                                task=task,
-                                trace=trace,
-                                input_uri=action.inputs_uri,
-                                run_output_base=action.run_output_base,
-                                group=action.group.name if action.group else None,
-                            ),
-                            timeout_ms=int(self._enqueue_timeout * 1000),
-                        )
+                        with acting_for(action.run_name, action.parent_action_name):
+                            await self._queue_service.enqueue_action(
+                                queue_service_pb2.EnqueueActionRequest(
+                                    action_id=action.action_id,
+                                    parent_action_name=action.parent_action_name,
+                                    task=task,
+                                    trace=trace,
+                                    input_uri=action.inputs_uri,
+                                    run_output_base=action.run_output_base,
+                                    group=action.group.name if action.group else None,
+                                ),
+                                timeout_ms=int(self._enqueue_timeout * 1000),
+                            )
                     logger.info(f"Successfully launched action: {action.name}")
                     self._consecutive_launch_timeouts = 0
                     action.mark_started()

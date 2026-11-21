@@ -5,12 +5,15 @@ import typing
 from pathlib import Path
 
 from flyte._logging import logger
+from flyte._workload_action import WORKLOAD_ACTION_HEADER, current_workload_action, is_pod_workload
 from flyte.remote._client.auth._authenticators.base import Authenticator, AuthHeaders
 from flyte.remote._client.auth._keyring import Credentials
 from flyte.remote._client.auth.errors import AuthenticationError
 
-# Set on task pods by the platform when workload identity is enabled: the action attempt the pod runs
-# (<org>/<project>/<domain>/<run>/<action>/<attempt>) and its projected service-account token.
+# Set on task pods by the platform when workload identity is enabled: the workload the pod runs and its projected
+# service-account token. The workload is the action attempt (<org>/<project>/<domain>/<run>/<action>/<attempt>), an app
+# (app/...), or, for a reusable worker pod that runs many actions, the pod itself
+# (pod/<org>/<project>/<domain>/<cluster>/<namespace>/<pod-name>).
 WORKLOAD_ENV_VAR = "_U_WORKLOAD"
 TOKEN_FILE_ENV_VAR = "_U_WORKLOAD_TOKEN_FILE"
 # The header naming the attempt; the control plane accepts the token only for it.
@@ -65,6 +68,17 @@ class WorkloadTokenAuthenticator(Authenticator):
         self._read_at = time.monotonic()
         logger.debug(f"Read the workload token for {self._workload}")
         return Credentials(for_endpoint=self._endpoint, access_token=token)
+
+    def workload_action_headers(self, request_headers: typing.Optional[typing.Mapping[str, str]] = None) -> dict:
+        """
+        The extra headers a request with these headers must carry: for a pod workload, the action the request is made
+        for (`x-union-workload-action`, see `flyte._workload_action`). Empty for an attempt or app workload, when no
+        action is known, and once the authenticator has fallen back to the api key.
+        """
+        if self._fallback is not None or not is_pod_workload(self._workload):
+            return {}
+        action = current_workload_action(request_headers)
+        return {WORKLOAD_ACTION_HEADER: action} if action else {}
 
     async def get_auth_headers(self) -> typing.Optional[AuthHeaders]:
         if self._fallback is not None:

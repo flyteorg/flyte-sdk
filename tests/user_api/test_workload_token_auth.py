@@ -346,3 +346,218 @@ def test_rusty_keeps_the_callers_endpoint_off_platform(monkeypatch):
     asyncio.run(rusty.create_controller(endpoint="dns:///host.docker.internal:8090", insecure=True))
     assert seen["endpoint"] == "dns:///host.docker.internal:8090"
     assert seen["insecure"] is True
+
+
+POD_WORKLOAD = "pod/acme/p/development/c1/ns/worker-0"
+ACTION_HEADER = "x-union-workload-action"
+
+
+class _Ctx:
+    """A connectrpc RequestContext with the headers the call site passed."""
+
+    def __init__(self, headers=None):
+        self._h = dict(headers or {})
+
+    def request_headers(self):
+        return self._h
+
+
+async def _send(auth, headers=None) -> dict:
+    """Sends a unary request through the auth interceptor and returns the headers it went out with."""
+    from flyte.remote._client.auth._interceptors.auth import AuthUnaryInterceptor
+
+    sent = []
+
+    async def call_next(request, ctx):
+        sent.append(dict(ctx.request_headers()))
+        return "ok"
+
+    await AuthUnaryInterceptor(lambda: auth).intercept_unary(call_next, object(), _Ctx(headers))
+    return sent[0]
+
+
+def _task_context(run_name: str, action_name: str):
+    from flyte.models import ActionID, RawDataPath, TaskContext
+
+    return TaskContext(
+        action=ActionID(name=action_name, run_name=run_name, project="p", domain="development", org="acme"),
+        run_base_dir="s3://bucket/run",
+        output_path="s3://bucket/run/out",
+        raw_data_path=RawDataPath(path="s3://bucket/raw"),
+        version="v1",
+        report=None,
+    )
+
+
+def _launch_controller(auth, *, actions_service: bool):
+    """A controller whose enqueue goes through the auth interceptor, recording the headers sent."""
+    import asyncio
+
+    from aiolimiter import AsyncLimiter
+
+    from flyte._internal.controllers.remote._core import Controller
+
+    controller = object.__new__(Controller)
+    controller._running = True
+    controller._shared_queue = asyncio.Queue()
+    controller._rate_limiter = AsyncLimiter(100, 1.0)
+    controller._enqueue_timeout = 1.0
+    controller._consecutive_launch_timeouts = 0
+    sent = []
+
+    async def enqueue(_req, timeout_ms=None, headers=None):
+        sent.append(await _send(auth, headers))
+
+    service = AsyncMock()
+    if actions_service:
+        service.enqueue.side_effect = enqueue
+        controller._actions_service = service
+        controller._queue_service = None
+    else:
+        service.enqueue_action.side_effect = enqueue
+        controller._actions_service = None
+        controller._queue_service = service
+    return controller, sent
+
+
+def _child(run_name: str = "r1", parent: str = "a0"):
+    from flyteidl2.common import identifier_pb2
+
+    from flyte._internal.controllers.remote._action import Action
+
+    return Action(
+        parent_action_name=parent,
+        action_id=identifier_pb2.ActionIdentifier(
+            name="child", run=identifier_pb2.RunIdentifier(org="acme", project="p", domain="development", name=run_name)
+        ),
+        type="trace",
+    )
+
+
+class TestWorkloadActionHeader:
+    """A pod workload (a reusable worker running many actions) names the action each request is made for."""
+
+    @pytest.fixture
+    def pod_workload(self, pod):
+        env, _ = pod
+        env.setenv("_U_WORKLOAD", POD_WORKLOAD)
+        return WorkloadTokenAuthenticator(endpoint="dns:///acme.union.ai:443")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("actions_service", [True, False], ids=["actions-service", "queue-service"])
+    async def test_controller_enqueue_names_the_parent_action(self, pod_workload, actions_service):
+        controller, sent = _launch_controller(pod_workload, actions_service=actions_service)
+        await controller._bg_launch(_child(run_name="r1", parent="a0"))
+        assert sent[0]["x-union-workload"] == POD_WORKLOAD
+        assert sent[0][ACTION_HEADER] == "r1/a0"
+
+    @pytest.mark.asyncio
+    async def test_controller_call_names_its_own_action_not_the_callers_context(self, pod_workload):
+        """The controller's calls name the action in hand, even when another action's task context is current."""
+        from flyte._context import internal_ctx
+
+        controller, sent = _launch_controller(pod_workload, actions_service=False)
+        with internal_ctx().replace_task_context(_task_context("other-run", "other-action")):
+            await controller._bg_launch(_child(run_name="r1", parent="a0"))
+        assert sent[0][ACTION_HEADER] == "r1/a0"
+
+    @pytest.mark.asyncio
+    async def test_controller_abort_names_the_parent_action(self, pod_workload):
+        controller, _ = _launch_controller(pod_workload, actions_service=False)
+        sent = []
+
+        async def abort(_req, **_kwargs):
+            sent.append(await _send(pod_workload))
+
+        controller._queue_service.abort_queued_action.side_effect = abort
+        controller._informers = AsyncMock()
+        controller._informers.get = AsyncMock(return_value=None)
+        action = _child(run_name="r1", parent="a0")
+        action.mark_started()
+        await controller._bg_cancel_action(action)
+        assert sent[0][ACTION_HEADER] == "r1/a0"
+
+    @pytest.mark.asyncio
+    async def test_informer_state_watch_names_the_parent_action(self, pod_workload):
+        import asyncio
+
+        from flyteidl2.common import identifier_pb2
+        from flyteidl2.workflow import state_service_pb2
+
+        from flyte._internal.controllers.remote._informer import Informer
+
+        sent = []
+
+        class StateService:
+            async def watch(self, req, **kwargs):
+                sent.append(await _send(pod_workload))
+                yield state_service_pb2.WatchResponse(control_message=state_service_pb2.ControlMessage(sentinel=True))
+                await asyncio.Event().wait()
+
+        run = identifier_pb2.RunIdentifier(org="acme", project="p", domain="development", name="r1")
+        informer = Informer(run_id=run, parent_action_name="a0", shared_queue=asyncio.Queue(), client=StateService())
+        await informer.start(timeout=5)
+        try:
+            assert sent[0][ACTION_HEADER] == "r1/a0"
+        finally:
+            await informer.stop()
+
+    @pytest.mark.asyncio
+    async def test_a_call_inside_a_running_task_names_its_action(self, pod_workload):
+        from flyte._context import internal_ctx
+
+        with internal_ctx().replace_task_context(_task_context("r2", "a3")):
+            headers = await _send(pod_workload)
+        assert headers[ACTION_HEADER] == "r2/a3"
+
+    @pytest.mark.asyncio
+    async def test_a_call_inside_a_trace_names_the_running_task(self, pod_workload):
+        from flyte._context import internal_ctx
+        from flyte.models import ActionID
+
+        tctx = _task_context("r2", "a3")
+        in_trace = tctx.replace(action=ActionID(name="trace-1", run_name="r2", project="p", domain="development"))
+        with internal_ctx().replace_task_context(in_trace):
+            headers = await _send(pod_workload)
+        assert headers[ACTION_HEADER] == "r2/a3"
+
+    @pytest.mark.asyncio
+    async def test_no_header_without_a_known_action(self, pod_workload):
+        headers = await _send(pod_workload)
+        assert headers["x-union-workload"] == POD_WORKLOAD
+        assert ACTION_HEADER not in headers
+
+    @pytest.mark.asyncio
+    async def test_a_retry_sends_the_header_once(self, pod_workload):
+        from connectrpc.errors import ConnectError
+
+        from flyte.remote._client.auth._interceptors.auth import AuthUnaryInterceptor
+
+        sent = []
+
+        async def call_next(request, ctx):
+            sent.append(dict(ctx.request_headers()))
+            if len(sent) == 1:
+                raise ConnectError(Code.UNKNOWN, "transient")
+            return "ok"
+
+        ctx = _Ctx({"x-actions-run": "r1", "x-actions-parent-action": "a0"})
+        await AuthUnaryInterceptor(lambda: pod_workload).intercept_unary(call_next, object(), ctx)
+        assert [h[ACTION_HEADER] for h in sent] == ["r1/a0", "r1/a0"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("workload", [WORKLOAD, "app/acme/p/development/my-app"], ids=["attempt", "app"])
+    async def test_nothing_new_for_attempt_and_app_workloads(self, pod, workload):
+        from flyte._context import internal_ctx
+
+        env, _ = pod
+        env.setenv("_U_WORKLOAD", workload)
+        auth = WorkloadTokenAuthenticator(endpoint="dns:///acme.union.ai:443")
+
+        controller, sent = _launch_controller(auth, actions_service=True)
+        await controller._bg_launch(_child())
+        with internal_ctx().replace_task_context(_task_context("r2", "a3")):
+            sent.append(await _send(auth))
+        for headers in sent:
+            assert headers["x-union-workload"] == workload
+            assert ACTION_HEADER not in headers

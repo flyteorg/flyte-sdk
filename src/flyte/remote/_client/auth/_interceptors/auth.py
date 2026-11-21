@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import typing
 
 from connectrpc.code import Code
@@ -39,6 +40,15 @@ class _BaseAuthInterceptor:
 
         auth_headers = await self.authenticator.get_auth_headers()
         if auth_headers:
+            # A pod workload token also names the action the request is made for, taken from the request's own
+            # metadata or the calling context (see flyte._workload_action). Added here, in the one place every
+            # authenticated request passes, and recorded with the auth headers so a retry replaces it too.
+            from flyte.remote._client.auth._authenticators.workload_token import WorkloadTokenAuthenticator
+
+            if isinstance(self.authenticator, WorkloadTokenAuthenticator):
+                extra = self.authenticator.workload_action_headers(request_headers(ctx))
+                if extra:
+                    auth_headers = dataclasses.replace(auth_headers, headers={**auth_headers.headers, **extra})
             request_headers(ctx).update(auth_headers.headers)
         return auth_headers
 
