@@ -32,6 +32,16 @@ class TestRender:
     def test_empty_string(self):
         assert _render("", {"task.name": "t"}) == ""
 
+    def test_go_template_variables(self):
+        ctx = _build_context(
+            task_name="t", run_name="r1", phase=ActionPhase.FAILED, error="boom", project="p", domain="d"
+        )
+        template = "Run {{.Run.Name}} {{ .Phase }} in {{.Run.Project}}/{{.Run.Domain}}: {{.Error}}"
+        assert _render(template, ctx) == "Run r1 failed in p/d: boom"
+
+    def test_unknown_go_template_variable_left_as_is(self):
+        assert _render("{{.Run.Url}}", {"run.name": "r"}) == "{{.Run.Url}}"
+
 
 class TestRenderDict:
     def test_flat_dict(self):
@@ -263,6 +273,38 @@ class TestSendWebhook:
             assert call_args[0] == ("PUT", "https://api.test/proj/alerts")
             assert call_args[1]["headers"] == {"X-Key": "dev"}
             assert call_args[1]["json"] == {"task": "t"}
+
+    @pytest.mark.asyncio
+    async def test_webhook_default_body_is_rendered(self):
+        n = Webhook(on_phase=ActionPhase.FAILED, url="https://api.test/alerts")
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("flyte.notify._sender.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.request.return_value = mock_response
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            await send_notifications(
+                n,
+                phase=ActionPhase.FAILED,
+                task_name="t",
+                run_name="r1",
+                error="boom",
+                project="proj",
+                domain="dev",
+            )
+
+            assert mock_client.request.call_args[1]["json"] == {
+                "run": "r1",
+                "project": "proj",
+                "domain": "dev",
+                "phase": "failed",
+                "error": "boom",
+            }
 
 
 class TestSendEmail:
