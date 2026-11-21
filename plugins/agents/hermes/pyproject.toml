@@ -50,6 +50,16 @@ ignore = ["PGH003", "PLC0415"]
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]
 
+[tool.uv]
+# hermes-agent pins these packages to exact releases that have known security advisories.
+# The overrides apply to this lockfile only; remove them once hermes-agent relaxes its pins.
+override-dependencies = [
+    "pillow>=13.0.0",
+    "pyjwt[crypto]>=2.15.0",
+    "cryptography>=50.0.0",
+    "certifi>=2026.10.18",
+]
+
 [tool.uv.sources]
 flyte = { path = "../../..", editable = true }
 flyteplugins-agents-core = { path = "../core", editable = true }
