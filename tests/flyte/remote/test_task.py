@@ -364,6 +364,12 @@ class TestTaskDetailsOverrideResources:
         out = td.override(resources=flyte.Resources(cpu="2", memory="2Gi"))
         assert out.overridden is True
 
+    def test_retries_override_accepts_int(self):
+        td = self._container_task_details()
+        out = td.override(retries=3)
+        assert out.pb2.spec.task_template.metadata.retries.retries == 3
+        assert td.override(retries=flyte.RetryStrategy(count=3)).pb2 == out.pb2
+
     def test_cpu_only_override_clears_stale_accelerator(self):
         td = self._container_task_details()
         gpu = td.override(resources=flyte.Resources(cpu="4", memory="16Gi", gpu="L40s:1"))
