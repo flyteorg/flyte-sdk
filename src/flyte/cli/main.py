@@ -2,6 +2,7 @@ import rich_click as click
 from typing_extensions import get_args
 
 import flyte
+from flyte._initialize import _warn_python_support_ending
 from flyte._logging import _LOG_LEVEL_MAP, LogFormat, initialize_logger, logger
 
 from . import _common as common
@@ -305,6 +306,8 @@ def main(
         reset_root_logger=reset_root_logger,
         user_log_level=user_log_level_int,
     )
+    # Here too, because not every command initializes the SDK.
+    _warn_python_support_ending()
 
     cfg = config.auto(config_file=config_file)
     if cfg.source:
