@@ -15,8 +15,6 @@ from flyte.remote._client.auth.errors import AuthenticationError
 # (pod/<org>/<project>/<domain>/<cluster>/<namespace>/<pod-name>).
 WORKLOAD_ENV_VAR = "_U_WORKLOAD"
 TOKEN_FILE_ENV_VAR = "_U_WORKLOAD_TOKEN_FILE"
-# The header naming the attempt; the control plane accepts the token only for it.
-WORKLOAD_HEADER = "x-union-workload"
 # The api key the platform may still mount alongside the workload token (during the migration away from it).
 _API_KEY_ENV_VARS = ("_UNION_EAGER_API_KEY", "EAGER_API_KEY")
 # How long a read of the token file is used before reading it again. The kubelet rotates the token in place
@@ -28,9 +26,9 @@ class WorkloadTokenAuthenticator(Authenticator):
     """
     Authenticates a task pod as the creator of its run, without any long-lived secret in the pod.
 
-    The pod presents its own projected Kubernetes service-account token, and names the action attempt it runs. The
-    control plane accepts it only from the pod running that attempt, on the cluster the attempt is leased to, and only
-    for the run's project and domain.
+    The pod presents its own projected Kubernetes service-account token, together with the workload it runs (and, for
+    a reusable worker pod, the action a request is made for), as one bearer credential. The control plane accepts it
+    only from the pod running that workload, on the cluster it is leased to, and only for the run's project and domain.
     """
 
     def __init__(
@@ -68,29 +66,28 @@ class WorkloadTokenAuthenticator(Authenticator):
         logger.debug(f"Read the workload token for {self._workload}")
         return Credentials(for_endpoint=self._endpoint, access_token=token)
 
-    def workload_action_headers(self, request_headers: typing.Optional[typing.Mapping[str, str]] = None) -> dict:
+    async def get_auth_headers(
+        self, request_headers: typing.Optional[typing.Mapping[str, str]] = None
+    ) -> typing.Optional[AuthHeaders]:
         """
-        The extra headers a request with these headers must carry: for a pod workload, the action the request is made
-        for (`x-union-workload-action`, see `flyte._workload_action`). Empty for an attempt or app workload, when no
-        action is known, and once the authenticator has fallen back to the api key.
+        The auth headers for a request with these headers: the token wrapped, with the workload and, for a pod
+        workload, the action the request is made for, in one bearer credential (see `flyte._workload_credential`).
+        Once the authenticator has fallen back to the api key, the api key's headers instead.
         """
-        from flyte._workload_action import WORKLOAD_ACTION_HEADER, current_workload_action, is_pod_workload
-
-        if self._fallback is not None or not is_pod_workload(self._workload):
-            return {}
-        action = current_workload_action(request_headers)
-        return {WORKLOAD_ACTION_HEADER: action} if action else {}
-
-    async def get_auth_headers(self) -> typing.Optional[AuthHeaders]:
         if self._fallback is not None:
             return await self._fallback.get_auth_headers()
         creds = self.get_credentials()
         if creds is None or time.monotonic() - self._read_at >= _REREAD_AFTER:
             await self.refresh_credentials(creds.id if creds is not None else None)
         headers = await super().get_auth_headers()
-        if headers is not None:
-            headers.headers[WORKLOAD_HEADER] = self._workload
-        return headers
+        creds = self.get_credentials()
+        if headers is None or creds is None:
+            return headers
+        from flyte._workload_credential import workload_credential
+
+        # Built per request: the action differs between requests, and the token file may have rotated.
+        credential = workload_credential(creds.access_token, self._workload, request_headers)
+        return AuthHeaders(creds_id=headers.creds_id, headers=dict.fromkeys(headers.headers, f"Bearer {credential}"))
 
     def note_refusal(self, code: typing.Any, creds_id: typing.Optional[str]) -> None:
         """
