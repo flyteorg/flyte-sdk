@@ -150,6 +150,11 @@ script-files = [
 where = ["src"]
 include = ["flyte*"]
 
+# Listed explicitly because include-package-data relies on setuptools-scm's git file finder,
+# which finds nothing when building from a source tree without .git (e.g. a release tarball).
+[tool.setuptools.package-data]
+flyte = ["py.typed", "report/_template.html"]
+
 [tool.setuptools_scm]
 write_to = "src/flyte/_version.py"
 # Only Python releases are tagged "v<semver>". Other tags live in this repo too
