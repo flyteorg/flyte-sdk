@@ -12,7 +12,7 @@ pip install flyteplugins-nsight
 ```
 
 The task image must have the `nsys` CLI on PATH. The NGC PyTorch images ship it, for example
-`nvcr.io/nvidia/pytorch:24.08-py3`.
+`nvcr.io/nvidia/pytorch:24.11-py3`.
 
 ## Usage
 
@@ -21,8 +21,8 @@ import flyte
 from flyteplugins.nsight import nsys_profile
 
 image = (
-    flyte.Image.from_base("nvcr.io/nvidia/pytorch:24.08-py3")
-    .clone(extendable=True, name="train", python_version=(3, 10))
+    flyte.Image.from_base("nvcr.io/nvidia/pytorch:24.11-py3")
+    .clone(extendable=True, name="train", python_version=(3, 12))
     .with_pip_packages("flyte", "uv", "flyteplugins-nsight")
 )
 

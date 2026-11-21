@@ -17,7 +17,7 @@ image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
     .clone(
         name="spark-ssh-debug",
-        python_version=(3, 10),
+        python_version=(3, 11),
         registry="ghcr.io/flyteorg",
         extendable=True,
         platform=("linux/amd64",),

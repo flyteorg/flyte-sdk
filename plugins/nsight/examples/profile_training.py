@@ -23,8 +23,8 @@ from flyteplugins.nsight import nsys_profile, nvtx
 # kubernetes.client when this module is imported inside the task. See the accelerators example for
 # the full base-image rationale.
 image = (
-    flyte.Image.from_base("nvcr.io/nvidia/pytorch:24.08-py3")
-    .clone(extendable=True, name="nsight-train", python_version=(3, 10))
+    flyte.Image.from_base("nvcr.io/nvidia/pytorch:24.11-py3")
+    .clone(extendable=True, name="nsight-train", python_version=(3, 12))
     .with_pip_packages("uv", "kubernetes")
     # Bake the locally-built flyte and flyteplugins-nsight wheels from ./dist into the image so the
     # remote run exercises unreleased core changes (src/flyte/_bin/runtime.py) and the unpublished
