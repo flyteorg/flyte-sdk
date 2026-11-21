@@ -507,7 +507,7 @@ class Action(ToJSONMixin):
             # TODO we can short circuit here if the attempt is not the last one and it is done!
             await self.wait.aio(wait_for="logs-ready")
             details = await self.details.aio()
-        if not attempt:
+        if attempt is None:
             attempt = details.attempts
 
         # The stream stays open forever once the pod exits, and an action that is running
@@ -552,7 +552,7 @@ class Action(ToJSONMixin):
         if not details.is_running and not details.done():
             await self.wait.aio(wait_for="logs-ready")
             details = await self.details.aio()
-        if not attempt:
+        if attempt is None:
             attempt = details.attempts
         async for logline in Logs.tail.aio(action_id=self.action_id, attempt=attempt):
             formatted = _format_line(logline, show_ts=show_ts, filter_system=filter_system)
@@ -1141,10 +1141,10 @@ class ActionDetails(ToJSONMixin):
             In async code, fetch the details with `details = await action.details.aio()` instead.
         """
         if attempt is None:
-            attempt = self.pb2.status.attempts
+            attempt = self.attempts
 
         attempts = self.pb2.attempts
-        if not attempts or len(attempts) < attempt:
+        if not attempts or attempt < 1 or len(attempts) < attempt:
             return []
 
         attempt_obj = attempts[attempt - 1]
@@ -1228,9 +1228,14 @@ class ActionDetails(ToJSONMixin):
     @property
     def attempts(self) -> int:
         """
-        Get the number of attempts of the action.
+        Get the number of attempts of the action, which is also the number of its latest attempt.
+
+        This is the higher of the status counter and the latest attempt listed in the details, so a
+        counter that lags behind (e.g. 0 while attempt 1 is running) still resolves to an attempt
+        that exists.
         """
-        return self.pb2.status.attempts
+        listed = max((a.attempt for a in self.pb2.attempts), default=0)
+        return max(self.pb2.status.attempts, listed)
 
     def logs_available(self, attempt: int | None = None) -> bool:
         """
@@ -1238,9 +1243,9 @@ class ActionDetails(ToJSONMixin):
         If attempt is None, it checks for the latest attempt.
         """
         if attempt is None:
-            attempt = self.pb2.status.attempts
+            attempt = self.attempts
         attempts = self.pb2.attempts
-        if attempts and len(attempts) >= attempt:
+        if attempts and 1 <= attempt <= len(attempts):
             return attempts[attempt - 1].logs_available
         return False
 
