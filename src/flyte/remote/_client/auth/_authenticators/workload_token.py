@@ -5,7 +5,6 @@ import typing
 from pathlib import Path
 
 from flyte._logging import logger
-from flyte._workload_action import WORKLOAD_ACTION_HEADER, current_workload_action, is_pod_workload
 from flyte.remote._client.auth._authenticators.base import Authenticator, AuthHeaders
 from flyte.remote._client.auth._keyring import Credentials
 from flyte.remote._client.auth.errors import AuthenticationError
@@ -75,6 +74,8 @@ class WorkloadTokenAuthenticator(Authenticator):
         for (`x-union-workload-action`, see `flyte._workload_action`). Empty for an attempt or app workload, when no
         action is known, and once the authenticator has fallen back to the api key.
         """
+        from flyte._workload_action import WORKLOAD_ACTION_HEADER, current_workload_action, is_pod_workload
+
         if self._fallback is not None or not is_pod_workload(self._workload):
             return {}
         action = current_workload_action(request_headers)

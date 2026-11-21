@@ -12,7 +12,6 @@ from flyteidl2.workflow import state_service_pb2
 
 from flyte._logging import log, logger
 from flyte._utils.helpers import action_phase_name, jittered
-from flyte._workload_action import acting_for
 
 from ._action import TERMINAL_PHASES, Action
 from ._service_protocol import ActionsService, StateService
@@ -266,12 +265,6 @@ class Informer:
         """
         Watch for updates on all resources - to be implemented by subclasses for watch mode
         """
-        # The watch is made for the parent action. The Actions service watch names it in its metadata; the state
-        # service watch has none, so name it here for a pod workload token (see flyte._workload_action).
-        with acting_for(self._run_id.name, self.parent_action_name):
-            await self._watch()
-
-    async def _watch(self):
         # sentinel = False
         retries = 0
         last_exc: Exception | None = None

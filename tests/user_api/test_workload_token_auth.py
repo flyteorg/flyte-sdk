@@ -444,9 +444,9 @@ class TestWorkloadActionHeader:
         return WorkloadTokenAuthenticator(endpoint="dns:///acme.union.ai:443")
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("actions_service", [True, False], ids=["actions-service", "queue-service"])
-    async def test_controller_enqueue_names_the_parent_action(self, pod_workload, actions_service):
-        controller, sent = _launch_controller(pod_workload, actions_service=actions_service)
+    async def test_controller_enqueue_names_the_parent_action(self, pod_workload):
+        """The controller's Actions service calls already carry x-actions-*; the header is taken from them."""
+        controller, sent = _launch_controller(pod_workload, actions_service=True)
         await controller._bg_launch(_child(run_name="r1", parent="a0"))
         assert sent[0]["x-union-workload"] == POD_WORKLOAD
         assert sent[0][ACTION_HEADER] == "r1/a0"
@@ -456,51 +456,10 @@ class TestWorkloadActionHeader:
         """The controller's calls name the action in hand, even when another action's task context is current."""
         from flyte._context import internal_ctx
 
-        controller, sent = _launch_controller(pod_workload, actions_service=False)
+        controller, sent = _launch_controller(pod_workload, actions_service=True)
         with internal_ctx().replace_task_context(_task_context("other-run", "other-action")):
             await controller._bg_launch(_child(run_name="r1", parent="a0"))
         assert sent[0][ACTION_HEADER] == "r1/a0"
-
-    @pytest.mark.asyncio
-    async def test_controller_abort_names_the_parent_action(self, pod_workload):
-        controller, _ = _launch_controller(pod_workload, actions_service=False)
-        sent = []
-
-        async def abort(_req, **_kwargs):
-            sent.append(await _send(pod_workload))
-
-        controller._queue_service.abort_queued_action.side_effect = abort
-        controller._informers = AsyncMock()
-        controller._informers.get = AsyncMock(return_value=None)
-        action = _child(run_name="r1", parent="a0")
-        action.mark_started()
-        await controller._bg_cancel_action(action)
-        assert sent[0][ACTION_HEADER] == "r1/a0"
-
-    @pytest.mark.asyncio
-    async def test_informer_state_watch_names_the_parent_action(self, pod_workload):
-        import asyncio
-
-        from flyteidl2.common import identifier_pb2
-        from flyteidl2.workflow import state_service_pb2
-
-        from flyte._internal.controllers.remote._informer import Informer
-
-        sent = []
-
-        class StateService:
-            async def watch(self, req, **kwargs):
-                sent.append(await _send(pod_workload))
-                yield state_service_pb2.WatchResponse(control_message=state_service_pb2.ControlMessage(sentinel=True))
-                await asyncio.Event().wait()
-
-        run = identifier_pb2.RunIdentifier(org="acme", project="p", domain="development", name="r1")
-        informer = Informer(run_id=run, parent_action_name="a0", shared_queue=asyncio.Queue(), client=StateService())
-        await informer.start(timeout=5)
-        try:
-            assert sent[0][ACTION_HEADER] == "r1/a0"
-        finally:
-            await informer.stop()
 
     @pytest.mark.asyncio
     async def test_a_call_inside_a_running_task_names_its_action(self, pod_workload):
