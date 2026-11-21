@@ -16,6 +16,7 @@ from flyte.io._dataframe import DataFrame
 from flyte.types._type_engine import (
     DataclassTransformer,
     TypeEngine,
+    UnionTransformer,
 )
 
 pd = pytest.importorskip("pandas")
@@ -636,3 +637,83 @@ def test_dataclass_json_schema_built_once_per_type():
         for _ in range(5):
             assert TypeEngine.to_literal_type(Cfg) == first
     assert spy.call_count == 1
+
+
+def test_union_transformer_get_sub_type_in_optional():
+    """get_sub_type_in_optional should unwrap non-None types regardless of None ordering."""
+    assert UnionTransformer.get_sub_type_in_optional(Optional[int]) is int
+    assert UnionTransformer.get_sub_type_in_optional(None | int) is int
+    assert UnionTransformer.get_sub_type_in_optional(Union[None, str]) is str
+    multi = UnionTransformer.get_sub_type_in_optional(None | float | str)
+    assert multi == Union[float, str]
+    assert UnionTransformer.get_sub_type_in_optional(type(None)) is type(None)
+
+
+@pytest.mark.asyncio
+async def test_dataclass_assert_type_optional_none_dict():
+    """Passing {'field': None} for an Optional field in a dict input should succeed."""
+
+    @dataclass
+    class OptStruct:
+        x: Optional[int] = None
+        y: str = "default"
+
+    lt = TypeEngine.to_literal_type(OptStruct)
+    # Both assert_type directly and through to_literal should succeed with explicit None
+    trans = TypeEngine.get_transformer(OptStruct)
+    trans.assert_type(OptStruct, {"x": None, "y": "val"})
+    lit = await TypeEngine.to_literal({"x": None, "y": "val"}, OptStruct, lt)
+    val = await TypeEngine.to_python_value(lit, OptStruct)
+    assert val.x is None
+    assert val.y == "val"
+
+
+@pytest.mark.asyncio
+async def test_dataclass_assert_type_pep604_union_none_first():
+    """Dataclasses with 'None | T' annotations should validate both values and None correctly."""
+
+    @dataclass
+    class PepStruct:
+        a: None | int = None
+        b: None | str = None
+
+    lt = TypeEngine.to_literal_type(PepStruct)
+    trans = TypeEngine.get_transformer(PepStruct)
+    trans.assert_type(PepStruct, {"a": 42, "b": "hello"})
+    trans.assert_type(PepStruct, {"a": None, "b": None})
+
+    lit_val = await TypeEngine.to_literal({"a": 42, "b": "hello"}, PepStruct, lt)
+    val = await TypeEngine.to_python_value(lit_val, PepStruct)
+    assert val.a == 42
+    assert val.b == "hello"
+
+    lit_none = await TypeEngine.to_literal({"a": None, "b": None}, PepStruct, lt)
+    val_none = await TypeEngine.to_python_value(lit_none, PepStruct)
+    assert val_none.a is None
+    assert val_none.b is None
+
+
+def test_dataclass_assert_type_cross_optional_pep604():
+    """Cross-dataclass assert_type should succeed between 'None | int' and 'Optional[int]'."""
+
+    @dataclass
+    class Inner:
+        count: int
+
+    @dataclass
+    class StructA:
+        name: str
+        val: None | int = None
+        inner: None | Inner = None
+
+    @dataclass
+    class StructB:
+        name: str
+        val: Optional[int] = None
+        inner: Optional[Inner] = None
+
+    trans_b = TypeEngine.get_transformer(StructB)
+    trans_b.assert_type(StructB, StructA(name="test", val=10, inner=Inner(count=1)))
+    trans_b.assert_type(StructB, StructA(name="test", val=None, inner=None))
+    trans_b.assert_type(StructB, {"name": "test", "val": 10, "inner": {"count": 1}})
+    trans_b.assert_type(StructB, {"name": "test", "val": None, "inner": None})

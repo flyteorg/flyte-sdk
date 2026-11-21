@@ -964,6 +964,8 @@ class DataclassTransformer(TypeTransformer[object]):
                 if k in expected_fields_dict:
                     expected_type = expected_fields_dict[k]
                     if UnionTransformer.is_optional_type(expected_type):
+                        if v is None:
+                            continue
                         expected_type = UnionTransformer.get_sub_type_in_optional(expected_type)
                     if isinstance(v, dict):
                         # Only recurse for nested dataclasses. A plain dict-typed field
@@ -998,6 +1000,8 @@ class DataclassTransformer(TypeTransformer[object]):
                     expected_type = UnionTransformer.get_sub_type_in_optional(expected_type)
 
                 val = v.__getattribute__(f.name)
+                if val is None:
+                    continue
                 if dataclasses.is_dataclass(val):
                     self.assert_type(expected_type, val)
                 elif original_type != expected_type:
@@ -2553,7 +2557,12 @@ class UnionTransformer(TypeTransformer[T]):
         """
         Return the generic Type T of the Optional type
         """
-        return get_args(t)[0]
+        subtypes = [arg for arg in get_args(t) if arg is not type(None)]
+        if len(subtypes) == 1:
+            return subtypes[0]
+        if len(subtypes) > 1:
+            return typing.Union[tuple(subtypes)]  # type: ignore
+        return type(None)  # type: ignore
 
     def assert_type(self, t: Type[T], v: T):
         python_type = get_underlying_type(t)
