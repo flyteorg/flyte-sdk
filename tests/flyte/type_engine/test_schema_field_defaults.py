@@ -8,13 +8,16 @@ import itertools
 import json
 import typing
 
+import msgpack
 import pydantic
 import pytest
+from flyteidl2.core.literals_pb2 import Binary, Literal, Scalar
 from mashumaro.codecs.json import JSONDecoder
 from pydantic import Field
 
 from flyte.types import TypeEngine
 from flyte.types._type_engine import (
+    MESSAGEPACK,
     PydanticTransformer,
     _create_pydantic_model_from_schema,
     _mutable_schema_default_factory,
@@ -566,3 +569,76 @@ def test_anyof_union_field_keeps_every_variant():
     assert JSONDecoder(cls).decode(json.dumps({"x": "a", "y": 3})) == cls(x="a", y=3)
     rt = _create_pydantic_model_from_schema(schema)
     assert rt.model_validate({"x": "a"}).x == "a"
+
+
+@dataclasses.dataclass
+class _LinkedNode:
+    value: int
+    next: typing.Optional[_LinkedNode] = None
+
+
+@dataclasses.dataclass
+class _LinkedList:
+    head: _LinkedNode
+
+
+class _PLinkedNode(pydantic.BaseModel):
+    value: int
+    next: typing.Optional[_PLinkedNode] = None
+
+
+class _PLinkedList(pydantic.BaseModel):
+    head: _PLinkedNode
+
+
+_LINKED = {"value": 1, "next": {"value": 2, "next": None}}
+
+
+def _msgpack_literal(value: typing.Any) -> Literal:
+    return Literal(scalar=Scalar(binary=Binary(value=msgpack.dumps(value), tag=MESSAGEPACK)))
+
+
+@pytest.mark.parametrize("python_type", [_LinkedNode, _PLinkedNode])
+def test_guess_recursive_model_resolves_root_ref(python_type):
+    # Regression: a self-referencing model's schema is `{"$ref": "#/$defs/Node", "$defs": ...}` with no root
+    # title, so no transformer claimed it and guess_python_type raised ValueError.
+    guessed = TypeEngine.guess_python_type(TypeEngine.to_literal_type(python_type))
+    assert guessed.__name__ == python_type.__name__
+
+    restored = asyncio.run(TypeEngine.to_python_value(_msgpack_literal(_LINKED), guessed))
+    assert restored.value == 1
+    # The back-reference to the model being rebuilt is kept as a plain dict, so no data is lost.
+    assert restored.next == {"value": 2, "next": None}
+
+
+@pytest.mark.parametrize("python_type", [_LinkedList, _PLinkedList])
+def test_guess_nested_recursive_model_terminates(python_type):
+    # Regression: rebuilding a model that nests a self-referencing one re-entered it until RecursionError.
+    guessed = TypeEngine.guess_python_type(TypeEngine.to_literal_type(python_type))
+
+    restored = asyncio.run(TypeEngine.to_python_value(_msgpack_literal({"head": _LINKED}), guessed))
+    assert restored.head.value == 1
+    assert restored.head.next == {"value": 2, "next": None}
+
+
+def test_recursive_model_in_union_variant_terminates():
+    # Regression: a oneOf variant that refers back to the model being built recursed until RecursionError.
+    schema = {
+        "$defs": {
+            "Expr": {
+                "properties": {"arg": {"oneOf": [{"$ref": "#/$defs/Expr"}, {"type": "integer"}]}},
+                "required": ["arg"],
+                "title": "Expr",
+                "type": "object",
+            },
+        },
+        "properties": {"root": {"$ref": "#/$defs/Expr"}},
+        "required": ["root"],
+        "title": "Program",
+        "type": "object",
+    }
+    cls = convert_mashumaro_json_schema_to_python_class(schema, "Program")
+    expr = _field_types(cls)["root"]
+    assert _field_types(expr) == {"arg": typing.Union[dict, int]}
+    decoded = JSONDecoder(cls).decode(json.dumps({"root": {"arg": {"arg": 3}}}))
+    assert decoded.root.arg == {"arg": 3}

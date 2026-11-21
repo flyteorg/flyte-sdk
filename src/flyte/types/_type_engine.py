@@ -648,7 +648,7 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
             # This tag is set by UnionTransformer when wrapping Pydantic models in a union,
             # and distinguishes them from dataclass types which share the same LiteralType shape.
             if literal_type.HasField("structure") and literal_type.structure.tag == self.name:
-                metadata = _MessageToDict(literal_type.metadata)
+                metadata = _resolve_root_ref(_MessageToDict(literal_type.metadata))
                 if TITLE in metadata:
                     return _create_pydantic_model_from_schema(metadata)
         raise ValueError(f"PydanticTransformer cannot reverse {literal_type}")
@@ -657,6 +657,39 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
 # The `$defs` entries on the current resolution path, keyed by `(id(defs), name)`. Only the current path is held, so
 # repeated sibling references to one definition still resolve; only a definition that refers back to itself stops.
 _RefPath = typing.FrozenSet[typing.Tuple[int, str]]
+
+
+def _resolve_root_ref(schema: typing.Dict[str, typing.Any]) -> typing.Dict[str, typing.Any]:
+    """Inline the root `$ref` of a recursive model's schema.
+
+    A self-referencing model's schema has no `title` at the root, only `{"$ref": "#/$defs/Node", "$defs": {...}}`.
+    This returns the referenced definition (carrying the shared `$defs`) so it can be rebuilt like any other model.
+    Any other schema is returned unchanged.
+    """
+    if TITLE in schema or not isinstance(schema.get("$ref"), str):
+        return schema
+    defs = schema.get("$defs", schema.get("definitions", {}))
+    name = schema["$ref"].split("/")[-1]
+    if not isinstance(defs.get(name), dict) or _is_non_object_def(defs[name]):
+        return schema
+    resolved = {TITLE: name, **defs[name]}
+    resolved.setdefault("$defs", defs)
+    return resolved
+
+
+def _enter_model_def(schema: typing.Dict[str, typing.Any], name: str, seen: _RefPath) -> typing.Optional[_RefPath]:
+    """Add the model definition being rebuilt to the resolution path.
+
+    Returns `None` if the definition is already on the path, i.e. a model refers back to itself
+    (`next: Optional["Node"]`). The caller then stops recursing; otherwise rebuilding never terminates.
+    """
+    defs = schema.get("$defs", schema.get("definitions"))
+    if not defs or name not in defs:
+        return seen
+    key = (id(defs), name)
+    if key in seen:
+        return None
+    return seen | {key}
 
 
 def _is_non_object_def(ref_schema: typing.Dict[str, typing.Any]) -> bool:
@@ -798,6 +831,11 @@ def _create_pydantic_model_from_schema(schema: dict, seen: _RefPath = frozenset(
     from pydantic import ConfigDict, create_model
 
     title = schema.get(TITLE, "DynamicModel")
+    path = _enter_model_def(schema, title, seen)
+    if path is None:
+        # A back-reference to a model still being built: its value is kept as a plain dict.
+        return typing.cast(Type[BaseModel], dict)
+    seen = path
     properties = schema.get("properties", {})
     # Reconstruct every field, not just the required ones. ``required`` is an ordered list that
     # preserves field-definition order (the ``properties`` map can lose ordering after the schema
@@ -1160,7 +1198,7 @@ class DataclassTransformer(TypeTransformer[object]):
             if literal_type.HasField("metadata"):
                 from google.protobuf import json_format
 
-                metadata = json_format.MessageToDict(literal_type.metadata)
+                metadata = _resolve_root_ref(json_format.MessageToDict(literal_type.metadata))
                 if TITLE in metadata:
                     # Tagged literals are owned by this transformer; untagged legacy structs are
                     # still claimed for backward compatibility with tasks deployed before tagging.
@@ -1538,6 +1576,9 @@ def _resolve_oneof_variants(
                     ref_schema["$defs"] = defs
                 nested_class: type = convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name, seen)
                 variant_types.append(nested_class)
+                if nested_class is dict:
+                    # A back-reference to a model being built has no class to dispatch a dict to.
+                    continue
                 variant_classes.append(nested_class)
                 ref_name_to_class[ref_name] = nested_class
                 continue
@@ -2933,10 +2974,14 @@ def convert_mashumaro_json_schema_to_python_class(
     Args:
         schema: dict representing valid JSON schema
         schema_name: dataclass name of return type
-        seen: the non-object `$defs` entries on the current resolution path, which resolve to `typing.Any`
+        seen: the `$defs` entries on the current resolution path; a model met again there is kept as a plain dict
     """
 
-    attribute_list, nested_types = generate_attribute_list_from_dataclass_json_mixin(schema, schema_name, seen)
+    path = _enter_model_def(schema, schema_name, seen)
+    if path is None:
+        # A back-reference to a model still being built: its value is kept as a plain dict.
+        return cast(Type[T], dict)
+    attribute_list, nested_types = generate_attribute_list_from_dataclass_json_mixin(schema, schema_name, path)
     cls = dataclasses.make_dataclass(schema_name, attribute_list)
 
     # Wrap __init__ to convert dict inputs to nested types
