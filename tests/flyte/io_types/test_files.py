@@ -491,6 +491,39 @@ async def test_download_file_with_folder_name_local(tmp_path, ctx_with_test_raw_
 
 
 @pytest.mark.asyncio
+async def test_download_file_with_trailing_forward_slash_local(tmp_path, ctx_with_test_raw_data_path):
+    """
+    Regression test for #8357: a destination ending with a forward slash '/'
+    must be treated as a directory on every platform. On Windows os.sep is '\\',
+    so detecting only os.sep missed '/' and the file was written as a file named
+    after the directory instead of inside it.
+    """
+    flyte.init()
+
+    local_file = tmp_path / "one_hundred_bytes"
+    local_file.write_bytes(os.urandom(100))
+
+    uploaded_file = await File.from_local(str(local_file))
+    remote_filename = uploaded_file.path.split(os.sep)[-1]
+
+    # Async: non-existent directory destination with a trailing forward slash.
+    async_dir = tmp_path / "async_dir"
+    downloaded_path = await uploaded_file.download(async_dir.as_posix() + "/")
+    expected_async = async_dir / remote_filename
+    assert downloaded_path == str(expected_async)
+    assert async_dir.is_dir()
+    assert filecmp.cmp(local_file, downloaded_path, shallow=False)
+
+    # Sync: same behavior through download_sync.
+    sync_dir = tmp_path / "sync_dir"
+    downloaded_sync = uploaded_file.download_sync(sync_dir.as_posix() + "/")
+    expected_sync = sync_dir / remote_filename
+    assert downloaded_sync == str(expected_sync)
+    assert sync_dir.is_dir()
+    assert filecmp.cmp(local_file, downloaded_sync, shallow=False)
+
+
+@pytest.mark.asyncio
 async def test_download_file_with_no_local_target_local(tmp_path, ctx_with_test_raw_data_path):
     """
     Test downloading a file from local storage without specifying a target path.
