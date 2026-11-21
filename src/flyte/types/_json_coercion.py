@@ -222,6 +222,29 @@ def _coerce_json_scalar(value: Any, py_type: Any) -> Any:
             return py_type.fromisoformat(value)
         except ValueError as e:
             raise ValueError(f"{value!r} is not an ISO {py_type.__name__}: {e}") from e
+    if py_type is datetime.timedelta:
+        if isinstance(value, datetime.timedelta):
+            return value
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            try:
+                return datetime.timedelta(seconds=value)
+            except OverflowError as e:
+                raise ValueError(f"{value!r} is not a valid duration: {e}") from e
+        if isinstance(value, str):
+            from flyte.cli._params import parse_duration
+
+            try:
+                return parse_duration(value)
+            except (ValueError, OverflowError) as e:
+                raise ValueError(f"{value!r} is not a valid duration: {e}") from e
+        if isinstance(value, dict) and all(
+            k in {"days", "seconds", "microseconds", "milliseconds", "minutes", "hours", "weeks"} for k in value
+        ):
+            try:
+                return datetime.timedelta(**value)
+            except (ValueError, OverflowError) as e:
+                raise ValueError(f"Invalid duration arguments {value!r}: {e}") from e
+        raise ValueError(f"Cannot coerce {type(value).__name__} to duration: {value!r}")
     if issubclass(py_type, enum.Enum) and not isinstance(value, py_type):
         name = value.name if isinstance(value, enum.Enum) else value
         if isinstance(name, str):
@@ -270,6 +293,44 @@ async def coerce_json_args(
     return coerced
 
 
+def format_iso8601_duration(td: datetime.timedelta) -> str:
+    """Format a timedelta as an ISO 8601 duration string."""
+    total_seconds = td.total_seconds()
+    if total_seconds == 0:
+        return "PT0S"
+
+    sign = "-" if total_seconds < 0 else ""
+    abs_td = abs(td)
+
+    days = abs_td.days
+    hours = abs_td.seconds // 3600
+    minutes = (abs_td.seconds % 3600) // 60
+    secs = abs_td.seconds % 60
+    micros = abs_td.microseconds
+
+    parts = [sign, "P"]
+    if days:
+        parts.append(f"{days}D")
+
+    time_parts = []
+    if hours:
+        time_parts.append(f"{hours}H")
+    if minutes:
+        time_parts.append(f"{minutes}M")
+
+    if micros:
+        sec_str = f"{secs}.{micros:06d}".rstrip("0")
+        time_parts.append(f"{sec_str}S")
+    elif secs or (not days and not hours and not minutes):
+        time_parts.append(f"{secs}S")
+
+    if time_parts:
+        parts.append("T")
+        parts.extend(time_parts)
+
+    return "".join(parts)
+
+
 async def serialize_json_value(value: Any, py_type: Any | None = None) -> Any:
     """Serialize a native value to a JSON-schema-compatible structure."""
     if value is None:
@@ -316,5 +377,14 @@ async def serialize_json_value(value: Any, py_type: Any | None = None) -> Any:
     if isinstance(value, BaseModel):
         model_type = py_type if isinstance(py_type, type) else type(value)
         return await serialize_json_value(value.model_dump(), model_type)
+
+    if isinstance(value, (datetime.datetime, datetime.date)):
+        return value.isoformat()
+
+    if isinstance(value, datetime.timedelta):
+        return format_iso8601_duration(value)
+
+    if isinstance(value, enum.Enum):
+        return value.name
 
     return value

@@ -364,3 +364,69 @@ def test_bool_flag_value_hint():
     assert bool_flag_value_hint(params, ["--block", "maybe"]) is None
     assert bool_flag_value_hint(params, ["-v", "true"]) is None
     assert bool_flag_value_hint(params, []) is None
+
+
+def test_parse_iso8601_duration():
+    import datetime
+
+    from flyte.cli._params import parse_iso8601_duration
+
+    # Standard formats
+    assert parse_iso8601_duration("P1D") == datetime.timedelta(days=1)
+    assert parse_iso8601_duration("PT1H") == datetime.timedelta(hours=1)
+    assert parse_iso8601_duration("PT30M") == datetime.timedelta(minutes=30)
+    assert parse_iso8601_duration("PT45S") == datetime.timedelta(seconds=45)
+    assert parse_iso8601_duration("P1DT2H3M4S") == datetime.timedelta(days=1, hours=2, minutes=3, seconds=4)
+
+    # Weeks
+    assert parse_iso8601_duration("P1W") == datetime.timedelta(weeks=1)
+    assert parse_iso8601_duration("P2.5W") == datetime.timedelta(weeks=2.5)
+
+    # Decimal fractions
+    assert parse_iso8601_duration("PT0.5S") == datetime.timedelta(seconds=0.5)
+    assert parse_iso8601_duration("PT1.5H") == datetime.timedelta(hours=1.5)
+    assert parse_iso8601_duration("P1.5D") == datetime.timedelta(days=1.5)
+
+    # Negative sign
+    assert parse_iso8601_duration("-P1D") == datetime.timedelta(days=-1)
+    assert parse_iso8601_duration("-PT1H") == datetime.timedelta(hours=-1)
+
+    # Invalid empty components / formats
+    for invalid in ["P", "PT", "-P", "+P", "P1Y", "garbage", ""]:
+        with pytest.raises(ValueError, match="Invalid ISO 8601 duration format"):
+            parse_iso8601_duration(invalid)
+
+
+def test_duration_param_type():
+    import datetime
+
+    import click
+
+    from flyte.cli._params import DurationParamType
+
+    param_type = DurationParamType()
+
+    # Pass timedelta instance directly
+    orig = datetime.timedelta(hours=2)
+    assert param_type.convert(orig, None, None) is orig
+
+    # ISO 8601
+    assert param_type.convert("P1W", None, None) == datetime.timedelta(weeks=1)
+    assert param_type.convert("PT0.5S", None, None) == datetime.timedelta(seconds=0.5)
+
+    # Human readable
+    assert param_type.convert("10 days", None, None) == datetime.timedelta(days=10)
+    assert param_type.convert("1:24", None, None) == datetime.timedelta(minutes=1, seconds=24)
+
+    # Human readable with invalid part raises ValueError
+    from flyte.cli._params import parse_human_durations
+
+    with pytest.raises(ValueError, match="Could not parse duration part"):
+        parse_human_durations("10 days | invalid_part")
+
+    # Invalid values raise click.BadParameter
+    with pytest.raises(click.BadParameter):
+        param_type.convert(None, None, None)
+
+    with pytest.raises(click.BadParameter):
+        param_type.convert("not-a-duration", None, None)
