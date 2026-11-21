@@ -13,7 +13,7 @@ from flyte._task_environment import TaskEnvironment
     "python_version,expected_py_version",
     [
         (None, "{}.{}".format(sys.version_info.major, sys.version_info.minor)),  # Use local python version
-        ((3, 10), "3.10"),
+        ((3, 11), "3.11"),
     ],
 )
 @pytest.mark.asyncio
