@@ -7,7 +7,7 @@ from typing import cast
 
 @functools.cache
 def _installed_entry_points() -> importlib.metadata.EntryPoints:
-    # Python 3.10 and 3.11 return a `SelectableGroups` here, which offers the same `select`.
+    # Python 3.11 returns a `SelectableGroups` here, which offers the same `select`.
     return cast("importlib.metadata.EntryPoints", importlib.metadata.entry_points())
 
 

@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import os
 import pathlib
-import sys
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from typing import Any, Optional
@@ -82,21 +81,15 @@ def latest_checkpoint(
 def _is_recoverable_checkpoint_load_error(exc: BaseException) -> bool:
     """
     True for missing/empty checkpoint data. Obstore parallel download raises
-    `flyte.storage._parallel_reader.DownloadQueueEmpty` inside `asyncio.TaskGroup` on Python 3.11+,
+    `flyte.storage._parallel_reader.DownloadQueueEmpty` inside `asyncio.TaskGroup`,
     which surfaces as `builtins.BaseExceptionGroup` — a plain `except DownloadQueueEmpty`
     does not catch that.
     """
     from flyte.storage._parallel_reader import DownloadQueueEmpty
 
-    try:
-        from builtins import BaseExceptionGroup
-    except ImportError:
-        # Python < 3.11: no task-group wrapped storage errors; isinstance never matches.
-        BaseExceptionGroup = type(None)  # type: ignore
-
     if isinstance(exc, (AssertionError, FileNotFoundError, OSError, DownloadQueueEmpty)):
         return True
-    if sys.version_info >= (3, 11) and isinstance(exc, BaseExceptionGroup):
+    if isinstance(exc, BaseExceptionGroup):
         return all(_is_recoverable_checkpoint_load_error(e) for e in exc.exceptions)
     return False
 
