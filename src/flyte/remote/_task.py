@@ -576,6 +576,8 @@ class TaskDetails(ToJSONMixin):
             md.produces_artifacts = produces_artifacts
 
         if retries:
+            if isinstance(retries, int):
+                retries = flyte.RetryStrategy(count=retries)
             md.retries.CopyFrom(get_proto_retry_strategy(retries))
 
         if timeout:
