@@ -7,6 +7,7 @@ extra dependencies beyond what the SDK already has.
 from __future__ import annotations
 
 import logging
+import re
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -20,12 +21,28 @@ from flyte.notify._notifiers import Email, NamedDelivery, NamedRule, Notificatio
 logger = logging.getLogger(__name__)
 
 
+# Notification templates use the backend's Go-template variables (e.g. {{.Run.Name}}), mapped here onto the
+# context keys. The older single-brace style (e.g. {task.name}) is still rendered for existing templates.
+_GO_TEMPLATE_VARS = {
+    ".Run.Name": "run.name",
+    ".Run.Project": "project",
+    ".Run.Domain": "domain",
+    ".Phase": "run.phase",
+    ".Error": "run.error",
+}
+_TEMPLATE_VAR = re.compile(r"\{\{\s*(\.[\w.]+)\s*\}\}|\{([^{}]+)\}")
+
+
 def _render(template: str, context: Dict[str, str]) -> str:
-    """Render template variables like {task.name} using the context dict."""
-    result = template
-    for key, value in context.items():
-        result = result.replace(f"{{{key}}}", value)
-    return result
+    """Render template variables like {{.Run.Name}} (or the legacy {task.name}) using the context dict."""
+
+    def _replace(m: re.Match) -> str:
+        key = _GO_TEMPLATE_VARS.get(m.group(1)) if m.group(1) else m.group(2)
+        if key is None or key not in context:
+            return m.group(0)
+        return context[key]
+
+    return _TEMPLATE_VAR.sub(_replace, template)
 
 
 def _render_dict(d: Dict[str, Any], context: Dict[str, str]) -> Dict[str, Any]:
