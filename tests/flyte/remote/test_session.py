@@ -4,7 +4,10 @@ from unittest.mock import MagicMock, patch
 
 import pyqwest
 import pytest
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 
+from flyte.remote._client.auth._interceptors.auth import AuthUnaryInterceptor
 from flyte.remote._client.auth._session import (
     SessionConfig,
     _bootstrap_ssl_from_server,
@@ -515,3 +518,26 @@ async def test_retry_interceptors_wrap_auth_interceptors(mock_get_session, mock_
     ]
     assert len(retry_idx) == 2
     assert all(i < auth_idx for i in retry_idx)
+
+
+@pytest.mark.asyncio
+async def test_proxy_command_sends_proxy_authorization_header():
+    cfg = await create_session_config(
+        "dns:///localhost:8090",
+        insecure=True,
+        ca_cert_file_path="/tmp/ca.pem",
+        proxy_command=["echo", "proxy-token"],
+        command=None,
+    )
+    interceptor = next(i for i in cfg.interceptors if isinstance(i, AuthUnaryInterceptor))
+    ctx = MagicMock(request_headers={})
+    sent: list[dict[str, str]] = []
+
+    async def call_next(request: object, ctx: MagicMock) -> str:
+        sent.append(dict(ctx.request_headers))
+        if ctx.request_headers.get("proxy-authorization") != "Bearer proxy-token":
+            raise ConnectError(Code.UNAUTHENTICATED, "proxy auth required")
+        return "ok"
+
+    assert await interceptor.intercept_unary(call_next, object(), ctx) == "ok"
+    assert "authorization" not in sent[-1]
