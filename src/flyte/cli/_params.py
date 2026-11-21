@@ -8,6 +8,7 @@ import os
 import pathlib
 import re
 import sys
+import types
 import typing
 import typing as t
 from functools import lru_cache
@@ -750,13 +751,14 @@ def literal_type_to_click_type(
         return DirParamType()
 
     if lt.HasField("union_type"):
+        origin = typing.get_origin(python_type)
+        if origin not in (typing.Union, types.UnionType):
+            return PickleParamType()
         python_args = typing.get_args(python_type)
         if len(python_args) == 0:
             return PickleParamType()
         cts: list[click.ParamType | None] = []
-        for i in range(len(lt.union_type.variants)):
-            variant = lt.union_type.variants[i]
-            variant_python_type = python_args[i]
+        for variant, variant_python_type in zip(lt.union_type.variants, python_args):
             if variant_python_type is type(None):
                 cts.append(None)
             else:

@@ -14,6 +14,7 @@ from flyteidl2.core.types_pb2 import LiteralType, SimpleType
 from flyte.cli._params import EnumParamType, JsonParamType, to_click_option
 from flyte.cli._run import RunArguments
 from flyte.io import DataFrame, Dir, File
+from flyte.types import TypeEngine
 
 
 class Color(str, enum.Enum):
@@ -364,3 +365,69 @@ def test_bool_flag_value_hint():
     assert bool_flag_value_hint(params, ["--block", "maybe"]) is None
     assert bool_flag_value_hint(params, ["-v", "true"]) is None
     assert bool_flag_value_hint(params, []) is None
+
+
+def test_literal_type_to_click_type_pickled_generics():
+    """Generic types falling back to FlytePickle should return PickleParamType without IndexError."""
+    import typing
+
+    from flyte.cli._params import PickleParamType, literal_type_to_click_type
+
+    _T = typing.TypeVar("_T")
+
+    class CustomGeneric(typing.Generic[_T]):
+        pass
+
+    for t in [
+        set[int],
+        set[str],
+        frozenset[int],
+        frozenset[str],
+        tuple[int, ...],
+        typing.Sequence[int],
+        typing.Iterable[str],
+        CustomGeneric[int],
+    ]:
+        lt = TypeEngine.to_literal_type(t)
+        assert lt.HasField("union_type")
+        click_type = literal_type_to_click_type(lt, t)
+        assert isinstance(click_type, PickleParamType)
+
+
+def test_literal_type_to_click_type_unions():
+    """Real Python unions should continue returning UnionParamType with appropriate sub-types."""
+    import typing
+
+    from flyte.cli._params import PickleParamType, UnionParamType, literal_type_to_click_type
+
+    class CustomClass:
+        pass
+
+    for t in [
+        typing.Union[int, str],
+        typing.Optional[int],
+        int | str,
+        int | None,
+        typing.Union[int, CustomClass],
+    ]:
+        lt = TypeEngine.to_literal_type(t)
+        click_type = literal_type_to_click_type(lt, t)
+        assert isinstance(click_type, UnionParamType)
+
+    # Union with unpickled custom class should include PickleParamType in its union members
+    lt_custom = TypeEngine.to_literal_type(typing.Union[int, CustomClass])
+    ct_custom = literal_type_to_click_type(lt_custom, typing.Union[int, CustomClass])
+    assert any(isinstance(p, PickleParamType) for p in ct_custom._types)
+
+
+def test_to_click_option_with_pickled_generic():
+    """to_click_option must succeed for tasks with parameterized generic inputs like set[int]."""
+    from flyteidl2.core.interface_pb2 import Variable
+
+    from flyte.cli._params import PickleParamType, to_click_option
+
+    lt = TypeEngine.to_literal_type(set[int])
+    var = Variable(type=lt)
+    opt = to_click_option("my_set", var, set[int], None)
+    assert opt.name == "my_set"
+    assert isinstance(opt.type, PickleParamType)
