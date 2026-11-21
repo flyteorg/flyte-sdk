@@ -5,6 +5,7 @@ import os
 import sys
 import threading
 import typing
+import warnings
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -190,6 +191,43 @@ async def _initialize_client(
     )
 
 
+# The oldest Python version that stays supported once the minimum is raised next. Older interpreters
+# get the warning below; it never fires when this equals the minimum in `requires-python`.
+_NEXT_MINIMUM_PYTHON = (3, 12)
+
+_python_support_warned = False
+
+
+def _python_version() -> tuple[int, int]:
+    return sys.version_info.major, sys.version_info.minor
+
+
+def _warn_python_support_ending() -> None:
+    """
+    Warn, once per process, that the running Python version is about to lose support.
+
+    This is for the client side, where someone can act on it: the CLI and the `flyte.init` family.
+    Inside a task or app container the interpreter is the image's own and the warning would only
+    repeat in the logs of every task, so nothing is emitted there.
+    """
+    global _python_support_warned  # noqa: PLW0603
+    if _python_support_warned:
+        return
+    major, minor = _python_version()
+    if (major, minor) >= _NEXT_MINIMUM_PYTHON or os.environ.get("FLYTE_INTERNAL_EXECUTION_PROJECT"):
+        return
+    _python_support_warned = True
+    next_major, next_minor = _NEXT_MINIMUM_PYTHON
+    # FutureWarning rather than DeprecationWarning: `init` runs on the syncify background thread, so the
+    # warning cannot be attributed to the caller's module and a DeprecationWarning would be filtered out.
+    warnings.warn(
+        f"Support for Python {major}.{minor} will be removed in an upcoming Flyte release. "
+        f"Upgrade to Python {next_major}.{next_minor} or newer.",
+        FutureWarning,
+        stacklevel=2,
+    )
+
+
 def _initialize_logger(
     log_level: int | None = None,
     log_format: LogFormat | None = None,
@@ -317,6 +355,7 @@ async def init(
         reset_root_logger=reset_root_logger,
         user_log_level=user_log_level,
     )
+    _warn_python_support_ending()
     if load_plugin_type_transformers:
         _load_custom_type_transformers()
 
@@ -663,6 +702,11 @@ async def init_in_cluster(
         The kwargs used to initialize the client, to be spread into `create_remote_controller`.
     """
     from flyte._utils import str2bool
+
+    # A task pod runs the Python version of its image: keep the end-of-support warning out of its logs,
+    # also when the project is passed as an argument instead of through the environment.
+    global _python_support_warned  # noqa: PLW0603
+    _python_support_warned = True
 
     PROJECT_NAME = "FLYTE_INTERNAL_EXECUTION_PROJECT"
     DOMAIN_NAME = "FLYTE_INTERNAL_EXECUTION_DOMAIN"
