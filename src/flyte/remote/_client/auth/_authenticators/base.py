@@ -436,6 +436,6 @@ def get_async_session(
     http_session = httpx.AsyncClient(**client_kwargs)
     if proxy_authenticator:
         http_session = upgrade_async_session_to_proxy_authenticated(
-            http_session, proxy_authenticator=proxy_authenticator, **kwargs
+            http_session, proxy_authenticator=proxy_authenticator, **client_kwargs
         )
     return http_session
