@@ -2570,6 +2570,88 @@ async def test_typeddict_with_list():
     assert result["scores"] == pytest.approx([0.9, 0.92, 0.97])
 
 
+@pytest.mark.asyncio
+async def test_typeddict_total_false():
+    """Test TypedDict with total=False, explicit None, and inheritance."""
+    from typing import Optional, TypedDict
+
+    from typing_extensions import NotRequired, Required
+
+    class PartialConfig(TypedDict, total=False):
+        max_retries: int
+        timeout: Optional[int]
+
+    class MixedConfig(TypedDict, total=False):
+        optional_opt: str
+        required_id: Required[int]
+
+    class TotalTrueConfig(TypedDict, total=True):
+        name: str
+        tag: NotRequired[Optional[str]]
+
+    class BaseConfig(TypedDict, total=True):
+        base_id: int
+
+    class ChildConfig(BaseConfig, total=False):
+        child_opt: Optional[str]
+
+    # 1. PartialConfig roundtrip with only 1 field present
+    cfg: PartialConfig = {"max_retries": 3}
+    lt = TypeEngine.to_literal_type(PartialConfig)
+    literal = await TypeEngine.to_literal(cfg, PartialConfig, lt)
+    result = await TypeEngine.to_python_value(literal, PartialConfig)
+    assert result == {"max_retries": 3}
+    assert "timeout" not in result
+
+    # 2. PartialConfig roundtrip with explicit None on optional field (must be preserved)
+    explicit_none_cfg: PartialConfig = {"max_retries": 3, "timeout": None}
+    literal_none = await TypeEngine.to_literal(explicit_none_cfg, PartialConfig, lt)
+    result_none = await TypeEngine.to_python_value(literal_none, PartialConfig)
+    assert result_none == {"max_retries": 3, "timeout": None}
+
+    # 3. PartialConfig roundtrip with empty dict
+    empty_cfg: PartialConfig = {}
+    literal_empty = await TypeEngine.to_literal(empty_cfg, PartialConfig, lt)
+    result_empty = await TypeEngine.to_python_value(literal_empty, PartialConfig)
+    assert result_empty == {}
+
+    # 4. MixedConfig roundtrip with Required field present
+    mixed_cfg: MixedConfig = {"required_id": 42}
+    lt_mixed = TypeEngine.to_literal_type(MixedConfig)
+    literal_mixed = await TypeEngine.to_literal(mixed_cfg, MixedConfig, lt_mixed)
+    result_mixed = await TypeEngine.to_python_value(literal_mixed, MixedConfig)
+    assert result_mixed == {"required_id": 42}
+    assert "optional_opt" not in result_mixed
+
+    # 5. MixedConfig fails when Required field is missing
+    with pytest.raises(Exception):
+        await TypeEngine.to_literal({"optional_opt": "custom"}, MixedConfig, lt_mixed)
+
+    # 6. TotalTrueConfig with NotRequired omitted vs explicit None
+    tt_cfg: TotalTrueConfig = {"name": "app"}
+    lt_tt = TypeEngine.to_literal_type(TotalTrueConfig)
+    literal_tt = await TypeEngine.to_literal(tt_cfg, TotalTrueConfig, lt_tt)
+    result_tt = await TypeEngine.to_python_value(literal_tt, TotalTrueConfig)
+    assert result_tt == {"name": "app"}
+    assert "tag" not in result_tt
+
+    tt_none_cfg: TotalTrueConfig = {"name": "app", "tag": None}
+    literal_tt_none = await TypeEngine.to_literal(tt_none_cfg, TotalTrueConfig, lt_tt)
+    result_tt_none = await TypeEngine.to_python_value(literal_tt_none, TotalTrueConfig)
+    assert result_tt_none == {"name": "app", "tag": None}
+
+    # 7. Inheritance: ChildConfig (total=False) inherits required field from BaseConfig (total=True)
+    lt_child = TypeEngine.to_literal_type(ChildConfig)
+    with pytest.raises(Exception):
+        await TypeEngine.to_literal({"child_opt": "foo"}, ChildConfig, lt_child)
+
+    child_ok: ChildConfig = {"base_id": 100}
+    lit_child_ok = await TypeEngine.to_literal(child_ok, ChildConfig, lt_child)
+    res_child_ok = await TypeEngine.to_python_value(lit_child_ok, ChildConfig)
+    assert res_child_ok == {"base_id": 100}
+    assert "child_opt" not in res_child_ok
+
+
 # ---------------------------------------------------------------------------
 # PydanticTransformer.guess_python_type tests
 # ---------------------------------------------------------------------------

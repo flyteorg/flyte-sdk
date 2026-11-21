@@ -14,7 +14,7 @@ from typing import Any, Dict, NamedTuple, Optional, Tuple, Type, TypedDict, cast
 
 from flyteidl2.core.literals_pb2 import Literal
 from flyteidl2.core.types_pb2 import LiteralType, SimpleType
-from pydantic import BaseModel
+from pydantic import BaseModel, model_serializer
 from typing_extensions import NotRequired, Required, get_args, get_origin
 
 from ._type_engine import PydanticTransformer, TypeTransformer, TypeTransformerFailedError
@@ -563,6 +563,15 @@ class NamedTupleTransformer(PydanticWrappingTransformer[tuple]):
         return Any
 
 
+class _TypedDictBaseModel(BaseModel):
+    """Base model for TypedDict wrappers that serializes only explicitly set fields."""
+
+    @model_serializer(mode="wrap")
+    def _serialize_typeddict(self, handler: Any) -> Any:
+        data = handler(self)
+        return {k: v for k, v in data.items() if k in self.model_fields_set}
+
+
 class TypedDictTransformer(PydanticWrappingTransformer[dict]):
     """
     Transformer that handles TypedDict types.
@@ -634,11 +643,13 @@ class TypedDictTransformer(PydanticWrappingTransformer[dict]):
         # becomes a forward reference (e.g. List["TypedDictWrapper_TreeNode"]) that
         # Pydantic resolves via model_rebuild() after model creation.
         _model_cache[t] = model_name  # type: ignore
+        optional_keys: frozenset[str] = getattr(t, "__optional_keys__", frozenset())
 
         for field_name, field_type in annotations_with_extras.items():
-            # Check if the field is NotRequired before unwrapping
+            # Check if the field is optional: either explicitly wrapped in NotRequired,
+            # or in __optional_keys__ (accounting for total=False and inheritance) and not Required
             origin = get_origin(field_type)
-            is_not_required = origin is NotRequired
+            is_not_required = (origin is NotRequired) or (field_name in optional_keys and origin is not Required)
 
             # Unwrap NotRequired and Required type hints to get the inner type
             # These are only used by TypedDict to mark optional/required fields
@@ -655,7 +666,7 @@ class TypedDictTransformer(PydanticWrappingTransformer[dict]):
             else:
                 field_definitions[field_name] = (pydantic_type, ...)
 
-        model = create_model(model_name, **field_definitions)
+        model = create_model(model_name, __base__=_TypedDictBaseModel, **field_definitions)
         _model_cache[t] = model
 
         # Rebuild to resolve any forward references from self-referential types
@@ -742,14 +753,8 @@ class TypedDictTransformer(PydanticWrappingTransformer[dict]):
             annotations_with_extras = getattr(expected_type, "__annotations__", {})
         result = {}
         for name, field_type in annotations_with_extras.items():
-            if hasattr(model_instance, name):
+            if hasattr(model_instance, name) and name in model_instance.model_fields_set:
                 value = getattr(model_instance, name)
-                # Skip NotRequired fields when value is None
-                # This ensures that optional fields not provided in the input
-                # are absent from the output dict (not set to None)
-                origin = get_origin(field_type)
-                if origin is NotRequired and value is None:
-                    continue
                 # Unwrap NotRequired/Required before converting
                 inner_type = self._unwrap_typeddict_field_type(field_type)
                 # Recursively convert nested values
