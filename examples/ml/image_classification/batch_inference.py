@@ -312,8 +312,8 @@ async def batch_inference_pipeline(
     """
     logger.info("Starting batch inference pipeline")
 
-    # List all files in the directory without downloading
-    all_files = await images_dir.list_files()
+    # Recursively list all files without downloading; images live under <label>/ subdirectories.
+    all_files = [f async for f in images_dir.walk(recursive=True)]
 
     # Filter for image files
     image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff"}
