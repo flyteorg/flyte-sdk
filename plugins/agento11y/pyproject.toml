@@ -4,7 +4,7 @@ dynamic = ["version"]
 description = "Grafana Agent Observability (agento11y) for Flyte agents"
 readme = "README.md"
 authors = [{ name = "Samhita Alla", email = "samhita@union.ai" }]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "agento11y>=0.12.0",
     "flyteplugins-agents-core",

@@ -3,7 +3,7 @@ name = "autosec"
 version = "0.1.0"
 description = "AutoSec demo MVP — an autonomous security-ops researcher pipeline on Flyte (see SPEC.md)"
 readme = "SPEC.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "flyte",
     "litellm",
