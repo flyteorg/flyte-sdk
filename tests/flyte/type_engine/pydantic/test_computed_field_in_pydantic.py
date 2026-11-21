@@ -183,3 +183,15 @@ async def test_tuple_field_with_computed_field_models_roundtrips():
     assert pv.pair[1].n_weeks == 3
     assert pv.rest[0] == Params(n_days=35)
     assert pv.rest[0].n_weeks == 5
+
+
+@pytest.mark.asyncio
+async def test_wrong_length_fixed_tuple_still_fails_validation():
+    """Stripping must not truncate a fixed-length tuple and let a wrong-length payload validate."""
+    value = TupleWrapper(pair=(Params(n_days=7), Params(n_days=21)))
+    lt = TypeEngine.to_literal_type(TupleWrapper)
+    lv = await TypeEngine.to_literal(value, TupleWrapper, lt)
+    lv.scalar.binary.value = msgpack.dumps({"pair": [{"n_days": 7}, {"n_days": 14}, {"n_days": 21}], "rest": []})
+
+    with pytest.raises(Exception, match="pair"):
+        await TypeEngine.to_python_value(lv, TupleWrapper)

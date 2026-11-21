@@ -573,6 +573,9 @@ def _strip_computed_field_value(value: typing.Any, field_type: typing.Any) -> ty
     if origin is tuple and args and isinstance(value, (list, tuple)):
         if len(args) == 2 and args[1] is Ellipsis:
             return [_strip_computed_field_value(item, args[0]) for item in value]
+        # Leave a wrong-length value untouched: zip would truncate it and hide the length error from validation.
+        if len(value) != len(args):
+            return value
         return [_strip_computed_field_value(item, t) for item, t in zip(value, args)]
 
     return value
