@@ -173,11 +173,14 @@ impl ActionsClient {
 }
 
 /// Check if the unified ActionsService should be used instead of QueueService + StateService.
-/// Mirrors `flyte._internal.controllers.remote._service_protocol.use_actions_service`.
+/// Mirrors `flyte._internal.controllers.remote._service_protocol.use_actions_service`: a reusable
+/// worker pod that authenticates as itself (a `pod/` workload in `_U_WORKLOAD`) always uses it,
+/// since its workload credential names each request's action from the ActionsService metadata.
 pub fn use_actions_service() -> bool {
-    std::env::var("_U_USE_ACTIONS")
-        .map(|v| v == "1")
-        .unwrap_or(false)
+    std::env::var("_U_USE_ACTIONS").map(|v| v == "1").unwrap_or(false)
+        || std::env::var("_U_WORKLOAD")
+            .map(|w| w.starts_with("pod/"))
+            .unwrap_or(false)
 }
 
 /// Build the metadata headers for ActionsService RPC calls.
