@@ -43,3 +43,15 @@ def test_both_log_levels_always_present():
     env = _env()
     assert "LOG_LEVEL" in env
     assert "USER_LOG_LEVEL" in env
+
+
+def test_root_logger_env_absent_by_default():
+    env = _env()
+    assert "FLYTE_RESET_ROOT_LOGGER" not in env
+    assert "FLYTE_WRAP_ROOT_HANDLERS" not in env
+
+
+def test_wrap_root_handlers_opt_out_propagates_to_task_env():
+    # The task pod re-initializes logging, so the opt-out has to travel with the run.
+    env = _env(wrap_root_handlers=False)
+    assert env["FLYTE_WRAP_ROOT_HANDLERS"] == "0"

@@ -190,6 +190,107 @@ def test_initialize_logger_wraps_existing_root_handlers():
         initialize_logger()
 
 
+def test_wrap_root_handlers_from_env(monkeypatch):
+    from flyte._logging import wrap_root_handlers_from_env
+
+    monkeypatch.delenv("FLYTE_WRAP_ROOT_HANDLERS", raising=False)
+    assert wrap_root_handlers_from_env() is True
+    for falsy in ("0", "false", "FALSE", "no", "off"):
+        monkeypatch.setenv("FLYTE_WRAP_ROOT_HANDLERS", falsy)
+        assert wrap_root_handlers_from_env() is False
+    monkeypatch.setenv("FLYTE_WRAP_ROOT_HANDLERS", "1")
+    assert wrap_root_handlers_from_env() is True
+
+
+def _root_with_json_handler():
+    """Install a single root handler whose formatter emits pure JSON. Returns (handler, buffer)."""
+    import io
+
+    class _JSONOnly(logging.Formatter):
+        def format(self, record):
+            return json.dumps({"message": record.getMessage()})
+
+    buf = io.StringIO()
+    handler = logging.StreamHandler(buf)
+    handler.setFormatter(_JSONOnly())
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(handler)
+    return handler, buf
+
+
+def test_initialize_logger_leaves_root_handlers_alone_when_opted_out():
+    """
+    wrap_root_handlers=False must leave formatters flyte did not create untouched, so an
+    application that owns root-handler formatting keeps emitting parseable output inside a task.
+    """
+    from flyte._logging import ContextFormatter, initialize_logger
+
+    root = logging.getLogger()
+    saved_handlers = list(root.handlers)
+    handler, buf = _root_with_json_handler()
+    original_formatter = handler.formatter
+
+    try:
+        initialize_logger(wrap_root_handlers=False)
+        assert handler.formatter is original_formatter
+        assert not isinstance(handler.formatter, ContextFormatter)
+
+        # A record carrying run/action context still renders as pure JSON.
+        record = logging.LogRecord(
+            name="myapp", level=logging.INFO, pathname="t.py", lineno=1, msg="hi", args=None, exc_info=None
+        )
+        record.run_name = "r1"
+        record.action_name = "a1"
+        handler.handle(record)
+        assert json.loads(buf.getvalue().strip()) == {"message": "hi"}
+    finally:
+        root.handlers.clear()
+        root.handlers.extend(saved_handlers)
+        initialize_logger()
+
+
+def test_initialize_logger_wrap_opt_out_via_env(monkeypatch):
+    """FLYTE_WRAP_ROOT_HANDLERS=0 is equivalent to passing wrap_root_handlers=False."""
+    from flyte._logging import ContextFormatter, initialize_logger
+
+    root = logging.getLogger()
+    saved_handlers = list(root.handlers)
+    handler, _ = _root_with_json_handler()
+    original_formatter = handler.formatter
+
+    try:
+        monkeypatch.setenv("FLYTE_WRAP_ROOT_HANDLERS", "0")
+        initialize_logger()
+        assert handler.formatter is original_formatter
+        assert not isinstance(handler.formatter, ContextFormatter)
+    finally:
+        root.handlers.clear()
+        root.handlers.extend(saved_handlers)
+        initialize_logger()
+
+
+def test_reset_root_logger_still_wins_over_wrap_opt_out():
+    """reset_root_logger is the stronger request: it replaces handlers regardless of wrapping."""
+    from flyte._logging import initialize_logger
+
+    root = logging.getLogger()
+    saved_handlers = list(root.handlers)
+    handler, _ = _root_with_json_handler()
+
+    try:
+        initialize_logger(reset_root_logger=True, wrap_root_handlers=False)
+        assert handler not in root.handlers
+    finally:
+        # _setup_root_logger turns warning capture on; leaving it on makes a later
+        # captureWarnings(True) a silent no-op, because pytest restores
+        # warnings.showwarning per test while logging's saved copy stays set.
+        logging.captureWarnings(False)
+        root.handlers.clear()
+        root.handlers.extend(saved_handlers)
+        initialize_logger()
+
+
 def test_user_logger_no_flyte_prefix_after_rich_init():
     """
     Regression: when initialize_logger(enable_rich=True) is called (e.g. via flyte.init()),

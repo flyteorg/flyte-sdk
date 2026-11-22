@@ -273,6 +273,7 @@ class _Runner:
         log_format: LogFormat = "console",
         user_log_level: int | None = None,
         reset_root_logger: bool = False,
+        wrap_root_handlers: bool = True,
         disable_run_cache: bool = False,
         queue: Optional[str] = None,
         max_action_concurrency: int | None = None,
@@ -321,6 +322,7 @@ class _Runner:
         self._log_format = log_format
         self._user_log_level = user_log_level
         self._reset_root_logger = reset_root_logger
+        self._wrap_root_handlers = wrap_root_handlers
         self._disable_run_cache = disable_run_cache
         self._queue = queue
         self._max_action_concurrency = max_action_concurrency
@@ -545,6 +547,8 @@ class _Runner:
             env["USER_LOG_LEVEL"] = str(self._user_log_level or user_logger.getEffectiveLevel())
         if self._reset_root_logger:
             env["FLYTE_RESET_ROOT_LOGGER"] = "1"
+        if not self._wrap_root_handlers:
+            env["FLYTE_WRAP_ROOT_HANDLERS"] = "0"
         if self._debug:
             env["_F_E_VS"] = "1"
 
@@ -1904,6 +1908,7 @@ def with_runcontext(
     log_format: LogFormat = "console",
     user_log_level: int | None = None,
     reset_root_logger: bool = False,
+    wrap_root_handlers: bool = True,
     disable_run_cache: bool = False,
     queue: Optional[str] = None,
     max_action_concurrency: int | None = None,
@@ -1980,6 +1985,11 @@ def with_runcontext(
             warnings are logged through it too. Defaults to False, which leaves those handlers in
             place and instead wraps each one so its output carries the run and action context. Can
             also be turned on with the environment variable `FLYTE_RESET_ROOT_LOGGER=1`.
+        wrap_root_handlers: Controls that wrapping. Defaults to True. Set it to False to leave
+            handlers Flyte did not create completely untouched, which an application that owns its
+            root-handler formatting -- emitting structured JSON, say -- needs in order to keep that
+            output parseable. Propagates to the task pods as `FLYTE_WRAP_ROOT_HANDLERS=0`. Ignored
+            when `reset_root_logger` is True.
         disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
         queue: Optional queue for the run and its remote image builds. Overrides the task queue.
         max_action_concurrency: Optional Maximum number of actions that can run concurrently within this run.
@@ -2052,6 +2062,7 @@ def with_runcontext(
         log_format=log_format,
         user_log_level=user_log_level,
         reset_root_logger=reset_root_logger,
+        wrap_root_handlers=wrap_root_handlers,
         disable_run_cache=disable_run_cache,
         queue=queue,
         max_action_concurrency=max_action_concurrency,
