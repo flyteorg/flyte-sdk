@@ -1,0 +1,43 @@
+# Installable, versioned distribution of the Flyte v2 environment-validation smoke
+# suite. Consume it two ways (see README.md):
+#   * from a source checkout under your run's working dir (editable / vendored) — the
+#     scenario code ships in flyte's fast-register code bundle; or
+#   * as a plain install (`pip install flyte-functional-tests`, or a git ref) — then set
+#     FLYTE_FUNCTIONAL_SUITE_SPEC so each scenario image installs the suite, since a
+#     site-packages install is NOT under the working dir and so isn't bundled.
+#
+# `flyte` is left permissive so an in-image suite install never conflicts with the base
+# image's own flyte; pin `flyte` on the consumer side (the runner) if your backend is a
+# release behind. `flyteplugins-union` is NOT imported by the suite — it's for a consumer
+# that also drives cluster ops (pool/queue/routing) from this env, so it lives in the
+# optional `harness` extra.
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "flyte-functional-tests"
+version = "0.1.0"
+description = "Environment-validation smoke suite for a Flyte v2 backend (see README.md)."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "flyte>=2.5.20",
+    "pytest>=8.3.5",
+    "pytest-xdist",
+    "pytest-rerunfailures",
+]
+
+[project.optional-dependencies]
+# The app-serving scenario builds and hits a FastAPI app; other scenarios don't need it.
+app = ["fastapi", "uvicorn", "httpx"]
+# For a consumer that also drives cluster ops (pool/queue/routing) from this same env.
+harness = ["flyteplugins-union>=0.7.0"]
+
+# Ship the option/markers/ordering as a real pytest plugin so they survive
+# `pytest --pyargs flyte_functional_tests` (an in-package conftest can't guarantee it).
+[project.entry-points.pytest11]
+flyte_functional_tests = "flyte_functional_tests.plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["flyte_functional_tests"]
