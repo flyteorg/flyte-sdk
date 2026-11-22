@@ -1170,7 +1170,15 @@ async def test_ensure_buildx_builder_recreates_when_network_host_missing():
 
 
 @pytest.mark.asyncio
-async def test_ensure_buildx_builder_wraps_create_failure_as_image_build_error():
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "ERROR: failed to find driver",
+        # An existing builder with a different driver is not one we can reuse.
+        'ERROR: existing instance for "flytex" but has mismatched driver "docker"',
+    ],
+)
+async def test_ensure_buildx_builder_wraps_create_failure_as_image_build_error(stderr):
     """When `docker buildx create` fails, the raw CalledProcessError should not bubble out.
 
     Previously this leaked into Sentry as a RuntimeSystem/CalledProcessError crash report
@@ -1185,7 +1193,7 @@ async def test_ensure_buildx_builder_wraps_create_failure_as_image_build_error()
             result.stderr = ""
             return result
         if "create" in cmd:
-            raise subprocess.CalledProcessError(returncode=1, cmd=cmd, stderr="ERROR: failed to find driver")
+            raise subprocess.CalledProcessError(returncode=1, cmd=cmd, stderr=stderr)
         return result
 
     with patch(
@@ -1197,7 +1205,18 @@ async def test_ensure_buildx_builder_wraps_create_failure_as_image_build_error()
 
 
 @pytest.mark.asyncio
-async def test_ensure_buildx_builder_reuses_existing_on_already_exists():
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        # docker/buildx builder/builder.go: `create --name <existing>`
+        'ERROR: existing instance for "{name}" but no append mode, specify the node name to make changes for '
+        "existing instances",
+        # node-name and context clashes
+        'ERROR: node "{name}" already exists',
+        'ERROR: instance name "{name}" already exists as context builder',
+    ],
+)
+async def test_ensure_buildx_builder_reuses_existing_on_already_exists(stderr):
     """If `docker buildx create` fails because the builder already exists (e.g. a concurrent
     build created it), it should be reused rather than raising."""
 
@@ -1211,7 +1230,7 @@ async def test_ensure_buildx_builder_reuses_existing_on_already_exists():
             raise subprocess.CalledProcessError(
                 returncode=1,
                 cmd=cmd,
-                stderr=f'ERROR: existing instance for "{DockerImageBuilder._builder_name}" already exists',
+                stderr=stderr.format(name=DockerImageBuilder._builder_name),
             )
         return result
 
