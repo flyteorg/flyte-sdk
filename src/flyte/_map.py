@@ -271,7 +271,7 @@ class _Mapper(Generic[P, R]):
     def validate_partial(func: functools.partial[R]):
         """
         This method validates that the provided partial function is valid for mapping, i.e. only the one argument
-        is left for mapping and the rest are provided as keywords or args.
+        is left for mapping and the rest are provided as keywords or args, or keep their defaults.
 
         Args:
             func: partial function to validate
@@ -282,30 +282,37 @@ class _Mapper(Generic[P, R]):
         f = cast(AsyncFunctionTaskTemplate, func.func)
         inputs = f.native_interface.inputs
         params = list(inputs.keys())
-        total_params = len(params)
         provided_args = len(func.args)
-        provided_kwargs = len(func.keywords or {})
+        keywords = func.keywords or {}
 
-        # Calculate how many parameters are left unspecified
-        unspecified_count = total_params - provided_args - provided_kwargs
+        # Validate that no parameter is both in args and keywords
+        for arg_name in params[:provided_args]:
+            if arg_name in keywords:
+                raise TypeError(
+                    f"Parameter '{arg_name}' is provided both as positional argument and keyword argument "
+                    f"in partial function {f.name}."
+                )
+
+        # The mapped value is passed positionally, so it fills the first unbound parameter. Any other
+        # unbound parameter must have a default, which it keeps for every mapped call.
+        unbound = [p for p in params[provided_args:] if p not in keywords]
+        required = set(f.native_interface.required_inputs())
+        unspecified = unbound[:1] + [p for p in unbound[1:] if p in required]
 
         # Exactly one parameter should be left for mapping
-        if unspecified_count != 1:
+        if len(unspecified) != 1:
             raise TypeError(
                 f"Partial function must leave exactly one parameter unspecified for mapping. "
-                f"Found {unspecified_count} unspecified parameters in {f.name}, "
+                f"Found {len(unspecified)} unspecified parameters in {f.name}, "
                 f"params: {inputs.keys()}"
             )
 
-        # Validate that no parameter is both in args and keywords
-        if func.keywords:
-            param_names = list(inputs.keys())
-            for i, arg_name in enumerate(param_names[: provided_args + 1]):
-                if arg_name in func.keywords:
-                    raise TypeError(
-                        f"Parameter '{arg_name}' is provided both as positional argument and keyword argument "
-                        f"in partial function {f.name}."
-                    )
+        # The mapped value lands on the parameter right after the bound positional args
+        if provided_args < len(params) and params[provided_args] in keywords:
+            raise TypeError(
+                f"Parameter '{params[provided_args]}' is provided both as positional argument and keyword argument "
+                f"in partial function {f.name}."
+            )
 
     @overload
     def __call__(

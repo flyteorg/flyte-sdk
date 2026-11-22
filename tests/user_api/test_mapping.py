@@ -69,6 +69,37 @@ def test_partial_validation():
     with pytest.raises(TypeError, match="provided both as positional argument and keyword argument"):
         mapper.validate_partial(duplicate_param_partial)
 
+    @env.task
+    def with_defaults(x: int, factor: int, offset: int = 0, scale: int = 1) -> int:
+        return (x * factor + offset) * scale
+
+    # Case 5: Unbound parameters with defaults keep them and don't count as left for mapping
+    mapper.validate_partial(partial(with_defaults, factor=2))
+    mapper.validate_partial(partial(with_defaults, 1))
+    mapper.validate_partial(partial(with_defaults, factor=2, scale=3))
+
+    # Case 6: A required parameter besides the mapped one must still be bound
+    with pytest.raises(TypeError, match="Found 2 unspecified parameters"):
+        mapper.validate_partial(partial(with_defaults, offset=1))
+
+
+def test_map_partial_keeps_defaults():
+    from functools import partial
+
+    env = flyte.TaskEnvironment(name="map-test")
+
+    @env.task
+    def scale(x: int, factor: int, offset: int = 100) -> int:
+        return x * factor + offset
+
+    @env.task
+    def main() -> List[int]:
+        return list(flyte.map(partial(scale, factor=2), [1, 2, 3]))
+
+    flyte.init()
+    run = flyte.with_runcontext(mode="local").run(main)
+    assert run.outputs()[0] == [102, 104, 106]
+
 
 def test_map_partials_unhappy():
     from functools import partial
