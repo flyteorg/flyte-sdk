@@ -91,6 +91,10 @@ class Console:
         parsed = urlparse(self._endpoint)
         if parsed.scheme == "dns":
             domain = parsed.path.lstrip("/")
+        elif parsed.scheme in ("http", "https") and parsed.netloc:
+            # An endpoint under a path of a shared host (e.g. onebox served at
+            # https://platform.example.com/onebox) has its console under it too.
+            domain = parsed.netloc + parsed.path.rstrip("/")
         else:
             domain = parsed.netloc or parsed.path
 

@@ -12,6 +12,7 @@ from ._lazy_group import LazyGroup
 # is used (see `LazyGroup`), so add new ones here rather than importing them at the top of this file.
 _COMMANDS = {
     "abort": "flyte.cli._abort:abort",
+    "auth": "flyte.cli._auth:auth",
     "build": "flyte.cli._build:build",
     "create": "flyte.cli._create:create",
     "delete": "flyte.cli._delete:delete",
@@ -67,6 +68,10 @@ help_config = click.RichHelpConfiguration(
             {
                 "name": "User information",
                 "commands": ["whoami"],
+            },
+            {
+                "name": "Authentication",
+                "commands": ["auth"],
             },
         ]
     },

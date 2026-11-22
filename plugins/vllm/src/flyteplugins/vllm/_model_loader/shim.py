@@ -1,4 +1,5 @@
 import logging
+import sys
 from typing import Generator
 
 import torch
@@ -148,4 +149,23 @@ def main():
         logger.info("Prefetching model files from object storage...")
         asyncio.run(_get_model_files())
 
+    _serve_under_base_path(sys.argv)
     vllm.entrypoints.cli.main.main()
+
+
+def _serve_under_base_path(argv: list[str]) -> None:
+    """Serve `vllm serve` under the app's path, when its URL is path-based.
+
+    Requests reach the app with the path intact (/<prefix>/apps/<name>/v1/...),
+    and vLLM's --root-path assumes a proxy removed it (uvicorn prepends it
+    again), so neither routes them. vLLM's --middleware installs an ASGI class
+    before its routes: ServeUnderBasePath serves under the path, removed or not.
+    """
+    from flyte.app._base_path import SERVE_UNDER_BASE_PATH_MIDDLEWARE, app_base_path
+
+    if not app_base_path() or len(argv) < 2 or argv[1] != "serve":
+        return
+    if SERVE_UNDER_BASE_PATH_MIDDLEWARE in argv:
+        return
+    logger.info("Serving under the app's base path %s", app_base_path())
+    argv.extend(["--middleware", SERVE_UNDER_BASE_PATH_MIDDLEWARE])
