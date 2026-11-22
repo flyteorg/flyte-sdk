@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, get_args
 import rich_click as click
 from click import Context, Parameter
 
+from flyte._interface import LITERAL_ENUM
 from flyte._logging import logger
 
 if TYPE_CHECKING:
@@ -331,7 +332,9 @@ class DurationParamType(click.ParamType):
 
 class EnumParamType(click.Choice):
     def __init__(self, enum_type: typing.Type[enum.Enum]):
-        super().__init__([e.name for e in enum_type])
+        # A typing.Literal's choices are its own values, as declared on the wire; other enums go by member name.
+        self._by_value = enum_type.__name__ == LITERAL_ENUM
+        super().__init__([e.value if self._by_value else e.name for e in enum_type])
         self._enum_type = enum_type
 
     def convert(
@@ -339,7 +342,8 @@ class EnumParamType(click.Choice):
     ) -> enum.Enum:
         if isinstance(value, self._enum_type):
             return value
-        return self._enum_type[super().convert(value, param, ctx)]
+        choice = super().convert(value, param, ctx)
+        return self._enum_type(choice) if self._by_value else self._enum_type[choice]
 
 
 class UnionParamType(click.ParamType):
