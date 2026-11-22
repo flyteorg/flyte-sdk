@@ -582,6 +582,8 @@ class TaskDetails(ToJSONMixin):
             mr = get_proto_max_runtime(timeout)
             if mr is not None:
                 md.timeout.CopyFrom(mr)
+            else:
+                md.ClearField("timeout")
             ts = get_proto_timeout_strategy(timeout)
             if ts is not None:
                 md.timeouts.CopyFrom(ts)

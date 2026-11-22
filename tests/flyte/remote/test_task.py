@@ -43,6 +43,45 @@ class TestTaskDetailsCacheMaxAge:
         assert not unset.pb2.spec.task_template.metadata.HasField("cache_max_age")
 
 
+class TestTaskDetailsTimeoutOverride:
+    """`override(timeout=...)` replaces the whole timeout, as the local `TaskTemplate.override` does."""
+
+    @staticmethod
+    def _deployed() -> TaskDetails:
+        from flyteidl2.task import task_definition_pb2
+
+        pb2 = task_definition_pb2.TaskDetails()
+        metadata = pb2.spec.task_template.metadata
+        metadata.timeout.FromTimedelta(timedelta(minutes=10))
+        metadata.timeouts.deadline.FromTimedelta(timedelta(hours=1))
+        return TaskDetails(pb2)
+
+    @pytest.mark.parametrize(
+        "timeout",
+        [
+            flyte.Timeout(max_runtime=0),
+            flyte.Timeout(max_runtime=timedelta(0)),
+            flyte.Timeout(),
+        ],
+    )
+    def test_zero_or_unset_max_runtime_clears_deployed_one(self, timeout):
+        metadata = self._deployed().override(timeout=timeout).pb2.spec.task_template.metadata
+        assert not metadata.HasField("timeout")
+        assert not metadata.HasField("timeouts")
+
+    def test_timeout_without_max_runtime_drops_deployed_max_runtime(self):
+        out = self._deployed().override(timeout=flyte.Timeout(deadline=timedelta(hours=2)))
+        metadata = out.pb2.spec.task_template.metadata
+        assert not metadata.HasField("timeout")
+        assert metadata.timeouts.deadline.ToTimedelta() == timedelta(hours=2)
+
+    def test_max_runtime_replaces_deployed_one(self):
+        out = self._deployed().override(timeout=timedelta(minutes=30))
+        metadata = out.pb2.spec.task_template.metadata
+        assert metadata.timeout.ToTimedelta() == timedelta(minutes=30)
+        assert not metadata.HasField("timeouts")
+
+
 class TestTaskDetailsReusableOverride:
     @staticmethod
     def _deployed(reusable: flyte.ReusePolicy | None) -> TaskDetails:
