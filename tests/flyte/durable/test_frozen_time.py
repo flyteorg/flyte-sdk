@@ -1,5 +1,5 @@
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -7,6 +7,7 @@ import pytest
 from flyte.durable import now as durable_now
 from flyte.durable import sleep as durable_sleep
 from flyte.durable import time as durable_time
+from flyte.types import TypeEngine
 
 # -- durable_time tests --
 
@@ -53,17 +54,28 @@ def test_durable_now_sync_returns_datetime():
 
 @pytest.mark.asyncio
 async def test_durable_now_returns_current_time():
-    before = datetime.now()
+    before = datetime.now(timezone.utc)
     result = await durable_now.aio()
-    after = datetime.now()
+    after = datetime.now(timezone.utc)
     assert before <= result <= after
 
 
 def test_durable_now_sync_returns_current_time():
-    before = datetime.now()
+    before = datetime.now(timezone.utc)
     result = durable_now()
-    after = datetime.now()
+    after = datetime.now(timezone.utc)
     assert before <= result <= after
+
+
+@pytest.mark.asyncio
+async def test_durable_now_matches_its_replayed_value():
+    """A resumed run replays durable_now from its DATETIME literal; the live call must return the same value."""
+    result = await durable_now.aio()
+    lt = TypeEngine.to_literal_type(datetime)
+    replayed = await TypeEngine.to_python_value(await TypeEngine.to_literal(result, datetime, lt), datetime)
+    assert result.tzinfo is not None
+    assert replayed == result
+    assert replayed.utcoffset() == result.utcoffset()
 
 
 # -- durable_sleep tests --

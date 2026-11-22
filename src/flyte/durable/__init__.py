@@ -7,7 +7,7 @@ The utilities here persist state across crashes and restarts, making workflows d
 
 - `sleep` - a durable replacement for `time.sleep` / `asyncio.sleep`
 - `time` - a durable replacement for `time.time`
-- `now` - a durable replacement for `datetime.now`
+- `now` - a durable replacement for `datetime.now(timezone.utc)`
 """
 
 from ._time import durable_now as now

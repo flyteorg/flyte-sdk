@@ -1,6 +1,6 @@
 import asyncio
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 import flyte
 from flyte.syncify import syncify
@@ -69,9 +69,11 @@ async def durable_time() -> float:
 @flyte.trace
 async def durable_now() -> datetime:
     """
-    Returns the current time for every unique invocation of durable_time. If the same invocation is encountered
+    Returns the current time for every unique invocation of durable_now. If the same invocation is encountered
     the previously returned time is returned again, ensuring determinism.
-    Similar to using `datetime.now()` just durable!
-    Returns: datetime.datetime
+    Similar to using `datetime.now(timezone.utc)` just durable!
+    Returns: datetime.datetime, timezone-aware in UTC
     """
-    return datetime.now()
+    # A replayed value is decoded from a DATETIME literal, which always comes back as an aware UTC datetime.
+    # Returning the same form on the first call keeps the result identical across a crash and resume.
+    return datetime.now(timezone.utc)
