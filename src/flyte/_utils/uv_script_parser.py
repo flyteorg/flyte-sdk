@@ -23,7 +23,12 @@ def _extract_uv_metadata_block(text: str) -> str | None:
     match = pattern.search(text)
     if not match:
         return None
-    lines = [line.lstrip("# ").rstrip() for line in match.group(1).splitlines()]
+    # Per PEP 723, each block line is "# <content>" or a bare "#": strip only that prefix so
+    # full-line TOML comments ("#   # note") stay comments.
+    lines = [
+        (line.removeprefix("# ") if line.startswith("# ") else line.removeprefix("#")).rstrip()
+        for line in match.group(1).splitlines()
+    ]
     return "\n".join(lines)
 
 

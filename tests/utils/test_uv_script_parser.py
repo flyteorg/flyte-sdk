@@ -73,6 +73,29 @@ def main():
         assert img.identifier == "iRLq7x1r4ewhrcX7VTxkzw"
 
 
+def test_uv_script_parser_keeps_toml_comments(tmp_path: pathlib.Path):
+    # A valid PEP 723 block (uv runs it): full-line TOML comments must stay comments.
+    script_content = """# /// script
+# requires-python = ">=3.11"
+# # pinned for reproducibility
+# dependencies = [
+#   # data stack
+#   "polars",
+#
+#   "pandas",  # inline comment
+# ]
+# ///
+import flyte
+"""
+    script_path = tmp_path / "test_script.py"
+    script_path.write_text(script_content, encoding="utf-8")
+
+    metadata = parse_uv_script_file(script_path)
+
+    assert metadata.requires_python == ">=3.11"
+    assert metadata.dependencies == ["polars", "pandas"]
+
+
 def test_uv_script_parser_sees_edited_script(tmp_path: pathlib.Path):
     script_path = tmp_path / "test_script.py"
     header = "# /// script\n# dependencies = [{deps}]\n# ///\nimport flyte\n"
