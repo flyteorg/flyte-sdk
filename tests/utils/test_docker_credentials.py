@@ -164,6 +164,34 @@ def test_create_dockerconfigjson_from_config_with_global_creds_store(mock_get_cr
     assert "docker.io" in config["auths"]
 
 
+def test_create_dockerconfigjson_from_config_matches_docker_hub_alias(tmp_path):
+    """`docker login` stores Hub as https://index.docker.io/v1/; asking for docker.io must find it."""
+    config_file = tmp_path / "config.json"
+    test_config = {
+        "auths": {
+            "https://index.docker.io/v1/": {"auth": "dGVzdDp0ZXN0"},
+            "ghcr.io": {"auth": "dXNlcjpwYXNz"},
+        }
+    }
+    config_file.write_text(json.dumps(test_config))
+
+    result = create_dockerconfigjson_from_config(registries=["ghcr.io", "docker.io"], docker_config_path=config_file)
+
+    assert json.loads(result)["auths"] == test_config["auths"]
+
+
+@patch("flyte._utils.docker_credentials._get_credentials_from_helper")
+def test_create_dockerconfigjson_from_config_queries_helper_with_stored_key(mock_get_creds, tmp_path):
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps({"auths": {"https://index.docker.io/v1/": {}}, "credsStore": "desktop"}))
+    mock_get_creds.return_value = ("user", "pass")
+
+    result = create_dockerconfigjson_from_config(registries=["docker.io"], docker_config_path=config_file)
+
+    mock_get_creds.assert_called_once_with("desktop", "https://index.docker.io/v1/")
+    assert list(json.loads(result)["auths"]) == ["https://index.docker.io/v1/"]
+
+
 def test_create_dockerconfigjson_from_config_no_credentials(tmp_path):
     """Test error handling when no credentials can be extracted."""
     config_file = tmp_path / "config.json"
