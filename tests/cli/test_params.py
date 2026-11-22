@@ -1,3 +1,4 @@
+import datetime
 import enum
 import json
 import tempfile
@@ -11,7 +12,7 @@ import pytest
 from flyteidl2.core.interface_pb2 import Variable
 from flyteidl2.core.types_pb2 import LiteralType, SimpleType
 
-from flyte.cli._params import EnumParamType, JsonParamType, to_click_option
+from flyte.cli._params import DateTimeType, EnumParamType, JsonParamType, to_click_option
 from flyte.cli._run import RunArguments
 from flyte.io import DataFrame, Dir, File
 
@@ -57,6 +58,34 @@ def test_enum_param_type_passthrough_instance():
     """Passing an already-converted enum instance should be returned as-is."""
     param_type = EnumParamType(Color)
     assert param_type.convert(Color.BLUE, param=None, ctx=None) is Color.BLUE
+
+
+_UTC = datetime.timezone.utc
+_PLUS5 = datetime.timezone(datetime.timedelta(hours=5))
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ("2026-01-01T09:00:00Z", datetime.datetime(2026, 1, 1, 9, tzinfo=_UTC)),
+        ("2026-01-01T09:00:00+05:00", datetime.datetime(2026, 1, 1, 9, tzinfo=_PLUS5)),
+        ("2026-01-01T09:00:00.250", datetime.datetime(2026, 1, 1, 9, 0, 0, 250000)),
+        ("2026-01-01T09:00", datetime.datetime(2026, 1, 1, 9)),
+        ("2026-01-01T09:00:00Z - 1 day", datetime.datetime(2025, 12, 31, 9, tzinfo=_UTC)),
+        # Pre-existing formats keep working.
+        ("2026-01-01", datetime.datetime(2026, 1, 1)),
+        ("2026-01-01T09:00:00", datetime.datetime(2026, 1, 1, 9)),
+        ("2026-01-01 09:00:00+05:00", datetime.datetime(2026, 1, 1, 9, tzinfo=_PLUS5)),
+    ],
+)
+def test_datetime_type_accepts_iso8601(value, expected):
+    assert DateTimeType().convert(value, param=None, ctx=None) == expected
+
+
+@pytest.mark.parametrize("value", ["not-a-date", "2026-01-01 bogus", "2026-13-01T09:00:00Z"])
+def test_datetime_type_rejects_invalid_with_bad_parameter(value):
+    with pytest.raises(click.BadParameter):
+        DateTimeType().convert(value, param=None, ctx=None)
 
 
 def test_boolean_flag_false_default():
