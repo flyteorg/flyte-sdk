@@ -1361,3 +1361,44 @@ async def test_start_then_wait_equivalent_to_submit_and_wait():
 
     assert split_result.phase == combined_result.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
     assert split_result.realized_outputs_uri == combined_result.realized_outputs_uri
+
+
+@pytest.mark.asyncio
+async def test_record_trace_counts_a_failed_launch_and_carries_on():
+    """A trace whose launch failed for good is counted; record_trace still returns, as before."""
+    await flyte.init.aio()
+    from flyte._internal.controllers import TraceInfo
+    from flyte._internal.controllers.remote import _controller
+    from flyte.models import NativeInterface
+
+    trace_info = TraceInfo(
+        name="test_function",
+        action=ActionID(name="test_action"),
+        interface=NativeInterface(inputs={}, outputs={"result": int}),
+        inputs_path="/tmp/inputs",
+        output=42,
+    )
+
+    with (
+        patch("flyte._internal.runtime.io.upload_outputs", new_callable=AsyncMock),
+        patch(
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_and_wait_for_action",
+            new_callable=AsyncMock,
+        ) as mock_submit_and_wait,
+        patch("flyte._initialize.get_init_config") as mock_config,
+        patch.object(_controller.logger, "error") as error,
+    ):
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        mock_submit_and_wait.return_value.client_err = flyte.errors.RuntimeSystemError(
+            "SlowDownError", "retries 100 / 100 exhausted"
+        )
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+            await controller.record_trace(trace_info)
+
+    assert [call.kwargs["extra"] for call in error.call_args_list] == [
+        {"metric_type": "counter", "metric_name": "trace_record_unconfirmed", "reason": "launch_failed"}
+    ]

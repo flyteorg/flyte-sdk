@@ -287,3 +287,62 @@ class TestRustController:
         kwargs = fake_rust.call_args.kwargs
         assert kwargs["endpoint"] == "http://localhost:8090"
         assert kwargs["workload_token"] is False
+
+
+def test_rusty_controller_takes_the_platform_endpoint_without_an_api_key(monkeypatch, tmp_path):
+    """A reusable worker (rusty) with no api key, as under workload identity, connects to the
+    endpoint the platform injected (`_U_EP_OVERRIDE`), not a hard-coded default."""
+    import asyncio
+
+    from flyte._internal.runtime import rusty
+
+    token = tmp_path / "token"
+    token.write_text("t")
+    monkeypatch.setenv("_U_WORKLOAD", "pod/acme/p/development/c1/ns/env-0")
+    monkeypatch.setenv("_U_WORKLOAD_TOKEN_FILE", str(token))
+    monkeypatch.setenv("_U_EP_OVERRIDE", "dns:///acme.cloud.union.ai")
+    monkeypatch.delenv("EAGER_API_KEY", raising=False)
+    monkeypatch.delenv("_UNION_EAGER_API_KEY", raising=False)
+    seen = {}
+    monkeypatch.setattr(rusty, "_create_controller", lambda ct, **kw: seen.update(kw) or object())
+    asyncio.run(rusty.create_controller())
+    assert seen["endpoint"] == "dns:///acme.cloud.union.ai"
+    assert seen.get("auth_type") == "WorkloadToken"
+
+
+def test_rusty_platform_endpoint_wins_over_the_executor_default(monkeypatch, tmp_path):
+    """The reusable-worker executor passes `host.docker.internal:8090` (insecure) whenever it has no
+    api key; in a task pod the platform's `_U_EP_OVERRIDE` wins, over TLS."""
+    import asyncio
+
+    from flyte._internal.runtime import rusty
+
+    token = tmp_path / "token"
+    token.write_text("t")
+    monkeypatch.setenv("_U_WORKLOAD", "pod/acme/p/development/c1/ns/env-0")
+    monkeypatch.setenv("_U_WORKLOAD_TOKEN_FILE", str(token))
+    monkeypatch.setenv("_U_EP_OVERRIDE", "dns:///acme.cloud.union.ai")
+    monkeypatch.delenv("_U_INSECURE", raising=False)
+    monkeypatch.delenv("EAGER_API_KEY", raising=False)
+    monkeypatch.delenv("_UNION_EAGER_API_KEY", raising=False)
+    seen = {}
+    monkeypatch.setattr(rusty, "_create_controller", lambda ct, **kw: seen.update(kw) or object())
+    asyncio.run(rusty.create_controller(endpoint="dns:///host.docker.internal:8090", insecure=True, api_key=None))
+    assert seen["endpoint"] == "dns:///acme.cloud.union.ai"
+    assert seen["insecure"] is False
+    assert seen.get("auth_type") == "WorkloadToken"
+
+
+def test_rusty_keeps_the_callers_endpoint_off_platform(monkeypatch):
+    """Locally (no `_U_EP_OVERRIDE`) the caller's endpoint and insecure flag still apply."""
+    import asyncio
+
+    from flyte._internal.runtime import rusty
+
+    for k in ("_U_EP_OVERRIDE", "_U_WORKLOAD", "_U_WORKLOAD_TOKEN_FILE", "EAGER_API_KEY", "_UNION_EAGER_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    seen = {}
+    monkeypatch.setattr(rusty, "_create_controller", lambda ct, **kw: seen.update(kw) or object())
+    asyncio.run(rusty.create_controller(endpoint="dns:///host.docker.internal:8090", insecure=True))
+    assert seen["endpoint"] == "dns:///host.docker.internal:8090"
+    assert seen["insecure"] is True

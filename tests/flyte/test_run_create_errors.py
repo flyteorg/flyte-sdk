@@ -5,7 +5,6 @@ import mock
 import pytest
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
-from google.protobuf.any_pb2 import Any
 from mock.mock import AsyncMock
 
 import flyte
@@ -36,11 +35,47 @@ async def test_resource_exhausted_is_a_user_error():
 
 
 @pytest.mark.asyncio
-async def test_org_limit_refusal_is_a_user_error():
-    detail = Any(type_url="type.googleapis.com/cloudidl.common.OrgLimitExceeded", value=b"")
-    err = ConnectError(Code.FAILED_PRECONDITION, "org at max_actions_per_run", details=[detail])
+async def test_org_limit_refusal_is_a_user_error(org_limit_detail):
+    err = ConnectError(Code.FAILED_PRECONDITION, "org at max_actions_per_run", details=[org_limit_detail()])
     with pytest.raises(flyte.errors.OrgLimitExceededError):
         await _rerun_with_create_run_error(err)
+
+
+@pytest.mark.asyncio
+async def test_max_concurrent_runs_refusal_names_the_limit(org_limit_detail):
+    detail = org_limit_detail(
+        limit="max_concurrent_runs",
+        ceiling=1000,
+        current=1000,
+        requested=1,
+        tier_default=1000,
+        upgrade_url="https://www.union.ai/get-a-quote",
+    )
+    err = ConnectError(Code.RESOURCE_EXHAUSTED, 'org "acme" is at its max_concurrent_runs limit', details=[detail])
+    with pytest.raises(flyte.errors.ResourceExhaustedError) as exc_info:
+        await _rerun_with_create_run_error(err)
+    assert exc_info.value.org_limit.limit == "max_concurrent_runs"
+    assert exc_info.value.org_limit.ceiling == 1000
+    assert str(exc_info.value) == (
+        "Org limit max_concurrent_runs (1000) reached: 1000 in use, 1 more requested. "
+        "Wait for running work to finish, or contact sales to raise it: https://www.union.ai/get-a-quote"
+    )
+
+
+@pytest.mark.asyncio
+async def test_entitlement_refusal_is_a_user_error(org_entitlement_detail):
+    detail = org_entitlement_detail(entitlement="committed_capacity", upgrade_url="https://www.union.ai/get-a-quote")
+    err = ConnectError(Code.PERMISSION_DENIED, 'org "acme" is not entitled to committed_capacity', details=[detail])
+    with pytest.raises(flyte.errors.OrgEntitlementRequiredError) as exc_info:
+        await _rerun_with_create_run_error(err)
+    assert exc_info.value.entitlement == "committed_capacity"
+    assert "Contact sales to enable it: https://www.union.ai/get-a-quote" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_permission_denied_without_detail_is_unchanged():
+    with pytest.raises(flyte.errors.RuntimeSystemError, match="Failed to create run: not a member"):
+        await _rerun_with_create_run_error(ConnectError(Code.PERMISSION_DENIED, "not a member"))
 
 
 @pytest.mark.asyncio

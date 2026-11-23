@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Yee Hing Tong", email = "wild-endeavor@users.noreply.github.com" }
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "flyte",
 ]

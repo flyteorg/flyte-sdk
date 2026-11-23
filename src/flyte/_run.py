@@ -851,15 +851,22 @@ class _Runner:
                 resp = await get_client().run_service.create_run(create_req)
             return Run(pb2=resp.run, _preserve_original_types=self._preserve_original_types)
         except ConnectError as e:
-            from flyte._internal.controllers.remote._org_limits import org_limit_exceeded
+            from flyte._internal.controllers.remote._org_limits import (
+                org_entitlement_required,
+                org_limit_exceeded,
+                resource_exhausted,
+            )
 
             if (org_limit := org_limit_exceeded(e)) is not None:
                 # The org is at a hard limit; no retry can clear it.
                 raise org_limit from e
-            if e.code == Code.RESOURCE_EXHAUSTED:
+            if (exhausted := resource_exhausted(e, prefix="Failed to create run: ")) is not None:
                 # The org is at a quota such as max_queue_depth or max_concurrent_runs ("retry later"): the
-                # user waits for runs to drain. Not an SDK failure; the server's message names the limit.
-                raise flyte.errors.ResourceExhaustedError(f"Failed to create run: {e.message}") from e
+                # user waits for runs to drain. Not an SDK failure; the message names the limit.
+                raise exhausted from e
+            if (entitlement := org_entitlement_required(e)) is not None:
+                # The org's plan doesn't include something the run needs.
+                raise entitlement from e
             if e.code == Code.UNAVAILABLE:
                 raise flyte.errors.RuntimeSystemError(
                     "SystemUnavailableError",
@@ -1104,13 +1111,10 @@ class _Runner:
                 reduced_iface, (), kwargs, custom_context=self._custom_context
             )
             assert base_inputs is not None
-            overrides = {lit.name: lit.value for lit in converted.proto_inputs.literals}
-            merged = [
-                task_common_pb2.NamedLiteral(name=lit.name, value=overrides.pop(lit.name, lit.value))
-                for lit in base_inputs.literals
-            ]
-            # An input the trigger never bound (left to the task default) still has to land.
-            merged += [task_common_pb2.NamedLiteral(name=name, value=v) for name, v in overrides.items()]
+            from ._internal.runtime.convert import overlay_named_literals
+
+            # An input the trigger never bound (left to the task default) still lands.
+            merged = overlay_named_literals(base_inputs.literals, converted.proto_inputs.literals)
             # Context: the trigger's registered context (custom_context, and the kickoff-time input
             # marker on scheduled triggers) is the floor; this call's custom_context wins per key.
             context = {kv.key: kv.value for kv in base_inputs.context}
@@ -1831,15 +1835,11 @@ class _Runner:
                     f"input of {run_name}/{action_name} explicitly instead.",
                 )
             else:
-                overrides = {lit.name: lit.value for lit in converted.proto_inputs.literals}
-                merged = [
-                    task_common_pb2.NamedLiteral(name=lit.name, value=overrides.pop(lit.name, lit.value))
-                    for lit in proto_inputs.literals
-                ]
-                # An input the source run never carried (e.g. added since) still has to land.
-                merged += [task_common_pb2.NamedLiteral(name=name, value=v) for name, v in overrides.items()]
+                from ._internal.runtime.convert import overlay_named_literals
+
+                # An input the source run never carried (e.g. added since) still lands.
                 proto_inputs = task_common_pb2.Inputs(
-                    literals=merged,
+                    literals=overlay_named_literals(proto_inputs.literals, converted.proto_inputs.literals),
                     context=converted.proto_inputs.context or proto_inputs.context,
                 )
 
@@ -1857,14 +1857,17 @@ class _Runner:
         run_spec = self._apply_overrides(
             base_run_spec, relation=relation, force_rerun_actions=force_rerun_actions, task_spec=task_spec
         )
-        if offloaded_input_data is not None and (run_spec.queue or "") != (base_run_spec.queue or ""):
-            # The source inputs URI points into the bucket of the source run's pool. This rerun is
-            # placed on another queue and may execute in a different pool, so read the inputs back
-            # and let _submit_remote upload them via the new queue instead of reusing the URI.
-            from ._internal.runtime.io import load_inputs
+        from ._internal.runtime.convert import prepare_new_run_inputs
 
-            proto_inputs = (await load_inputs(offloaded_input_data.uri)).proto_inputs
-            offloaded_input_data = None
+        # A rerun or recover never carries a fork's overrides key. The source inputs URI points into
+        # the bucket of the source run's pool: a rerun on another queue may execute in a different
+        # pool, so read the inputs back and let _submit_remote upload them via the new queue.
+        proto_inputs, offloaded_input_data = await prepare_new_run_inputs(
+            proto_inputs,
+            offloaded_input_data,
+            base_run_spec,
+            read_back=(run_spec.queue or "") != (base_run_spec.queue or ""),
+        )
         return await self._submit_remote(
             task_spec=task_spec,
             task_id=None,

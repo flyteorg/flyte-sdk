@@ -12,6 +12,7 @@ import pyqwest
 
 from flyte._logging import logger
 from flyte._utils.org_discovery import hostname_from_url
+from flyte.remote._client._connect_compat import codec_kwargs
 
 from ._authenticators.base import get_async_session
 from ._authenticators.factory import (
@@ -73,7 +74,12 @@ class SessionConfig:
     tls_ca_cert: typing.Optional[bytes] = None
 
     def connect_kwargs(self) -> dict[str, Any]:
-        return {"address": self.endpoint, "interceptors": self.interceptors, "http_client": self.http_client}
+        return {
+            "address": self.endpoint,
+            "interceptors": self.interceptors,
+            "http_client": self.http_client,
+            **codec_kwargs(),
+        }
 
     def new_http_client(self) -> Any:
         """Build a fresh HTTP client identical to `http_client`, with its own connection pool."""
@@ -114,7 +120,7 @@ def _bootstrap_ssl_from_server(endpoint: str) -> bytes:
 
     Uses pyOpenSSL to connect with verification disabled and retrieve the
     full peer certificate chain (leaf + intermediates + root).  This works
-    on all supported Python versions (>= 3.10).
+    on all supported Python versions (>= 3.11).
 
     This is a blocking call.  Callers should run it via asyncio.to_thread().
     """
@@ -340,6 +346,17 @@ async def create_session_config(
 
     interceptors: list = [DefaultMetadataInterceptor()]
 
+    # Retry interceptors go before (i.e. outside) the auth interceptors. connectrpc wraps interceptors in list
+    # order, so the first entry is outermost. Placing retry outside auth means a transient failure *during*
+    # credential refresh -- e.g. a 504 from GetPublicClientConfig or the token endpoint while a control-plane
+    # pod is draining -- re-runs the whole authenticated call instead of failing it. With retry inside auth,
+    # only the final RPC was retried and the refresh path had no retry at all.
+    if rpc_retries is not None and rpc_retries > 0:
+        from ._interceptors.retry import RetryServerStreamInterceptor, RetryUnaryInterceptor
+
+        interceptors.append(RetryUnaryInterceptor(max_attempts=rpc_retries + 1))
+        interceptors.append(RetryServerStreamInterceptor(max_attempts=rpc_retries + 1))
+
     # Create httpx session for auth flows (OAuth token exchange, PKCE, etc.)
     # This is separate from the pyqwest client used for ConnectRPC transport.
     if proxy_command:
@@ -370,13 +387,6 @@ async def create_session_config(
             **kwargs,
         )
         interceptors.extend(auth_interceptors)
-
-    # Add retry interceptors
-    if rpc_retries is not None and rpc_retries > 0:
-        from ._interceptors.retry import RetryServerStreamInterceptor, RetryUnaryInterceptor
-
-        interceptors.append(RetryUnaryInterceptor(max_attempts=rpc_retries + 1))
-        interceptors.append(RetryServerStreamInterceptor(max_attempts=rpc_retries + 1))
 
     return SessionConfig(
         endpoint=endpoint,

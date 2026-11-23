@@ -47,9 +47,7 @@ def duration_ms(start_iso: typing.Any, end_iso: typing.Any) -> str:
     if not start_iso or not end_iso:
         return ""
     try:
-        delta = datetime.fromisoformat(str(end_iso).replace("Z", "+00:00")) - datetime.fromisoformat(
-            str(start_iso).replace("Z", "+00:00")
-        )
+        delta = datetime.fromisoformat(str(end_iso)) - datetime.fromisoformat(str(start_iso))
         return f"{delta.total_seconds() * 1000:.0f} ms"
     except Exception:
         return ""

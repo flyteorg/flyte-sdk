@@ -6,6 +6,8 @@ import pydantic
 from flyteidl2.auth.auth_service_connect import AuthMetadataServiceClient
 from flyteidl2.auth.auth_service_pb2 import GetOAuth2MetadataRequest, GetPublicClientConfigRequest
 
+from flyte.remote._client._connect_compat import codec_kwargs
+
 AuthType = typing.Literal["ClientSecret", "Pkce", "ExternalCommand", "DeviceFlow", "Passthrough", "WorkloadToken"]
 
 
@@ -62,7 +64,7 @@ class RemoteClientConfigStore(ClientConfigStore):
     """
 
     def __init__(self, endpoint: str, http_client=None):
-        self._client = AuthMetadataServiceClient(address=endpoint, http_client=http_client)
+        self._client = AuthMetadataServiceClient(address=endpoint, http_client=http_client, **codec_kwargs())
 
     async def get_client_config(self) -> ClientConfig:
         """

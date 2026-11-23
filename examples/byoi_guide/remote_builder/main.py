@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = ["flyte"]
 # ///
 """Remote builder BYOI: two teams, two Flyte-unaware images, Flyte fills the gaps.

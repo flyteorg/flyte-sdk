@@ -26,6 +26,7 @@ from flyte.remote._client.auth._interceptors.retry import (
     RetryServerStreamInterceptor,
     RetryUnaryInterceptor,
 )
+from flyte.remote._client.auth.errors import AuthenticationError, AuthenticationTransientError
 from flyte.report import Report
 
 
@@ -136,6 +137,32 @@ def _make_mock_authenticator(headers=None):
     else:
         auth.get_auth_headers.return_value = None
     return auth
+
+
+class _PropertyFormContext:
+    """A RequestContext whose request_headers is a property, as connectrpc 0.11 exposes it."""
+
+    def __init__(self):
+        self._headers = {}
+
+    @property
+    def request_headers(self):
+        return self._headers
+
+
+class TestPropertyFormRequestHeaders:
+    @pytest.mark.asyncio
+    async def test_default_metadata_injects_request_id(self):
+        ctx = _PropertyFormContext()
+        await DefaultMetadataInterceptor().on_start(ctx)
+        assert ctx.request_headers["x-request-id"]
+
+    @pytest.mark.asyncio
+    async def test_auth_injects_headers(self):
+        auth = _make_mock_authenticator({"authorization": "Bearer token123"})
+        ctx = _PropertyFormContext()
+        await AuthUnaryInterceptor(lambda: auth).intercept_unary(AsyncMock(return_value="response"), "request", ctx)
+        assert ctx.request_headers["authorization"] == "Bearer token123"
 
 
 class TestAuthUnaryInterceptor:
@@ -715,3 +742,144 @@ class TestRetryServerStreamInterceptor:
             results.append(item)
         assert results == ["first", "first"]
         assert call_count == 2
+
+
+class TestRetryTransientAuthErrors:
+    @pytest.mark.asyncio
+    async def test_unary_retries_authentication_transient_error(self):
+        interceptor = RetryUnaryInterceptor(max_attempts=3, initial_backoff=0.001)
+        call_next = AsyncMock(side_effect=[AuthenticationTransientError("Status Code (504)"), "ok"])
+        ctx, _ = _make_ctx_mock()
+
+        assert await interceptor.intercept_unary(call_next, "req", ctx) == "ok"
+        assert call_next.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_unary_does_not_retry_permanent_authentication_error(self):
+        interceptor = RetryUnaryInterceptor(max_attempts=3, initial_backoff=0.001)
+        call_next = AsyncMock(side_effect=AuthenticationError("invalid_client"))
+        ctx, _ = _make_ctx_mock()
+
+        with pytest.raises(AuthenticationError):
+            await interceptor.intercept_unary(call_next, "req", ctx)
+        assert call_next.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_server_stream_retries_authentication_transient_error(self):
+        interceptor = RetryServerStreamInterceptor(max_attempts=3, initial_backoff=0.001)
+        calls = 0
+
+        async def call_next(request, ctx):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise AuthenticationTransientError("Status Code (503)")
+            yield "msg"
+
+        ctx, _ = _make_ctx_mock()
+        out = [m async for m in interceptor.intercept_server_stream(call_next, "req", ctx)]
+        assert out == ["msg"]
+        assert calls == 2
+
+
+class TestRetryWrapsAuthRefresh:
+    """Retry outside auth: a transient failure during credential refresh retries the whole call.
+
+    Mirrors a production incident: the RPC got 401 (no credentials yet), the refresh then hit a 504 from
+    GetPublicClientConfig on a draining control-plane pod, and the call failed outright.
+    """
+
+    @staticmethod
+    def _chain(*interceptors):
+        """Compose unary interceptors the way connectrpc does: first in the list is outermost."""
+
+        def wrap(interceptor, nxt):
+            return lambda req, ctx: interceptor.intercept_unary(nxt, req, ctx)
+
+        def build(rpc):
+            fn = rpc
+            for i in reversed(interceptors):
+                fn = wrap(i, fn)
+            return fn
+
+        return build
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "refresh_error",
+        [
+            ConnectError(Code.UNAVAILABLE, "504 Gateway Timeout from GetPublicClientConfig"),
+            AuthenticationTransientError("Status Code (504) received from IDP"),
+        ],
+    )
+    async def test_transient_refresh_failure_is_retried(self, refresh_error):
+        auth = AsyncMock()
+        creds = {"current": None}
+
+        async def get_auth_headers():
+            if creds["current"] is None:
+                return None
+            return AuthHeaders(creds_id=creds["current"], headers={"authorization": f"Bearer {creds['current']}"})
+
+        refresh_attempts = 0
+
+        async def refresh_credentials(creds_id=None):
+            nonlocal refresh_attempts
+            refresh_attempts += 1
+            if refresh_attempts == 1:
+                raise refresh_error
+            creds["current"] = "tok"
+
+        auth.get_auth_headers.side_effect = get_auth_headers
+        auth.refresh_credentials.side_effect = refresh_credentials
+        auth.note_refusal = None
+
+        async def rpc(request, ctx):
+            if ctx.request_headers().get("authorization") != "Bearer tok":
+                raise ConnectError(Code.UNAUTHENTICATED, "identity_auth_missing_credentials")
+            return "task-details"
+
+        call = self._chain(
+            RetryUnaryInterceptor(max_attempts=4, initial_backoff=0.001),
+            AuthUnaryInterceptor(lambda: auth),
+        )(rpc)
+
+        ctx, _ = _make_ctx_mock()
+        assert await call("req", ctx) == "task-details"
+        assert refresh_attempts == 2
+
+    @pytest.mark.asyncio
+    async def test_old_order_fails_on_transient_refresh_failure(self):
+        """Documents the previous behavior (retry inside auth) so the ordering is not regressed."""
+        auth = _make_mock_authenticator()
+        auth.refresh_credentials.side_effect = ConnectError(Code.UNAVAILABLE, "504")
+        auth.note_refusal = None
+
+        rpc = AsyncMock(side_effect=ConnectError(Code.UNAUTHENTICATED, "missing credentials"))
+        call = self._chain(
+            AuthUnaryInterceptor(lambda: auth),
+            RetryUnaryInterceptor(max_attempts=4, initial_backoff=0.001),
+        )(rpc)
+
+        ctx, _ = _make_ctx_mock()
+        with pytest.raises(ConnectError) as exc_info:
+            await call("req", ctx)
+        assert exc_info.value.code == Code.UNAVAILABLE
+        assert auth.refresh_credentials.call_count == 1
+
+
+class TestGatewayStatusesAreRetried:
+    """Pins connectrpc's HTTP-status -> Code mapping for errors from a proxy/gateway (no Connect body)."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [429, 502, 503, 504])
+    async def test_gateway_status_is_retried(self, status):
+        from connectrpc._protocol import ConnectWireError
+
+        err = ConnectWireError.from_http_status(status).to_exception()
+        interceptor = RetryUnaryInterceptor(max_attempts=3, initial_backoff=0.001)
+        call_next = AsyncMock(side_effect=[err, "ok"])
+        ctx, _ = _make_ctx_mock()
+
+        assert await interceptor.intercept_unary(call_next, "req", ctx) == "ok"
+        assert call_next.call_count == 2

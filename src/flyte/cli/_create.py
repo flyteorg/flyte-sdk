@@ -1,14 +1,22 @@
 import sys
 from pathlib import Path
-from typing import Any, Dict, get_args
+from typing import TYPE_CHECKING, Any, Dict
 
 import rich_click as click
 
 import flyte
 import flyte.cli._common as common
-from flyte.artifacts import CardFormat, CardType
 from flyte.cli._option import DependentOption, MutuallyExclusiveOption
-from flyte.remote import SecretTypes
+
+if TYPE_CHECKING:
+    from flyte.remote import SecretTypes
+
+# Choices for click options, kept here so that loading this command does not import
+# flyte.artifacts or flyte.remote. tests/cli/test_create.py pins them to the Literal types
+# they mirror: flyte.artifacts.CardFormat, flyte.artifacts.CardType and flyte.remote.SecretTypes.
+CARD_FORMATS = ("html", "md", "json", "yaml", "csv", "tsv", "png", "jpg", "jpeg")
+CARD_TYPES = ("model", "data", "generic")
+SECRET_TYPES = ("regular", "image_pull")
 
 
 def _is_interactive() -> bool:
@@ -30,10 +38,9 @@ def _infer_card_format(path: Path) -> str:
         return "html"
     aliases = {"markdown": "md", "htm": "html", "yml": "yaml"}
     fmt = aliases.get(suffix, suffix)
-    if fmt not in get_args(CardFormat):
+    if fmt not in CARD_FORMATS:
         raise click.BadParameter(
-            f"cannot infer a card format from '{path.name}'; pass --card-format with one of: "
-            f"{', '.join(get_args(CardFormat))}",
+            f"cannot infer a card format from '{path.name}'; pass --card-format with one of: {', '.join(CARD_FORMATS)}",
             param_hint="--card",
         )
     return fmt
@@ -160,13 +167,13 @@ def _publish_partition_callback(_: Any, param: Any, values: tuple[str, ...]) -> 
 )
 @click.option(
     "--card-format",
-    type=click.Choice(get_args(CardFormat)),
+    type=click.Choice(CARD_FORMATS),
     default=None,
     help="Format of the card. Defaults to the card file's extension, or `html` when it has none.",
 )
 @click.option(
     "--card-type",
-    type=click.Choice(get_args(CardType)),
+    type=click.Choice(CARD_TYPES),
     default="generic",
     show_default=True,
     help="Kind of card being attached.",
@@ -275,7 +282,7 @@ def artifact(
     mutually_exclusive=["value", "from_docker_config", "registry"],
 )
 @click.option(
-    "--type", type=click.Choice(get_args(SecretTypes)), default="regular", help="Type of the secret.", show_default=True
+    "--type", type=click.Choice(SECRET_TYPES), default="regular", help="Type of the secret.", show_default=True
 )
 @click.option(
     "--from-docker-config",
@@ -324,7 +331,7 @@ def secret(
     name: str,
     value: str | bytes | None = None,
     from_file: str | None = None,
-    type: SecretTypes = "regular",
+    type: "SecretTypes" = "regular",
     from_docker_config: bool = False,
     docker_config_path: str | None = None,
     registries: str | None = None,

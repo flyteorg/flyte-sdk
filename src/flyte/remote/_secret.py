@@ -44,6 +44,12 @@ async def _secrets_service_for(cluster_pool: str | None, org: str | None):
     return await secrets_service.client_for_cluster_pool(org or "", cluster_pool)
 
 
+def _secret_spec(secret_type: definition_pb2.SecretType, value: Union[str, bytes]) -> definition_pb2.SecretSpec:
+    if isinstance(value, str):
+        return definition_pb2.SecretSpec(type=secret_type, string_value=value)
+    return definition_pb2.SecretSpec(type=secret_type, binary_value=value)
+
+
 @dataclass
 class Secret(ToJSONMixin):
     pb2: definition_pb2.Secret
@@ -82,16 +88,7 @@ class Secret(ToJSONMixin):
                     f"Project `{project}` or domain `{domain}` should not be set when creating the image pull secret."
                 )
 
-        if isinstance(value, str):
-            secret = definition_pb2.SecretSpec(
-                type=secret_type,
-                string_value=value,
-            )
-        else:
-            secret = definition_pb2.SecretSpec(
-                type=secret_type,
-                binary_value=value,
-            )
+        secret = _secret_spec(secret_type, value)
         request = payload_pb2.CreateSecretRequest(
             id=definition_pb2.SecretIdentifier(
                 organization=cfg.org,
@@ -103,6 +100,29 @@ class Secret(ToJSONMixin):
         )
         svc = await _secrets_service_for(cluster_pool, cfg.org)
         await svc.create_secret(request=request)  # type: ignore
+
+    @syncify
+    @classmethod
+    async def update(cls, name: str, value: Union[str, bytes]):
+        """
+        Replace the value of an existing regular secret in the current project and domain.
+
+        Args:
+            name: The name of the secret to update.
+            value: The new secret value as a string or bytes.
+        """
+        ensure_client()
+        cfg = get_init_config()
+        request = payload_pb2.UpdateSecretRequest(
+            id=definition_pb2.SecretIdentifier(
+                organization=cfg.org,
+                project=cfg.project,
+                domain=cfg.domain,
+                name=name,
+            ),
+            secret_spec=_secret_spec(definition_pb2.SecretType.SECRET_TYPE_GENERIC, value),
+        )
+        await get_client().secrets_service.update_secret(request=request)  # type: ignore
 
     @syncify
     @classmethod

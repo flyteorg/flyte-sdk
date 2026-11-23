@@ -14,15 +14,10 @@ from pathlib import Path
 from types import MappingProxyType, ModuleType
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional, Sequence
 
-import rich.box
 import rich.repr
 import rich_click as click
 from click import exceptions as click_exceptions
 from rich.console import Console
-from rich.panel import Panel
-from rich.pretty import pretty_repr
-from rich.table import Table
-from rich.traceback import Traceback
 
 import flyte
 import flyte.errors
@@ -30,6 +25,9 @@ from flyte._logging import LogFormat
 from flyte.config import Config
 
 if TYPE_CHECKING:
+    from rich.panel import Panel
+    from rich.table import Table
+
     from flyte.cli._run import RunArguments
 
 OutputFormat = Literal["table", "json", "table-simple", "json-raw"]
@@ -207,6 +205,11 @@ class InvokeBaseMixin:
         try:
             return super().invoke(ctx)  # type: ignore
         except ConnectError as e:
+            from flyte._internal.controllers.remote._org_limits import org_refusal
+
+            if (refusal := org_refusal(e)) is not None:
+                # An org limit or entitlement refusal: say which, the numbers, and where to raise it.
+                raise click.ClickException(str(refusal)) from e
             if e.code == Code.UNAUTHENTICATED:
                 raise click.ClickException(f"Authentication failed. Please check your credentials. {e.message}")
             if e.code == Code.NOT_FOUND:
@@ -226,6 +229,12 @@ class InvokeBaseMixin:
             raise click.ClickException(f"RPC error invoking command: {e!s}") from e
         except flyte.errors.InitializationError as e:
             raise click.ClickException(f"Initialization failed. Pass remote config for CLI. (Reason: {e})")
+        except (flyte.errors.OrgLimitExceededError, flyte.errors.OrgEntitlementRequiredError) as e:
+            raise click.ClickException(str(e)) from e
+        except flyte.errors.ResourceExhaustedError as e:
+            if e.org_limit is None:
+                raise click.ClickException(f"{e.kind} failure, {e.code}. {e}") from e
+            raise click.ClickException(str(e)) from e
         except flyte.errors.BaseRuntimeError as e:
             raise click.ClickException(f"{e.kind} failure, {e.code}. {e}") from e
         except click_exceptions.Exit as e:
@@ -242,6 +251,8 @@ class InvokeBaseMixin:
         except Exception as e:
             if ctx.obj and ctx.obj.log_level and ctx.obj.log_level <= logging.DEBUG:
                 # If the user has requested verbose output, print the full traceback
+                from rich.traceback import Traceback
+
                 console = get_console()
                 console.print(Traceback.from_exception(type(e), e, e.__traceback__))
                 exit(1)
@@ -510,6 +521,10 @@ def format(title: str, vals: Iterable[Any], of: OutputFormat = "table") -> Table
     """
     Get a table from a list of values.
     """
+    import rich.box
+    from rich.pretty import pretty_repr
+    from rich.table import Table
+
     match of:
         case "table-simple":
             return _table_format(Table(title, box=None), vals)
@@ -546,6 +561,8 @@ def get_panel(title: str, renderable: Any, of: OutputFormat = "table") -> Panel:
     """
     if of in ["table-simple", "json", "json-raw"]:
         return renderable
+    from rich.panel import Panel
+
     return Panel.fit(
         renderable,
         title=f"[{PREFERRED_ACCENT_COLOR}]{title}[/{PREFERRED_ACCENT_COLOR}]",

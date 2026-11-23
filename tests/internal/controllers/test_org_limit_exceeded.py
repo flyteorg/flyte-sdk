@@ -1,4 +1,4 @@
-"""An enqueue refused by an org limit (FAILED_PRECONDITION with a cloudidl.common.OrgLimitExceeded detail)
+"""An enqueue refused by an org limit (FAILED_PRECONDITION with an OrgLimitExceeded detail)
 fails the child at once with a user error the parent can catch, instead of retrying and surfacing as a
 system error that makes the platform retry the whole parent."""
 
@@ -9,18 +9,19 @@ import pytest
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2, phase_pb2
-from google.protobuf.any_pb2 import Any
 
 import flyte.errors
 from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._core import Controller
+from flyte._internal.controllers.remote._org_limits import org_limit_exceeded
 
 _MSG = '"acme:p:d:r1" would exceed org "acme"\'s max_actions_per_run quota (3 current + 1 requested > 3)'
 
 
-def _org_limit_detail() -> Any:
-    # The open-source SDK has no cloudidl protos; only the type URL identifies the detail.
-    return Any(type_url="type.googleapis.com/cloudidl.common.OrgLimitExceeded", value=b"")
+def test_org_limit_detail_is_recognised_under_any_type_url_prefix(org_limit_detail):
+    error = ConnectError(Code.FAILED_PRECONDITION, _MSG, details=[org_limit_detail("custom.example/")])
+
+    assert isinstance(org_limit_exceeded(error), flyte.errors.OrgLimitExceededError)
 
 
 def _controller() -> Controller:
@@ -51,7 +52,7 @@ def _action() -> Action:
 
 
 @pytest.mark.asyncio
-async def test_org_limit_refusal_fails_child_once_as_user_error():
+async def test_entitlement_refusal_fails_child_once_as_user_error(org_entitlement_detail):
     controller = _controller()
     action = _action()
     await controller._shared_queue.put(action)
@@ -61,7 +62,34 @@ async def test_org_limit_refusal_fails_child_once_as_user_error():
         nonlocal attempts
         attempts += 1
         controller._running = False
-        raise ConnectError(Code.FAILED_PRECONDITION, _MSG, details=[_org_limit_detail()])
+        detail = org_entitlement_detail(entitlement="allowed_clouds", values=["coreweave"])
+        raise ConnectError(Code.PERMISSION_DENIED, "org is not entitled to allowed_clouds", details=[detail])
+
+    controller._actions_service.enqueue.side_effect = enqueue
+
+    with patch("flyte._internal.controllers.remote._core.asyncio.sleep", new_callable=AsyncMock) as sleep:
+        await controller._bg_run(worker_id="w1")
+
+    assert attempts == 1, "an entitlement refusal is not retried"
+    sleep.assert_not_awaited()
+    assert isinstance(action.client_err, flyte.errors.OrgEntitlementRequiredError)
+    assert isinstance(action.client_err, flyte.errors.RuntimeUserError)
+    assert action.client_err.entitlement == "allowed_clouds"
+    assert "This org isn't entitled to allowed_clouds (coreweave)." in str(action.client_err)
+
+
+@pytest.mark.asyncio
+async def test_org_limit_refusal_fails_child_once_as_user_error(org_limit_detail):
+    controller = _controller()
+    action = _action()
+    await controller._shared_queue.put(action)
+    attempts = 0
+
+    async def enqueue(*_args, **_kwargs):
+        nonlocal attempts
+        attempts += 1
+        controller._running = False
+        raise ConnectError(Code.FAILED_PRECONDITION, _MSG, details=[org_limit_detail()])
 
     controller._actions_service.enqueue.side_effect = enqueue
 
@@ -86,11 +114,11 @@ async def test_failed_precondition_without_org_limit_detail_still_retries():
 
 
 @pytest.mark.asyncio
-async def test_resource_exhausted_with_org_limit_detail_is_retried():
+async def test_resource_exhausted_with_org_limit_detail_is_retried(org_limit_detail):
     # max_concurrent_runs sends the detail with RESOURCE_EXHAUSTED, which means "later", not "never".
     controller = _controller()
     controller._actions_service.enqueue.side_effect = ConnectError(
-        Code.RESOURCE_EXHAUSTED, "org is at its max_concurrent_runs limit (2)", details=[_org_limit_detail()]
+        Code.RESOURCE_EXHAUSTED, "org is at its max_concurrent_runs limit (2)", details=[org_limit_detail()]
     )
 
     with pytest.raises(flyte.errors.ResourceExhaustedError):
@@ -98,13 +126,13 @@ async def test_resource_exhausted_with_org_limit_detail_is_retried():
 
 
 @pytest.mark.asyncio
-async def test_org_limit_refusal_is_logged_as_a_warning_not_an_error():
+async def test_org_limit_refusal_is_logged_as_a_warning_not_an_error(org_limit_detail):
     controller = _controller()
     await controller._shared_queue.put(_action())
 
     async def enqueue(*_args, **_kwargs):
         controller._running = False
-        raise ConnectError(Code.FAILED_PRECONDITION, _MSG, details=[_org_limit_detail()])
+        raise ConnectError(Code.FAILED_PRECONDITION, _MSG, details=[org_limit_detail()])
 
     controller._actions_service.enqueue.side_effect = enqueue
 

@@ -221,7 +221,7 @@ def parse_time(text: str | date | datetime) -> datetime:
     if _ISO_HOUR.match(s):
         return datetime.strptime(s, "%Y-%m-%dT%H").replace(tzinfo=timezone.utc)
     if _RFC3339.match(s):
-        return to_utc(datetime.fromisoformat(s.replace("Z", "+00:00")))
+        return to_utc(datetime.fromisoformat(s))
     return to_utc(datetime.fromisoformat(s))
 
 
