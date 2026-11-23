@@ -211,6 +211,32 @@ def test_json_param_type_dataclass_with_file_and_dir(local_mode_ctx):
     assert result.flytedir.path == "s3://bucket/dir"
 
 
+def test_json_param_type_dataclass_with_pep604_file_and_dir(local_mode_ctx):
+    @dataclass
+    class FlyteTypesPEP604:
+        flytefile: File | None = None
+        flytedir: Dir | None = None
+
+    result = JsonParamType(FlyteTypesPEP604).convert(
+        json.dumps({"flytefile": "s3://bucket/file.txt", "flytedir": "s3://bucket/dir"}),
+        None,
+        local_mode_ctx,
+    )
+    assert isinstance(result, FlyteTypesPEP604)
+    assert isinstance(result.flytefile, File)
+    assert isinstance(result.flytedir, Dir)
+    assert result.flytefile.path == "s3://bucket/file.txt"
+    assert result.flytedir.path == "s3://bucket/dir"
+
+
+def test_blob_param_converter_pep604_optional():
+    from flyte.cli._params import DirParamType, FileParamType
+
+    j = JsonParamType(File)
+    assert isinstance(j._blob_param_converter_for_type(File | None), FileParamType)
+    assert isinstance(j._blob_param_converter_for_type(None | Dir), DirParamType)
+
+
 def test_json_param_type_list_of_dataclass_with_file(local_mode_ctx):
     @dataclass
     class Item:
