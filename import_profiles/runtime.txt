@@ -186,4 +186,3 @@ rich
 six
 typing_extensions
 typing_inspection
-tzdata

@@ -192,5 +192,4 @@ rich_click
 six
 typing_extensions
 typing_inspection
-tzdata
 yaml
