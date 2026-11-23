@@ -213,7 +213,9 @@ def test_install_flyte_false_builds_full_image():
 def test_default_image_rejects_python_below_minimum(sdk_version):
     """The installed flyte neither runs on a Python below the minimum nor has a published image for it."""
     with patch("flyte._version.__version__", sdk_version):
-        with pytest.raises(ValueError, match=r"not available for Python 3\.10.*Python 3\.11 or newer.*v2\.14\.0"):
+        with pytest.raises(
+            ValueError, match=r"not available for Python 3\.10.*Python 3\.11 or newer.*2\.14 releases.*2\.14\.1"
+        ):
             Image.from_debian_base(python_version=(3, 10))
 
 
@@ -223,13 +225,13 @@ def test_default_image_error_names_a_last_release_only_when_known():
         Image.from_debian_base(python_version=(3, 9))
     message = str(exc_info.value)
     assert "not available for Python 3.9" in message
-    assert "last release" not in message
+    assert "flyte_version" not in message
 
 
 def test_default_image_allows_old_python_with_explicit_flyte_version():
     """An explicit flyte_version selects an older release, whose image can exist for that Python."""
-    img = Image.from_debian_base(python_version=(3, 10), flyte_version="2.14.0")
-    assert img.uri == "ghcr.io/flyteorg/flyte:py3.10-v2.14.0"
+    img = Image.from_debian_base(python_version=(3, 10), flyte_version="2.14.1")
+    assert img.uri == "ghcr.io/flyteorg/flyte:py3.10-v2.14.1"
 
 
 def test_default_image_allows_minimum_python():

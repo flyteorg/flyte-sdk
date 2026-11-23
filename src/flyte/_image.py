@@ -17,8 +17,9 @@ if TYPE_CHECKING:
 
 # Oldest Python that this version of flyte runs on. Default images are not published below it.
 _MIN_DEFAULT_IMAGE_PYTHON_VERSION = (3, 11)
-# Last flyte release that published default images for a Python version that is no longer supported.
-_LAST_RELEASE_WITH_PYTHON = {(3, 10): "2.14.0"}
+# Newest flyte release that published default images for a Python version that is no longer supported.
+# Its release line (2.14 for 2.14.1) is the last one with images for that Python.
+_LAST_RELEASE_WITH_PYTHON = {(3, 10): "2.14.1"}
 
 # 0 is a file, 1 is a directory
 CopyConfigType = Literal[0, 1]
@@ -853,9 +854,10 @@ class Image:
             )
             last_release = _LAST_RELEASE_WITH_PYTHON.get((major, minor))
             if last_release:
+                release_line = last_release.rsplit(".", 1)[0]
                 message += (
-                    f" v{last_release} was the last release with Python {major}.{minor} images; to keep using one, "
-                    f"pass flyte_version explicitly, for example "
+                    f" The {release_line} releases were the last with Python {major}.{minor} images; to keep using "
+                    f"one, pass flyte_version explicitly, for example "
                     f'Image.from_debian_base(python_version=({major}, {minor}), flyte_version="{last_release}").'
                 )
             raise ValueError(message)
