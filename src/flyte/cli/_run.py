@@ -624,6 +624,15 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         # Main entry point remains very thin
         asyncio.run(self._execute_and_render(ctx, config))
 
+    def parse_args(self, ctx: click.Context, args: List[str]) -> List[str]:
+        # Local File/Dir/DataFrame inputs are uploaded while click converts them, before the run is
+        # submitted: upload them to the storage of the queue the run lands on (`--queue`, else the
+        # task's), as the run does with the code bundle, not to the project/domain default.
+        from flyte._upload_queue import upload_queue
+
+        with upload_queue(self.run_args.queue or getattr(self.obj, "queue", None)):
+            return super().parse_args(ctx, args)
+
     def get_params(self, ctx: click.Context) -> List[click.Parameter]:
         # Note this function may be called multiple times by click.
         task = self.obj
@@ -824,6 +833,14 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         self._validate_required_params(ctx)
         # Main entry point remains very thin
         asyncio.run(self._execute_and_render(ctx, config))
+
+    def parse_args(self, ctx: click.Context, args: List[str]) -> List[str]:
+        # As RunTaskCommand.parse_args: local File/Dir/DataFrame inputs go to the storage of the
+        # `--queue` the run is sent to (a deployed task carries no queue of its own).
+        from flyte._upload_queue import upload_queue
+
+        with upload_queue(self.run_args.queue):
+            return super().parse_args(ctx, args)
 
     def get_params(self, ctx: click.Context) -> List[click.Parameter]:
         # Note this function may be called multiple times by click.
