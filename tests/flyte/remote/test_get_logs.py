@@ -252,6 +252,39 @@ class TestActionGetLogs:
             mock_tail.aio.assert_called_once_with(action_id=action.action_id, attempt=2)
 
     @pytest.mark.asyncio
+    async def test_lagging_status_counter_uses_latest_listed_attempt(self):
+        """A running action whose status counter reads 0 while attempt 1 is listed tails attempt 1."""
+        action = _make_action()
+        pb2 = run_definition_pb2.ActionDetails()
+        pb2.status.phase = phase_pb2.ACTION_PHASE_RUNNING
+        pb2.status.attempts = 0
+        pb2.attempts.append(run_definition_pb2.ActionAttempt(attempt=1, logs_available=True))
+        details = ActionDetails(pb2=pb2)
+
+        with (
+            patch.object(Action, "details", new=MagicMock(aio=AsyncMock(return_value=details))),
+            patch("flyte.remote._action.Logs.tail") as mock_tail,
+        ):
+            mock_tail.aio = MagicMock(return_value=_async_gen_from([]))
+            async for _ in action.get_logs.aio():
+                pass
+            mock_tail.aio.assert_called_once_with(action_id=action.action_id, attempt=1)
+
+    @pytest.mark.asyncio
+    async def test_explicit_attempt_zero_is_not_replaced_by_latest(self):
+        action = _make_action()
+        details = _make_done_details(attempts=3)
+
+        with (
+            patch.object(Action, "details", new=MagicMock(aio=AsyncMock(return_value=details))),
+            patch("flyte.remote._action.Logs.tail") as mock_tail,
+        ):
+            mock_tail.aio = MagicMock(return_value=_async_gen_from([]))
+            async for _ in action.get_logs.aio(attempt=0):
+                pass
+            mock_tail.aio.assert_called_once_with(action_id=action.action_id, attempt=0)
+
+    @pytest.mark.asyncio
     async def test_waits_for_logs_if_not_running_or_done(self):
         """If details shows action is not yet running/done, wait() should be called."""
         action = _make_action()

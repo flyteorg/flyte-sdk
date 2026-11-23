@@ -453,3 +453,36 @@ class TestActionDetailsPhaseDurations:
             + action_details.running_time
         )
         assert total == datetime.timedelta(seconds=200)
+
+
+class TestActionDetailsLaggingAttemptCounter:
+    """The status counter can lag the listed attempts (e.g. 0 while attempt 1 runs)."""
+
+    @staticmethod
+    def _details(counter: int, listed: int) -> ActionDetails:
+        details_pb2 = run_definition_pb2.ActionDetails()
+        details_pb2.status.phase = phase_pb2.ACTION_PHASE_RUNNING
+        details_pb2.status.attempts = counter
+        for n in range(1, listed + 1):
+            attempt = run_definition_pb2.ActionAttempt(attempt=n, logs_available=n == listed)
+            pt = run_definition_pb2.PhaseTransition(phase=phase_pb2.ACTION_PHASE_RUNNING)
+            pt.start_time.FromDatetime(datetime.datetime(2024, 1, 1, 12, n, 0, tzinfo=timezone.utc))
+            attempt.phase_transitions.append(pt)
+            details_pb2.attempts.append(attempt)
+        return ActionDetails(pb2=details_pb2)
+
+    def test_attempts_is_the_latest_listed_attempt(self):
+        assert self._details(counter=0, listed=2).attempts == 2
+        assert self._details(counter=3, listed=2).attempts == 3
+        assert self._details(counter=0, listed=0).attempts == 0
+
+    def test_defaults_describe_the_latest_listed_attempt(self):
+        details = self._details(counter=1, listed=2)
+        assert details.logs_available() is True
+        transitions = details.get_phase_transitions()
+        assert [t.start_time.minute for t in transitions] == [2]
+
+    def test_attempt_zero_does_not_wrap_to_the_last_attempt(self):
+        details = self._details(counter=2, listed=2)
+        assert details.logs_available(0) is False
+        assert details.get_phase_transitions(0) == []
