@@ -120,3 +120,100 @@ def test_loader_streams_through_vllm(store):
 
     with pytest.raises(ValueError, match="flyte_remote_path"):
         get_model_loader(LoadConfig(load_format=model_streamer.LOAD_FORMAT))
+
+
+# ---------------------------------------------------------------------------
+# Node cache: one download per node, shared by its tensor-parallel ranks
+# ---------------------------------------------------------------------------
+
+
+def _want(model):
+    return {k: v for k, v in model.state_dict().items() if k != "lm_head.weight"}
+
+
+@pytest.mark.asyncio
+async def test_engine_args_passes_node_cache_dir(store, tmp_path):
+    args = await model_streamer.engine_args(REMOTE, local_dir=tmp_path / "meta", node_cache_dir=tmp_path / "cache")
+    assert args["model_loader_extra_config"]["flyte_node_cache_dir"] == str(tmp_path / "cache")
+    plain = await model_streamer.engine_args(REMOTE, local_dir=tmp_path / "meta2")
+    assert "flyte_node_cache_dir" not in plain["model_loader_extra_config"]
+
+
+def test_node_cache_downloads_once_for_all_ranks(store, tmp_path, monkeypatch):
+    """Ranks that load at the same time share one download and get every tensor."""
+    import threading
+
+    from flyte.extras.model_streamer import ModelStreamer
+
+    _, model = store
+    downloads = []
+    real_download = ModelStreamer.download
+
+    async def counting_download(self, local_dir):
+        downloads.append(local_dir)
+        return await real_download(self, local_dir)
+
+    monkeypatch.setattr(ModelStreamer, "download", counting_download)
+
+    cache = tmp_path / "cache"
+    results: list[dict] = []
+    errors: list[BaseException] = []
+
+    def rank():
+        try:
+            streamer = ModelStreamer(REMOTE)
+            results.append(dict(model_streamer._weights_from_node_cache(streamer, cache)))
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=rank) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, errors
+    assert len(downloads) == 1
+    want = _want(model)
+    assert len(results) == 4
+    for got in results:
+        assert got.keys() == want.keys()
+        for name, tensor in want.items():
+            assert torch.equal(got[name], tensor), name
+
+    # A later engine on the same node reuses the copy.
+    dict(model_streamer._weights_from_node_cache(ModelStreamer(REMOTE), cache))
+    assert len(downloads) == 1
+
+
+def test_node_cache_rejects_another_checkpoint(store, tmp_path):
+    from flyte.extras.model_streamer import ModelStreamer
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / ".flyte-weights-complete").write_text("s3://bucket/models/other")
+    with pytest.raises(ValueError, match="already holds the weights of s3://bucket/models/other"):
+        dict(model_streamer._weights_from_node_cache(ModelStreamer(REMOTE), cache))
+
+
+def test_loader_reads_node_cache_through_vllm(store, tmp_path):
+    pytest.importorskip("vllm")
+    from vllm.config.load import LoadConfig
+    from vllm.model_executor.model_loader import get_model_loader
+
+    _, model = store
+    model_streamer.register()
+    args = asyncio.run(model_streamer.engine_args(REMOTE, node_cache_dir=tmp_path / "cache"))
+    loader = get_model_loader(
+        LoadConfig(load_format=args["load_format"], model_loader_extra_config=args["model_loader_extra_config"])
+    )
+
+    class _Model:
+        pass
+
+    got = dict(loader.get_all_weights(None, _Model()))
+    want = _want(model)
+    assert got.keys() == want.keys()
+    for name, tensor in want.items():
+        assert torch.equal(got[name], tensor), name
+    assert (tmp_path / "cache/.flyte-weights-complete").read_text() == REMOTE
