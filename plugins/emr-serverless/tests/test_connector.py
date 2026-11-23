@@ -182,6 +182,7 @@ class TestCreate:
         assert spark["entryPointArguments"] == list(task.container.args)
         assert spark["entryPointArguments"][0] == "a0"
         assert "--tgz" in spark["entryPointArguments"]
+        assert "/usr/bin/python3.11" in spark["sparkSubmitParameters"]
         assert not meta.is_script_mode
         aws.update_application.assert_awaited_once_with(
             application_id="app123",

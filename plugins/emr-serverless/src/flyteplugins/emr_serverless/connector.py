@@ -81,9 +81,9 @@ class EMRServerlessConnector(AsyncConnector[EMRServerlessJobMetadata]):
     _ENTRYPOINT_PATH = (Path(__file__).parent / "_entrypoint.py").resolve()
     _entrypoint_bytes_cache: Optional[bytes] = None
     _PYTHONIC_SPARK_DEFAULTS = (
-        "--conf spark.emr-serverless.driverEnv.PYSPARK_DRIVER_PYTHON=/usr/bin/python3 "
-        "--conf spark.emr-serverless.driverEnv.PYSPARK_PYTHON=/usr/bin/python3 "
-        "--conf spark.executorEnv.PYSPARK_PYTHON=/usr/bin/python3"
+        "--conf spark.emr-serverless.driverEnv.PYSPARK_DRIVER_PYTHON=/usr/bin/python3.11 "
+        "--conf spark.emr-serverless.driverEnv.PYSPARK_PYTHON=/usr/bin/python3.11 "
+        "--conf spark.executorEnv.PYSPARK_PYTHON=/usr/bin/python3.11"
     )
 
     def _get_handler(self, region: Optional[str] = None) -> EMRServerlessHandler:

@@ -96,7 +96,9 @@ synchronize the task or explicit image when `sync_image=True`.
 ## Worker image
 
 The Pythonic image must derive from an EMR Serverless Spark base image and
-contain the same Flyte SDK/plugin version as the authoring environment:
+contain Python 3.11 plus the same Flyte SDK/plugin version as the authoring
+environment. The connector configures PySpark to use `/usr/bin/python3.11`,
+because the EMR image's default `python3` may still point to Python 3.9:
 
 ```bash
 docker build \
