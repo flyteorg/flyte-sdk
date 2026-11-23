@@ -8,6 +8,7 @@ requires-python = ">=3.11"
 dependencies = [
     "flyte[connector]",
     "boto3>=1.34",
+    "xxhash>=3.5",
 ]
 
 [dependency-groups]
@@ -17,9 +18,15 @@ dev = [
 ]
 
 [project.entry-points."flyte.connectors"]
-sagemaker-training = "flyteplugins.sagemaker.connector:SageMakerTrainingConnector"
-sagemaker-processing = "flyteplugins.sagemaker.connector:SageMakerProcessingConnector"
-sagemaker-transform = "flyteplugins.sagemaker.connector:SageMakerTransformConnector"
+boto = "flyteplugins.sagemaker.connectors:BotoConnector"
+sagemaker-training = "flyteplugins.sagemaker.connectors:SageMakerTrainingJobConnector"
+sagemaker-training-task = "flyteplugins.sagemaker.connectors:SageMakerTrainingTaskConnector"
+sagemaker-processing = "flyteplugins.sagemaker.connectors:SageMakerProcessingJobConnector"
+sagemaker-processing-task = "flyteplugins.sagemaker.connectors:SageMakerProcessingTaskConnector"
+sagemaker-transform = "flyteplugins.sagemaker.connectors:SageMakerTransformJobConnector"
+sagemaker-hyperparameter-tuning = "flyteplugins.sagemaker.connectors:SageMakerHyperParameterTuningJobConnector"
+sagemaker-inference-recommender = "flyteplugins.sagemaker.connectors:SageMakerInferenceRecommenderJobConnector"
+sagemaker-endpoint = "flyteplugins.sagemaker.connectors:SageMakerEndpointConnector"
 
 [build-system]
 requires = ["setuptools", "setuptools_scm"]
