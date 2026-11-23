@@ -20,7 +20,14 @@ from google.protobuf.json_format import MessageToDict
 from flyteplugins.emr_serverless.boto_handler import EMRServerlessHandler
 from flyteplugins.emr_serverless.task import EMR_SERVERLESS_BASE_IMAGE, TASK_TYPE, EMRServerless
 
-_JOB_RUNNING = {"PENDING", "SCHEDULED", "SUBMITTED", "RUNNING", "CANCELLING"}
+_JOB_RUNNING = {
+    "QUEUED",
+    "PENDING",
+    "SCHEDULED",
+    "SUBMITTED",
+    "RUNNING",
+    "CANCELLING",
+}
 _RETRYABLE_ERROR_CODES = {
     "InternalServerException",
     "ServiceUnavailableException",

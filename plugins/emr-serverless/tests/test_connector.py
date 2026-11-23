@@ -352,6 +352,7 @@ class TestGetAndDelete:
     @pytest.mark.parametrize(
         "state,phase",
         [
+            ("QUEUED", TaskExecution.RUNNING),
             ("PENDING", TaskExecution.RUNNING),
             ("RUNNING", TaskExecution.RUNNING),
             ("SUCCESS", TaskExecution.SUCCEEDED),
