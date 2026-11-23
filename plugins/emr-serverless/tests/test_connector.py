@@ -270,6 +270,28 @@ class TestCreate:
         assert create["scheduler_configuration"] == {"maxConcurrentRuns": 5}
         assert create["auto_stop_config"] == {"enabled": True}
 
+    async def test_script_application_create_does_not_infer_task_image(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        connector = EMRServerlessConnector()
+        aws = handler()
+        monkeypatch.setattr(connector, "_get_handler", lambda region: aws)
+        monkeypatch.setenv(_ENV_ALLOW_CREATE_APPLICATION, "true")
+        config = EMRServerless(
+            execution_role_arn="role",
+            application_name="hive-e2e",
+            application_type="HIVE",
+            hive_job_driver=EMRServerlessHiveJobDriver(query="SELECT 1"),
+        )
+
+        await connector.create(
+            template(config, image="example.invalid/control:v1"),
+            "s3://bucket/run/a0",
+        )
+
+        assert aws.create_application.await_args.kwargs["image_configuration"] is None
+
     async def test_create_requires_id_or_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
         connector = EMRServerlessConnector()
         aws = handler()

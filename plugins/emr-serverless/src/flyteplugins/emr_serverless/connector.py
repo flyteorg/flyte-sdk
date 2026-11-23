@@ -170,11 +170,11 @@ class EMRServerlessConnector(AsyncConnector[EMRServerlessJobMetadata]):
     ) -> Optional[Dict[str, Any]]:
         if config.image_configuration:
             return dict(config.image_configuration)
+        if config.is_script_mode:
+            return None
         image = cls._container_image(task_template)
         if image:
             return {"imageUri": image}
-        if config.is_script_mode:
-            return None
         if for_create:
             return {"imageUri": EMR_SERVERLESS_BASE_IMAGE}
         raise ValueError(
