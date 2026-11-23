@@ -284,7 +284,17 @@ class DateTimeType(click.DateTime):
             if value == self._TODAY_FMT:
                 n = datetime.datetime.now()
                 return datetime.datetime(n.year, n.month, n.day)
-        return super().convert(value, param, ctx)
+        try:
+            return super().convert(value, param, ctx)
+        except click.BadParameter:
+            # The strptime formats miss common ISO 8601 forms such as "Z"/"+05:00" offsets,
+            # fractional seconds and "HH:MM" times.
+            if isinstance(value, str):
+                try:
+                    return datetime.datetime.fromisoformat(value.strip())
+                except ValueError:
+                    pass
+            raise
 
     def convert(
         self, value: typing.Any, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
@@ -307,8 +317,6 @@ class DateTimeType(click.DateTime):
                 if parts[1] == "-":
                     return dt - delta
                 return dt + delta
-            else:
-                value = datetime.datetime.fromisoformat(value)
 
         return self._datetime_from_format(value, param, ctx)
 
