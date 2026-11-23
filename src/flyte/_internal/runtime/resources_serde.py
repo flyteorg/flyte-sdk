@@ -237,14 +237,19 @@ def _image_host_requirements(image: object) -> Tuple[List[str], List[str]]:
     pip_args: List[str] = []
     skipped: List[str] = []
 
+    def add_arg(flag: str, value: str) -> None:
+        # pip_args is a flat list of (flag, value) pairs; dedupe whole pairs so a repeated option never
+        # leaves a flag without its value.
+        if (flag, value) not in zip(pip_args[::2], pip_args[1::2]):
+            pip_args.extend([flag, value])
+
     def add_options(layer: PipOption) -> None:
         if layer.index_url and "--index-url" not in pip_args:
-            pip_args.extend(["--index-url", layer.index_url])
+            add_arg("--index-url", layer.index_url)
         for url in layer.extra_index_urls or ():
-            if url not in pip_args:
-                pip_args.extend(["--extra-index-url", url])
-        if layer.pre and "--prerelease" not in pip_args:
-            pip_args.extend(["--prerelease", "allow"])
+            add_arg("--extra-index-url", url)
+        if layer.pre:
+            add_arg("--prerelease", "allow")
         if layer.extra_args:
             skipped.append(f"pip extra_args {layer.extra_args!r}")
 
@@ -253,7 +258,8 @@ def _image_host_requirements(image: object) -> Tuple[List[str], List[str]]:
             if isinstance(layer, Requirements):
                 reqs, opts = _parse_requirements_file(Path(layer.file))
                 packages.extend(reqs)
-                pip_args.extend(o for o in opts if o not in pip_args or o.startswith("--"))
+                for flag, value in zip(opts[::2], opts[1::2]):
+                    add_arg(flag, value)
                 add_options(layer)
             elif isinstance(layer, PipPackages):
                 packages.extend(layer.packages or ())
