@@ -37,7 +37,14 @@ class _BaseAuthInterceptor:
             for key in previous.headers:
                 headers.pop(key, None)
 
-        auth_headers = await self.authenticator.get_auth_headers()
+        # A workload token's credential names the action the request is made for, taken from the request's own
+        # metadata or the calling context (see flyte._workload_credential), so it is built from the request headers.
+        from flyte.remote._client.auth._authenticators.workload_token import WorkloadTokenAuthenticator
+
+        if isinstance(self.authenticator, WorkloadTokenAuthenticator):
+            auth_headers = await self.authenticator.get_auth_headers(request_headers(ctx))
+        else:
+            auth_headers = await self.authenticator.get_auth_headers()
         if auth_headers:
             request_headers(ctx).update(auth_headers.headers)
         return auth_headers

@@ -10,8 +10,14 @@ ACTIONS_SERVICE_CHECK_ENV_VAR = "_U_USE_ACTIONS"
 
 
 def use_actions_service() -> bool:
-    """Check if the unified ActionsService should be used instead of QueueService + StateService."""
-    return os.getenv(ACTIONS_SERVICE_CHECK_ENV_VAR) == "1"
+    """
+    Check if the unified ActionsService should be used instead of QueueService + StateService.
+
+    A reusable worker pod that authenticates as itself (a `pod/` workload in `_U_WORKLOAD`) always uses it: its workload
+    credential names the action each request is for, read from the ActionsService metadata, which the QueueService and
+    StateService calls do not carry.
+    """
+    return os.getenv(ACTIONS_SERVICE_CHECK_ENV_VAR) == "1" or os.getenv("_U_WORKLOAD", "").startswith("pod/")
 
 
 class StateService(Protocol):
