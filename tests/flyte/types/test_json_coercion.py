@@ -109,3 +109,52 @@ async def test_coerces_the_scalars_json_cannot_express():
         await coerce_json_value("green", Color)
     with pytest.raises(ValueError, match="not an ISO date"):
         await coerce_json_value("tomorrow", datetime.date)
+
+
+def test_unwrap_optional_type_pep604():
+    from typing_extensions import Annotated
+
+    from flyte.types._json_coercion import unwrap_optional_type
+
+    assert unwrap_optional_type(int | None) is int
+    assert unwrap_optional_type(None | str) is str
+    assert unwrap_optional_type(File | None) is File
+    assert unwrap_optional_type(None | Dir) is Dir
+    assert unwrap_optional_type(Annotated[int | None, "meta"]) is int
+    assert unwrap_optional_type(int | str) == (int | str)
+
+
+@pytest.mark.asyncio
+async def test_coerce_and_serialize_json_value_pep604_optional():
+    import enum
+
+    from flyte.types._json_coercion import coerce_json_value, serialize_json_value
+
+    class Color(enum.Enum):
+        RED = "red"
+        BLUE = "blue"
+
+    # File | None
+    f = await coerce_json_value("/tmp/sample.txt", File | None)
+    assert isinstance(f, File)
+    assert f.path == "/tmp/sample.txt"
+    payload = await serialize_json_value(f, File | None)
+    assert payload["uri"] == "/tmp/sample.txt"
+    assert payload["dimensionality"] == "SINGLE"
+
+    # None | Dir
+    d = await coerce_json_value("/tmp/dir/", None | Dir)
+    assert isinstance(d, Dir)
+    assert d.path == "/tmp/dir/"
+
+    # float | None
+    val = await coerce_json_value(42, float | None)
+    assert val == 42.0 and isinstance(val, float)
+
+    # Color | None
+    color = await coerce_json_value("red", Color | None)
+    assert color is Color.RED
+
+    # None value passes through
+    assert await coerce_json_value(None, File | None) is None
+    assert await serialize_json_value(None, File | None) is None

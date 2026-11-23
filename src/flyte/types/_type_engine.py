@@ -12,6 +12,7 @@ import os
 import sys
 import textwrap
 import threading
+import types
 import typing
 from abc import ABC, abstractmethod
 from collections import OrderedDict
@@ -459,7 +460,7 @@ def _unwrap_optional(tp: type) -> type:
     """Unwrap Optional[X] to X. Returns tp unchanged if not Optional."""
     origin = get_origin(tp)
     args = get_args(tp)
-    if origin is typing.Union:
+    if origin is typing.Union or origin is types.UnionType:
         non_none = [a for a in args if a is not type(None)]
         if len(non_none) == 1:
             return non_none[0]

@@ -13,6 +13,7 @@ import dataclasses
 import datetime
 import enum
 import inspect
+import types
 import typing
 from collections.abc import Callable
 from typing import Any, Union, get_args, get_origin
@@ -31,7 +32,7 @@ def unwrap_optional_type(tp: Any) -> Any:
 
     tp = get_underlying_type(tp)
     origin = get_origin(tp)
-    if origin is Union:
+    if origin is Union or origin is types.UnionType:
         args = typing.get_args(tp)
         non_none = [a for a in args if a is not type(None)]
         if len(non_none) == 1:
