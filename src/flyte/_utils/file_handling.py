@@ -66,6 +66,9 @@ def update_hasher_for_source(
         for root, dirnames, files in os.walk(str(source), topdown=True):
             if ignore:
                 dirnames[:] = [d for d in dirnames if not ignore.is_ignored(Path(os.path.join(root, d)))]
+            # Sort in-place so os.walk recurses in a deterministic order; the
+            # directory listing order differs between filesystems and machines.
+            dirnames.sort()
             files.sort()
 
             for fname in files:
