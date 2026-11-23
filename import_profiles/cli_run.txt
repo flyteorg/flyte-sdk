@@ -51,6 +51,7 @@ flyte._link
 flyte._logging
 flyte._map
 flyte._metrics
+flyte._namespace
 flyte._observe
 flyte._persistence
 flyte._persistence._db
@@ -191,4 +192,5 @@ rich_click
 six
 typing_extensions
 typing_inspection
+tzdata
 yaml

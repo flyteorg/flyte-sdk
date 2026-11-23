@@ -64,6 +64,7 @@ flyte._logging
 flyte._map
 flyte._metrics
 flyte._module
+flyte._namespace
 flyte._observe
 flyte._pod
 flyte._resources
@@ -185,3 +186,4 @@ rich
 six
 typing_extensions
 typing_inspection
+tzdata

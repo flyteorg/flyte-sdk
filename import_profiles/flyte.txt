@@ -21,6 +21,7 @@ flyte._interface
 flyte._link
 flyte._logging
 flyte._map
+flyte._namespace
 flyte._observe
 flyte._pod
 flyte._resources
