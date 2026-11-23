@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
+import os
+import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import boto3
-from botocore.config import Config
 from botocore.exceptions import ClientError
 from flyte import system_logger as logger
 from flyte.connectors import AsyncConnector, ConnectorRegistry, Resource, ResourceMeta
@@ -16,21 +17,24 @@ from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
 from flyteidl2.core.tasks_pb2 import TaskTemplate
 from google.protobuf.json_format import MessageToDict
 
-from flyteplugins.emr_serverless.task import TASK_TYPE
+from flyteplugins.emr_serverless.boto_handler import EMRServerlessHandler
+from flyteplugins.emr_serverless.task import EMR_SERVERLESS_BASE_IMAGE, TASK_TYPE, EMRServerless
 
-_BOTO_CONFIG = Config(retries={"max_attempts": 3, "mode": "adaptive"})
-_APPLICATION_READY = "STARTED"
-_APPLICATION_STARTABLE = {"CREATED", "STOPPED"}
-_APPLICATION_TRANSITIONING = {"CREATING", "STARTING", "STOPPING"}
-_APPLICATION_TERMINAL = {"TERMINATED"}
 _JOB_RUNNING = {"PENDING", "SCHEDULED", "SUBMITTED", "RUNNING", "CANCELLING"}
-_JOB_TERMINAL = {"SUCCESS", "FAILED", "CANCELLED"}
 _RETRYABLE_ERROR_CODES = {
     "InternalServerException",
     "ServiceUnavailableException",
     "ThrottlingException",
     "TooManyRequestsException",
 }
+FLYTE_TAGS = {"Application": "flyte", "ManagedBy": "flyte-connector"}
+_APPLICATION_ID_RE = re.compile(r"^[0-9a-z]+$")
+_UNSAFE_ENV_VALUE_CHARS = re.compile(r"[\s='\"]")
+
+_ENV_ALLOW_CREATE_APPLICATION = "FLYTE_EMR_ALLOW_CREATE_APPLICATION"
+_ENV_APPLICATION_NAME_PREFIX = "FLYTE_EMR_APPLICATION_NAME_PREFIX"
+_ENV_ENTRYPOINT_BUCKET = "FLYTE_EMR_ENTRYPOINT_S3_BUCKET"
+_ENV_FALLBACK_BUCKET = "FLYTE_AWS_S3_BUCKET"
 
 
 def _restore_integer_values(value: Any) -> Any:
@@ -57,52 +61,236 @@ def _execution_token(metadata: Optional[TaskExecutionMetadata], request: Dict[st
 
 
 @dataclass
-class EMRServerlessMetadata(ResourceMeta):
+class EMRServerlessJobMetadata(ResourceMeta):
+    """State persisted between connector calls."""
+
     application_id: str
-    region: Optional[str]
     job_run_id: str = ""
-    pending_request: Optional[Dict[str, Any]] = None
+    region: Optional[str] = None
+    created_application: bool = False
+    is_script_mode: bool = False
+    pending_job_request: Optional[Dict[str, Any]] = None
 
 
-class EMRServerlessConnector(AsyncConnector[EMRServerlessMetadata]):
-    """Submit and monitor existing Spark or Hive jobs on EMR Serverless."""
+class EMRServerlessConnector(AsyncConnector[EMRServerlessJobMetadata]):
+    """Submit and monitor script and Pythonic jobs on EMR Serverless."""
 
     name = "EMR Serverless Connector"
     task_type_name = TASK_TYPE
-    metadata_type = EMRServerlessMetadata
+    metadata_type = EMRServerlessJobMetadata
+    _ENTRYPOINT_PATH = (Path(__file__).parent / "_entrypoint.py").resolve()
+    _entrypoint_bytes_cache: Optional[bytes] = None
+    _PYTHONIC_SPARK_DEFAULTS = (
+        "--conf spark.emr-serverless.driverEnv.PYSPARK_DRIVER_PYTHON=/usr/bin/python3 "
+        "--conf spark.emr-serverless.driverEnv.PYSPARK_PYTHON=/usr/bin/python3 "
+        "--conf spark.executorEnv.PYSPARK_PYTHON=/usr/bin/python3"
+    )
 
-    def _get_client(self, region: Optional[str]) -> Any:
-        kwargs: Dict[str, Any] = {
-            "service_name": "emr-serverless",
-            "config": _BOTO_CONFIG,
+    def _get_handler(self, region: Optional[str] = None) -> EMRServerlessHandler:
+        return EMRServerlessHandler(region)
+
+    @staticmethod
+    def _extract_config(task_template: TaskTemplate) -> EMRServerless:
+        custom = _restore_integer_values(MessageToDict(task_template.custom) if task_template.custom else {})
+        if not custom:
+            raise ValueError("Task template has no EMR Serverless configuration")
+        return EMRServerless.from_dict(custom)
+
+    @classmethod
+    def _read_entrypoint_bytes(cls) -> bytes:
+        """Return the exact bootstrap bytes staged for Pythonic jobs."""
+        if cls._entrypoint_bytes_cache is None:
+            cls._entrypoint_bytes_cache = cls._ENTRYPOINT_PATH.read_bytes()
+        return cls._entrypoint_bytes_cache
+
+    @staticmethod
+    def _resolve_entrypoint_bucket(config: EMRServerless) -> str:
+        """Resolve the S3 bucket used for the Pythonic bootstrap."""
+        configured = os.getenv(_ENV_ENTRYPOINT_BUCKET)
+        if configured:
+            return configured.removeprefix("s3://").split("/", 1)[0]
+        if config.configuration_overrides:
+            log_uri = (
+                config.configuration_overrides.get("monitoringConfiguration", {})
+                .get("s3MonitoringConfiguration", {})
+                .get("logUri", "")
+            )
+            if log_uri.startswith("s3://"):
+                return log_uri.removeprefix("s3://").split("/", 1)[0]
+        configured = os.getenv(_ENV_FALLBACK_BUCKET)
+        if configured:
+            return configured.removeprefix("s3://").split("/", 1)[0]
+        raise ValueError(
+            "Pythonic mode requires an S3 staging bucket. Set "
+            f"{_ENV_ENTRYPOINT_BUCKET}, configure an S3 monitoring log URI, or set {_ENV_FALLBACK_BUCKET}."
+        )
+
+    def _ensure_entrypoint_on_s3(self, handler: EMRServerlessHandler, config: EMRServerless) -> str:
+        """Stage the content-addressed Pythonic bootstrap and return its URI."""
+        content = self._read_entrypoint_bytes()
+        digest = hashlib.sha256(content).hexdigest()[:12]
+        bucket = self._resolve_entrypoint_bucket(config)
+        key = f"flyte/emr-serverless/entrypoint-{digest}.py"
+        client = boto3.client("s3", region_name=handler.region)
+        try:
+            client.head_object(Bucket=bucket, Key=key)
+        except ClientError as error:
+            if error.response.get("Error", {}).get("Code") not in ("404", "NoSuchKey", "NotFound"):
+                raise
+            client.put_object(Bucket=bucket, Key=key, Body=content, ContentType="text/x-python")
+        return f"s3://{bucket}/{key}"
+
+    @staticmethod
+    def _merge_tags(tags: Optional[Dict[str, str]]) -> Dict[str, str]:
+        result = dict(FLYTE_TAGS)
+        result.update(tags or {})
+        return result
+
+    @staticmethod
+    def _is_create_application_allowed() -> bool:
+        return os.getenv(_ENV_ALLOW_CREATE_APPLICATION, "false").strip().lower() == "true"
+
+    @staticmethod
+    def _apply_application_name_prefix(name: str) -> str:
+        prefix = os.getenv(_ENV_APPLICATION_NAME_PREFIX, "").strip()
+        return f"{prefix}{name}" if prefix and not name.startswith(prefix) else name
+
+    @staticmethod
+    def _container_image(task_template: TaskTemplate) -> Optional[str]:
+        container = task_template.container
+        return container.image if container and container.image else None
+
+    @classmethod
+    def _resolve_image_configuration(
+        cls,
+        task_template: TaskTemplate,
+        config: EMRServerless,
+        *,
+        for_create: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        if config.image_configuration:
+            return dict(config.image_configuration)
+        image = cls._container_image(task_template)
+        if image:
+            return {"imageUri": image}
+        if config.is_script_mode:
+            return None
+        if for_create:
+            return {"imageUri": EMR_SERVERLESS_BASE_IMAGE}
+        raise ValueError(
+            "Pythonic mode requires a worker image containing Flyte SDK. Set the task image or image_configuration."
+        )
+
+    async def _sync_application_image(
+        self,
+        handler: EMRServerlessHandler,
+        application_id: str,
+        task_template: TaskTemplate,
+        config: EMRServerless,
+    ) -> None:
+        if config.is_script_mode and not config.image_configuration:
+            return
+        desired_uri = self._container_image(task_template)
+        if not desired_uri and config.image_configuration:
+            desired_uri = config.image_configuration.get("imageUri")
+        if not desired_uri:
+            return
+        current = (await handler.get_application(application_id)).get("imageConfiguration", {})
+        if current.get("imageUri") != desired_uri:
+            await handler.update_application(
+                application_id=application_id,
+                image_configuration={"imageUri": desired_uri},
+            )
+
+    @staticmethod
+    def _execution_env(metadata: Optional[TaskExecutionMetadata]) -> Dict[str, str]:
+        """Build Flyte 2 runtime variables absent from connector task pods."""
+        if metadata is None:
+            return {}
+        env = {str(key): str(value) for key, value in metadata.environment_variables.items()}
+        if metadata.HasField("task_execution_id"):
+            task_execution_id = metadata.task_execution_id
+            execution = task_execution_id.node_execution_id.execution_id
+            task_id = task_execution_id.task_id
+            derived = {
+                "FLYTE_INTERNAL_EXECUTION_ID": execution.name,
+                "FLYTE_INTERNAL_EXECUTION_PROJECT": execution.project,
+                "FLYTE_INTERNAL_EXECUTION_DOMAIN": execution.domain,
+                "_U_ORG_NAME": execution.org,
+                "FLYTE_INTERNAL_TASK_PROJECT": task_id.project,
+                "FLYTE_INTERNAL_TASK_DOMAIN": task_id.domain,
+                "FLYTE_INTERNAL_TASK_NAME": task_id.name,
+                "FLYTE_INTERNAL_TASK_VERSION": task_id.version,
+                "FLYTE_INTERNAL_NODE_ID": task_execution_id.node_execution_id.node_id,
+                "FLYTE_ATTEMPT_NUMBER": str(task_execution_id.retry_attempt),
+                "FLYTE_INTERNAL_TASK_RETRY_ATTEMPT": str(task_execution_id.retry_attempt),
+            }
+            env = {**{key: value for key, value in derived.items() if value != ""}, **env}
+        return env
+
+    @classmethod
+    def _format_env_as_spark_conf(cls, env_vars: Dict[str, str]) -> str:
+        parts = []
+        for key, value in env_vars.items():
+            if _UNSAFE_ENV_VALUE_CHARS.search(value):
+                logger.warning(
+                    "Skipping Spark environment variable %s because its value is not safely representable", key
+                )
+                continue
+            parts.extend(
+                [
+                    f"--conf spark.emr-serverless.driverEnv.{key}={value}",
+                    f"--conf spark.executorEnv.{key}={value}",
+                ]
+            )
+        return " ".join(parts)
+
+    @classmethod
+    def _append_flyte_env_to_spark_params(
+        cls,
+        existing: Optional[str],
+        metadata: Optional[TaskExecutionMetadata],
+        *,
+        enabled: bool,
+        template_env: Optional[Dict[str, str]] = None,
+    ) -> Optional[str]:
+        if not enabled:
+            return existing
+        env = {**(template_env or {}), **cls._execution_env(metadata)}
+        rendered = cls._format_env_as_spark_conf(env)
+        if not rendered:
+            return existing
+        return f"{existing or ''} {rendered}".strip()
+
+    def _merge_spark_submit_params(self, user_params: Optional[str]) -> str:
+        if not user_params:
+            return self._PYTHONIC_SPARK_DEFAULTS
+        additions = []
+        for raw_item in self._PYTHONIC_SPARK_DEFAULTS.split("--conf "):
+            item = raw_item.strip()
+            if item and item.split("=", 1)[0] not in user_params:
+                additions.append(f"--conf {item}")
+        return f"{user_params} {' '.join(additions)}".strip()
+
+    def _build_pythonic_job_driver(
+        self,
+        task_template: TaskTemplate,
+        config: EMRServerless,
+        handler: EMRServerlessHandler,
+    ) -> Dict[str, Any]:
+        container = task_template.container
+        if container is None or not container.args:
+            raise ValueError("Pythonic mode requires the task's Flyte 2 `a0` container command")
+        args = list(container.args)
+        if args[0] != "a0":
+            raise ValueError(f"Pythonic mode expected the Flyte 2 `a0` entrypoint, got {args[0]!r}")
+        return {
+            "sparkSubmit": {
+                "entryPoint": self._ensure_entrypoint_on_s3(handler, config),
+                "entryPointArguments": args,
+                "sparkSubmitParameters": self._merge_spark_submit_params(config.spark_submit_parameters),
+            }
         }
-        if region:
-            kwargs["region_name"] = region
-        return boto3.client(**kwargs)
-
-    async def _call(self, client: Any, method: str, **request: Any) -> Dict[str, Any]:
-        return await asyncio.to_thread(getattr(client, method), **request)
-
-    async def _start_application_if_needed(self, client: Any, application_id: str) -> bool:
-        response = await self._call(client, "get_application", applicationId=application_id)
-        state = response.get("application", {}).get("state", "")
-        if state == _APPLICATION_READY:
-            return True
-        if state in _APPLICATION_TERMINAL:
-            raise RuntimeError(f"EMR Serverless application {application_id} is in terminal state {state!r}")
-        if state in _APPLICATION_STARTABLE:
-            await self._call(client, "start_application", applicationId=application_id)
-            return False
-        if state in _APPLICATION_TRANSITIONING:
-            return False
-        raise RuntimeError(f"Unrecognized EMR Serverless application state {state!r}")
-
-    async def _submit(self, client: Any, request: Dict[str, Any]) -> str:
-        response = await self._call(client, "start_job_run", **request)
-        job_run_id = response.get("jobRunId")
-        if not job_run_id:
-            raise RuntimeError("EMR Serverless StartJobRun response did not include jobRunId")
-        return str(job_run_id)
 
     async def create(
         self,
@@ -111,65 +299,123 @@ class EMRServerlessConnector(AsyncConnector[EMRServerlessMetadata]):
         inputs: Optional[Dict[str, Any]] = None,
         task_execution_metadata: Optional[TaskExecutionMetadata] = None,
         **kwargs: Any,
-    ) -> EMRServerlessMetadata:
-        custom = MessageToDict(task_template.custom) if task_template.custom else {}
-        request = _restore_integer_values(custom.get("request") or {})
-        region = custom.get("region") or None
-        application_id = request.get("applicationId")
-        if not application_id:
-            raise ValueError("EMR Serverless request.applicationId is required")
-        if not request.get("executionRoleArn"):
-            raise ValueError("EMR Serverless request.executionRoleArn is required")
-        if not request.get("jobDriver"):
-            raise ValueError("EMR Serverless request.jobDriver is required")
+    ) -> EMRServerlessJobMetadata:
+        """Resolve the application, request startup, and submit or defer the job."""
+        config = self._extract_config(task_template)
+        handler = self._get_handler(config.region)
+        application_id = config.application_id
+        created_application = False
 
-        request.setdefault("clientToken", _execution_token(task_execution_metadata, request))
-        client = self._get_client(region)
-        if not await self._start_application_if_needed(client, application_id):
-            return EMRServerlessMetadata(
+        if application_id and not _APPLICATION_ID_RE.fullmatch(application_id):
+            requested_name = application_id
+            application_id = await handler.find_application_by_name(requested_name)
+            if not application_id:
+                raise ValueError(f"No active EMR Serverless application found with name {requested_name!r}")
+
+        if not application_id:
+            if not config.application_name:
+                raise ValueError("No application_id provided and no application_name specified")
+            if not self._is_create_application_allowed():
+                raise ValueError(
+                    f"Dynamic application creation is disabled by the connector; set "
+                    f"{_ENV_ALLOW_CREATE_APPLICATION}=true or use an existing application_id"
+                )
+            application_id = await handler.create_application(
+                name=self._apply_application_name_prefix(config.application_name),
+                release_label=config.release_label,
+                application_type=config.application_type,
+                initial_capacity=config.initial_capacity,
+                maximum_capacity=config.maximum_capacity,
+                network_configuration=config.network_configuration,
+                image_configuration=self._resolve_image_configuration(task_template, config, for_create=True),
+                tags=self._merge_tags(config.tags),
+                architecture=config.architecture,
+                runtime_configuration=config.runtime_configuration,
+                scheduler_configuration=config.scheduler_configuration,
+                auto_stop_config=config.auto_stop_config,
+            )
+            created_application = True
+        elif config.sync_image:
+            await self._sync_application_image(handler, application_id, task_template, config)
+
+        if config.is_script_mode:
+            job_driver = config.get_job_driver()
+            if config.spark_submit_parameters and "sparkSubmit" in job_driver:
+                existing = job_driver["sparkSubmit"].get("sparkSubmitParameters")
+                job_driver["sparkSubmit"]["sparkSubmitParameters"] = (
+                    f"{existing or ''} {config.spark_submit_parameters}".strip()
+                )
+        else:
+            job_driver = self._build_pythonic_job_driver(task_template, config, handler)
+
+        if "sparkSubmit" in job_driver:
+            template_env = (
+                {item.key: item.value for item in task_template.container.env} if task_template.container else {}
+            )
+            existing = job_driver["sparkSubmit"].get("sparkSubmitParameters")
+            updated = self._append_flyte_env_to_spark_params(
+                existing,
+                task_execution_metadata,
+                enabled=config.inject_flyte_env,
+                template_env=template_env,
+            )
+            if updated:
+                job_driver["sparkSubmit"]["sparkSubmitParameters"] = updated
+
+        request: Dict[str, Any] = {
+            "execution_role_arn": config.execution_role_arn,
+            "job_driver": job_driver,
+            "configuration_overrides": config.get_effective_configuration_overrides(),
+            "tags": self._merge_tags(config.tags),
+            "execution_timeout_minutes": config.execution_timeout_minutes,
+            "name": task_template.id.name or None,
+            "retry_policy": config.retry_policy,
+        }
+        request["client_token"] = config.client_token or _execution_token(task_execution_metadata, request)
+        region = config.region or handler.client.meta.region_name
+
+        if not await handler.start_application_if_needed(application_id):
+            return EMRServerlessJobMetadata(
                 application_id=application_id,
                 region=region,
-                pending_request=request,
+                created_application=created_application,
+                is_script_mode=config.is_script_mode,
+                pending_job_request=request,
             )
-
-        job_run_id = await self._submit(client, request)
-        return EMRServerlessMetadata(
+        return EMRServerlessJobMetadata(
             application_id=application_id,
+            job_run_id=await handler.start_job_run(application_id=application_id, **request),
             region=region,
-            job_run_id=job_run_id,
+            created_application=created_application,
+            is_script_mode=config.is_script_mode,
         )
 
-    async def get(self, resource_meta: EMRServerlessMetadata, **kwargs: Any) -> Resource:
-        client = self._get_client(resource_meta.region)
+    async def get(self, resource_meta: EMRServerlessJobMetadata, **kwargs: Any) -> Resource:
+        """Return the current provider state."""
+        handler = self._get_handler(resource_meta.region)
+        job_run_id = resource_meta.job_run_id
         try:
-            job_run_id = resource_meta.job_run_id
             if not job_run_id:
-                if not resource_meta.pending_request:
-                    return Resource(
-                        phase=TaskExecution.FAILED,
-                        message="EMR Serverless job submission metadata is missing",
-                    )
-                if not await self._start_application_if_needed(client, resource_meta.application_id):
+                if not resource_meta.pending_job_request:
+                    return Resource(phase=TaskExecution.FAILED, message="Job submission metadata is missing")
+                if not await handler.start_application_if_needed(resource_meta.application_id):
                     return Resource(
                         phase=TaskExecution.RUNNING,
                         message=f"EMR Serverless application {resource_meta.application_id} is starting",
                     )
-                job_run_id = await self._submit(client, resource_meta.pending_request)
-
-            response = await self._call(
-                client,
-                "get_job_run",
-                applicationId=resource_meta.application_id,
-                jobRunId=job_run_id,
-            )
+                job_run_id = await handler.start_job_run(
+                    application_id=resource_meta.application_id,
+                    **resource_meta.pending_job_request,
+                )
+            job = await handler.get_job_run(resource_meta.application_id, job_run_id)
         except ClientError as error:
             code = error.response.get("Error", {}).get("Code", "")
             phase = TaskExecution.RETRYABLE_FAILED if code in _RETRYABLE_ERROR_CODES else TaskExecution.FAILED
             return Resource(phase=phase, message=str(error))
+        except RuntimeError as error:
+            return Resource(phase=TaskExecution.FAILED, message=str(error))
 
-        job = response.get("jobRun", {})
         state = job.get("state", "")
-        details = job.get("stateDetails") or ""
         if state in _JOB_RUNNING:
             phase = TaskExecution.RUNNING
         elif state == "SUCCESS":
@@ -179,12 +425,11 @@ class EMRServerlessConnector(AsyncConnector[EMRServerlessMetadata]):
         elif state == "FAILED":
             phase = TaskExecution.FAILED
         else:
-            return Resource(
-                phase=TaskExecution.FAILED,
-                message=f"Unrecognized EMR Serverless job state {state!r}",
-            )
+            return Resource(phase=TaskExecution.FAILED, message=f"Unrecognized EMR Serverless job state {state!r}")
 
-        region = resource_meta.region or getattr(client.meta, "region_name", None) or "us-east-1"
+        region = resource_meta.region or handler.client.meta.region_name or "us-east-1"
+        details = job.get("stateDetails") or ""
+        message = f"EMR Serverless job state: {state}" + (f" - {details}" if details else "")
         log = TaskLog(
             uri=(
                 f"https://{region}.console.aws.amazon.com/emr/home?region={region}"
@@ -194,60 +439,32 @@ class EMRServerlessConnector(AsyncConnector[EMRServerlessMetadata]):
             ready=True,
             link_type=TaskLog.EXTERNAL,
         )
-        message = f"EMR Serverless job state: {state}"
-        if details:
-            message = f"{message} - {details}"
         return Resource(
             phase=phase,
             message=message,
             log_links=[log],
-            outputs={} if phase == TaskExecution.SUCCEEDED else None,
-            custom_info={
-                "application_id": resource_meta.application_id,
-                "job_run_id": job_run_id,
-            },
+            outputs={} if phase == TaskExecution.SUCCEEDED and resource_meta.is_script_mode else None,
+            custom_info={"application_id": resource_meta.application_id, "job_run_id": job_run_id},
         )
 
-    async def delete(self, resource_meta: EMRServerlessMetadata, **kwargs: Any) -> None:
-        client = self._get_client(resource_meta.region)
+    async def delete(self, resource_meta: EMRServerlessJobMetadata, **kwargs: Any) -> None:
+        """Cancel the exact idempotent job represented by the metadata."""
+        handler = self._get_handler(resource_meta.region)
         job_run_id = resource_meta.job_run_id
-        if not job_run_id and resource_meta.pending_request:
-            if not await self._start_application_if_needed(client, resource_meta.application_id):
+        if not job_run_id and resource_meta.pending_job_request:
+            if not await handler.start_application_if_needed(resource_meta.application_id):
                 return
-            job_run_id = await self._submit(client, resource_meta.pending_request)
-        if not job_run_id:
-            return
+            job_run_id = await handler.start_job_run(
+                application_id=resource_meta.application_id,
+                **resource_meta.pending_job_request,
+            )
+        if job_run_id:
+            await handler.cancel_job_run(resource_meta.application_id, job_run_id)
+            logger.info("Cancelled EMR Serverless job %s", job_run_id)
 
-        try:
-            response = await self._call(
-                client,
-                "get_job_run",
-                applicationId=resource_meta.application_id,
-                jobRunId=job_run_id,
-            )
-        except ClientError as error:
-            code = error.response.get("Error", {}).get("Code", "")
-            if code == "ResourceNotFoundException":
-                return
-            raise
-        state = response.get("jobRun", {}).get("state", "")
-        if state in _JOB_TERMINAL:
-            return
-        try:
-            await self._call(
-                client,
-                "cancel_job_run",
-                applicationId=resource_meta.application_id,
-                jobRunId=job_run_id,
-            )
-        except ClientError as error:
-            code = error.response.get("Error", {}).get("Code", "")
-            if code == "ResourceNotFoundException" or (
-                code == "ValidationException" and "cannot be cancelled" in str(error).lower()
-            ):
-                return
-            raise
-        logger.info("Cancelled EMR Serverless job %s", job_run_id)
+
+# Compatibility with the original draft name.
+EMRServerlessMetadata = EMRServerlessJobMetadata
 
 
 ConnectorRegistry.register(EMRServerlessConnector())
