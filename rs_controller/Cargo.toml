@@ -40,8 +40,8 @@ extension-module = ["pyo3/extension-module"]
 
 [dependencies]
 # Use abi3 for stable API, auto-initialize only when not building extension-module
-pyo3 = { version = "0.24", features = ["abi3-py310"] }
-pyo3-async-runtimes = { version = "0.24", features = ["tokio-runtime"] }
+pyo3 = { version = "0.29", features = ["abi3-py310"] }
+pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
 tokio = { version = "1.0", features = ["full"] }
 tokio-util = "0.7"
 fastrand = "2.4"
@@ -57,7 +57,7 @@ async-trait = "0.1"
 thiserror = "1.0"
 # Uncomment this if you need to use local flyteidl2
 #flyteidl2 = { path = "/Users/ytong/go/src/github.com/flyteorg/flyte/gen/rust" }
-flyteidl2 = "=2.0.56"
+flyteidl2 = "=2.0.57"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

@@ -190,7 +190,11 @@ class JSONFormatter(logging.Formatter):
         if metric_type:
             log_data["metric_type"] = metric_type
             log_data["metric_name"] = getattr(record, "metric_name")
-            log_data["duration_seconds"] = getattr(record, "duration_seconds")
+            # Timers carry a duration; counters carry none and may say why they were counted.
+            for field in ("duration_seconds", "reason"):
+                value = getattr(record, field, None)
+                if value is not None:
+                    log_data[field] = value
 
         # Add exception info if present
         if record.exc_info:

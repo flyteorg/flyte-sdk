@@ -4,7 +4,7 @@ dynamic = ["version"]
 description = "Echo task plugin for flyte"
 readme = "README.md"
 authors = [{ name = "Ketan Umare", email = "kumare3@users.noreply.github.com" }]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "flyte",
 ]

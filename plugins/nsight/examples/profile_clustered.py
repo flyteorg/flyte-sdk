@@ -28,8 +28,8 @@ from flyteplugins.nsight import nsys_profile, nvtx
 # system-site-packages flipped so the venv sees NGC's torch). NGC's torch also provides `torchrun`,
 # which the clustered launcher execs. See profile_training.py for the full rationale.
 image = (
-    flyte.Image.from_base("nvcr.io/nvidia/pytorch:24.08-py3")
-    .clone(extendable=True, name="nsight-clustered", python_version=(3, 10))
+    flyte.Image.from_base("nvcr.io/nvidia/pytorch:24.11-py3")
+    .clone(extendable=True, name="nsight-clustered", python_version=(3, 12))
     .with_pip_packages("uv", "kubernetes")
     .with_local_v2()
     .with_local_v2_plugins(["flyteplugins-nsight"])

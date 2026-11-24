@@ -445,6 +445,17 @@ class RunArguments:
         return [common.get_option_from_metadata(f.metadata) for f in fields(cls) if f.metadata]
 
 
+def _parse_in_upload_queue(parse, ctx: click.Context, args: List[str], queue: str | None) -> List[str]:
+    """Parse with `queue` as the upload queue. No queue parses as before, without importing it."""
+    if not queue:
+        return parse(ctx, args)
+
+    from flyte._upload_queue import upload_queue
+
+    with upload_queue(queue):
+        return parse(ctx, args)
+
+
 class RunTaskCommand(common.BoolFlagValueHintMixin, click.RichCommand):
     def __init__(self, obj_name: str, obj: Any, run_args: RunArguments, *args, **kwargs):
         self.obj_name = obj_name
@@ -623,6 +634,14 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             return
         # Main entry point remains very thin
         asyncio.run(self._execute_and_render(ctx, config))
+
+    def parse_args(self, ctx: click.Context, args: List[str]) -> List[str]:
+        # Local File/Dir/DataFrame inputs are uploaded while click converts them, before the run is
+        # submitted: upload them to the storage of the queue the run lands on (`--queue`, else the
+        # task's), as the run does with the code bundle, not to the project/domain default.
+        return _parse_in_upload_queue(
+            super().parse_args, ctx, args, self.run_args.queue or getattr(self.obj, "queue", None)
+        )
 
     def get_params(self, ctx: click.Context) -> List[click.Parameter]:
         # Note this function may be called multiple times by click.
@@ -824,6 +843,11 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         self._validate_required_params(ctx)
         # Main entry point remains very thin
         asyncio.run(self._execute_and_render(ctx, config))
+
+    def parse_args(self, ctx: click.Context, args: List[str]) -> List[str]:
+        # As RunTaskCommand.parse_args: local File/Dir/DataFrame inputs go to the storage of the
+        # `--queue` the run is sent to (a deployed task carries no queue of its own).
+        return _parse_in_upload_queue(super().parse_args, ctx, args, self.run_args.queue)
 
     def get_params(self, ctx: click.Context) -> List[click.Parameter]:
         # Note this function may be called multiple times by click.

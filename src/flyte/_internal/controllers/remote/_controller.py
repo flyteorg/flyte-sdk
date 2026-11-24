@@ -23,7 +23,7 @@ from flyte._code_bundle import build_pkl_bundle
 from flyte._context import internal_ctx
 from flyte._internal.controllers import TraceInfo
 from flyte._internal.controllers.remote._action import Action
-from flyte._internal.controllers.remote._core import Controller
+from flyte._internal.controllers.remote._core import Controller, _trace_record_unconfirmed
 from flyte._internal.controllers.remote._service_protocol import ClientSet
 from flyte._internal.runtime import convert, io
 from flyte._internal.runtime.task_serde import translate_task_to_wire
@@ -640,7 +640,14 @@ class RemoteController(Controller):
                     f" Parent:[{trace_action.parent_action_name}],"
                     f" Trace fn:[{info.name}], action:[{info.action.name}]"
                 )
-                await self.submit_and_wait_for_action(trace_action)
+                recorded = await self.submit_and_wait_for_action(trace_action)
+                if isinstance(recorded.client_err, Exception):
+                    # The launch failed for good, so the server has no record of this trace. The task
+                    # carries on as before; the failure is counted.
+                    logger.error(
+                        f"Trace [{info.name}] action id: {info.action.name} was not recorded: {recorded.client_err}",
+                        extra=_trace_record_unconfirmed("launch_failed"),
+                    )
                 logger.info(f"Trace Action for [{info.name}] action id: {info.action.name}, completed!")
             except asyncio.CancelledError:
                 # If the action is cancelled, we need to cancel the action on the server as well

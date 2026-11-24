@@ -38,7 +38,7 @@ docker push "${DATA_PREP_TAG}"
 
 echo ""
 echo "==> Building training image (Team B)"
-echo "    Base:    python:3.10-slim  (would be nvidia/cuda:12.1.0 in production)"
+echo "    Base:    python:3.12-slim  (would be nvidia/cuda:12.1.0 in production)"
 echo "    WORKDIR: /workspace"
 echo "    Tag:     ${TRAINING_TAG}"
 docker build \

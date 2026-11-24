@@ -49,8 +49,7 @@ def parse_iso_time(param: str, value: str | None) -> datetime | None:
     if value is None:
         return None
     try:
-        # `fromisoformat` only accepts a trailing "Z" from Python 3.11; this package supports 3.10.
-        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.strip())
     except ValueError:
         raise ToolError(
             f"Could not parse {param}='{value}' as an ISO-8601 timestamp; "

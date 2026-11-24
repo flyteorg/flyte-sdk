@@ -50,6 +50,14 @@ ignore = ["PGH003", "PLC0415"]
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]
 
+[tool.uv]
+override-dependencies = [
+    "pillow>=13.0.0",
+    "pyjwt>=2.14.0",
+    "cryptography>=50.0.0",
+    "certifi>=2026.10.18",
+]
+
 [tool.uv.sources]
 flyte = { path = "../../..", editable = true }
 flyteplugins-agents-core = { path = "../core", editable = true }
