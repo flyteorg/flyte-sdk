@@ -1237,3 +1237,82 @@ class TestTransformers:
         """Test that NamedTuple literal type is correctly generated."""
         lt = TypeEngine.to_literal_type(SimpleNamedTuple)
         assert lt.simple == 9  # STRUCT
+
+    def test_namedtuple_with_field_defaults_wrapper_model(self):
+        """Test that NamedTuple with _field_defaults retains defaults in wrapper model."""
+
+        class ConfigWithDefaults(NamedTuple):
+            x: int
+            y: str = "default_y"
+            z: int = 42
+
+        transformer = TypeEngine.get_transformer(ConfigWithDefaults)
+        assert isinstance(transformer, NamedTupleTransformer)
+        model_cls = transformer._create_wrapper_model(ConfigWithDefaults)
+        assert not model_cls.model_fields["y"].is_required()
+        assert model_cls.model_fields["y"].default == "default_y"
+        assert not model_cls.model_fields["z"].is_required()
+        assert model_cls.model_fields["z"].default == 42
+        assert model_cls.model_fields["x"].is_required()
+
+    @pytest.mark.asyncio
+    async def test_namedtuple_to_literal_from_dict(self):
+        """Test that to_literal succeeds when passed a dictionary for NamedTuple."""
+
+        class Point(NamedTuple):
+            x: int
+            y: str
+
+        lt = TypeEngine.to_literal_type(Point)
+        lit = await TypeEngine.to_literal({"x": 10, "y": "hello"}, Point, lt)
+        res = await TypeEngine.to_python_value(lit, Point)
+        assert res == Point(10, "hello")
+
+    @pytest.mark.asyncio
+    async def test_namedtuple_to_literal_with_defaults_tuple_and_dict(self):
+        """Test that to_literal succeeds with partial tuples and partial dicts when defaults are defined."""
+
+        class Settings(NamedTuple):
+            host: str
+            port: int = 8080
+            debug: bool = False
+
+        lt = TypeEngine.to_literal_type(Settings)
+
+        # 1. Partial tuple omitting trailing defaults
+        lit_tuple = await TypeEngine.to_literal(("localhost",), Settings, lt)
+        res_tuple = await TypeEngine.to_python_value(lit_tuple, Settings)
+        assert res_tuple == Settings("localhost", 8080, False)
+
+        # 2. Partial dict omitting fields with defaults
+        lit_dict = await TypeEngine.to_literal({"host": "127.0.0.1"}, Settings, lt)
+        res_dict = await TypeEngine.to_python_value(lit_dict, Settings)
+        assert res_dict == Settings("127.0.0.1", 8080, False)
+
+    def test_create_namedtuple_from_schema_preserves_optional_fields_and_defaults(self):
+        """Test that _create_namedtuple_from_schema preserves fields not in 'required' and sets defaults."""
+        transformer = NamedTupleTransformer()
+        schema = {
+            "title": "NamedTupleWrapper_ServerConfig",
+            "properties": {
+                "host": {"type": "string"},
+                "port": {"type": "integer", "default": 8000},
+                "active": {"type": "boolean", "default": True},
+            },
+            "required": ["host"],
+        }
+        reconstructed_type = transformer._create_namedtuple_from_schema(schema, "ServerConfig")
+        assert reconstructed_type._fields == ("host", "port", "active")
+        inst = reconstructed_type(host="0.0.0.0")
+        assert inst.port == 8000
+        assert inst.active is True
+
+        schema_no_defaults = {
+            "title": "NamedTupleWrapper_Simple",
+            "properties": {
+                "a": {"type": "integer"},
+                "b": {"type": "string"},
+            },
+        }
+        reconstructed_no_defaults = transformer._create_namedtuple_from_schema(schema_no_defaults, "Simple")
+        assert reconstructed_no_defaults._fields == ("a", "b")

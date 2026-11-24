@@ -413,10 +413,14 @@ class NamedTupleTransformer(PydanticWrappingTransformer[tuple]):
 
         # Get field names and types from the NamedTuple
         annotations = getattr(t, "__annotations__", {})
+        field_defaults = getattr(t, "_field_defaults", {})
         field_definitions: Dict[str, Any] = {}
 
         for field_name, field_type in annotations.items():
-            field_definitions[field_name] = (field_type, ...)
+            if field_name in field_defaults:
+                field_definitions[field_name] = (field_type, field_defaults[field_name])
+            else:
+                field_definitions[field_name] = (field_type, ...)
 
         # Dynamically create a Pydantic model
         from pydantic import create_model
@@ -431,6 +435,8 @@ class NamedTupleTransformer(PydanticWrappingTransformer[tuple]):
         # NamedTuple instances have _asdict() method
         if hasattr(python_val, "_asdict"):
             data = cast(Any, python_val)._asdict()
+        elif isinstance(python_val, dict):
+            data = python_val
         else:
             # Fallback: use field names from the type
             field_names = cast(Any, python_type)._fields
@@ -513,8 +519,8 @@ class NamedTupleTransformer(PydanticWrappingTransformer[tuple]):
 
         # Object-based schema (NamedTupleWrapper format)
         properties = schema.get("properties", {})
-        # Use 'required' field to preserve property order if available
-        property_order = schema.get("required", list(properties.keys()))
+        # Ensure all properties are included while preserving declaration order
+        property_order = list(properties.keys())
 
         field_types: typing.List[typing.Tuple[str, Type]] = []
         for prop_name in property_order:
@@ -523,7 +529,11 @@ class NamedTupleTransformer(PydanticWrappingTransformer[tuple]):
             field_types.append((prop_name, field_type))
 
         # Create a NamedTuple dynamically
-        return NamedTuple(name, field_types)  # type: ignore
+        nt = NamedTuple(name, field_types)  # type: ignore
+        defaults = [properties[p]["default"] for p in property_order if "default" in properties.get(p, {})]
+        if defaults:
+            nt.__new__.__defaults__ = tuple(defaults)
+        return nt
 
     def _create_namedtuple_from_array_schema(self, schema: dict, name: str, defs: dict) -> Type[tuple]:
         """Create a NamedTuple from an array-based JSON schema (Pydantic's NamedTuple format)."""
