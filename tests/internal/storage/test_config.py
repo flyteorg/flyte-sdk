@@ -235,6 +235,58 @@ class TestS3Config:
 
         assert "credential_provider" not in result
 
+    @pytest.mark.parametrize(
+        "variable",
+        [
+            "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+            "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+        ],
+    )
+    def test_get_fsspec_kwargs_container_credentials_use_boto3_provider(
+        self,
+        variable,
+        monkeypatch,
+    ):
+        s3 = S3(region="us-east-1")
+        monkeypatch.delenv("AWS_PROFILE", raising=False)
+        monkeypatch.delenv("AWS_CONFIG_FILE", raising=False)
+        monkeypatch.setenv(variable, "http://localhost/credentials")
+
+        def _fake_provider(self, region):
+            assert region == "us-east-1"
+            return "container-provider"
+
+        monkeypatch.setattr(
+            S3,
+            "_build_s3_credential_provider_from_default_chain",
+            _fake_provider,
+        )
+
+        result = s3.get_fsspec_kwargs()
+
+        assert result["credential_provider"] == "container-provider"
+        assert result["region"] == "us-east-1"
+
+    def test_get_fsspec_kwargs_static_credentials_ignore_container_endpoint(
+        self,
+        monkeypatch,
+    ):
+        s3 = S3(access_key_id="test-key", secret_access_key="test-secret")
+        monkeypatch.setenv(
+            "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+            "http://localhost/credentials",
+        )
+        monkeypatch.setattr(
+            S3,
+            "_build_s3_credential_provider_from_default_chain",
+            lambda self, region: (_ for _ in ()).throw(AssertionError("provider should not be called")),
+        )
+
+        result = s3.get_fsspec_kwargs()
+
+        assert result["config"]["access_key_id"] == "test-key"
+        assert "credential_provider" not in result
+
 
 class TestGCSConfig:
     def test_get_fsspec_kwargs_default(self):
