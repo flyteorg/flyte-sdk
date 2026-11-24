@@ -146,6 +146,20 @@ class EMRServerlessHandler:
             return False
         raise RuntimeError(f"Unrecognized EMR Serverless application state {state!r}")
 
+    async def stop_application_if_needed(self, application_id: str) -> bool:
+        """Request shutdown and return whether mutable settings can be updated."""
+        state = (await self.get_application(application_id)).get("state", "")
+        if state in _APPLICATION_STARTABLE:
+            return True
+        if state == _APPLICATION_READY:
+            await self._call("stop_application", applicationId=application_id)
+            return False
+        if state in _APPLICATION_TRANSITIONING:
+            return False
+        if state in _APPLICATION_TERMINAL:
+            raise RuntimeError(f"Application {application_id} is in terminal state {state!r}")
+        raise RuntimeError(f"Unrecognized EMR Serverless application state {state!r}")
+
     async def ensure_application_started(
         self,
         application_id: str,

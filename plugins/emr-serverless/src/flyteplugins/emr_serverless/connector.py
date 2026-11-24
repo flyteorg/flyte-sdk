@@ -77,6 +77,7 @@ class EMRServerlessJobMetadata(ResourceMeta):
     created_application: bool = False
     is_script_mode: bool = False
     pending_job_request: Optional[Dict[str, Any]] = None
+    pending_image_configuration: Optional[Dict[str, Any]] = None
 
 
 class EMRServerlessConnector(AsyncConnector[EMRServerlessJobMetadata]):
@@ -194,20 +195,25 @@ class EMRServerlessConnector(AsyncConnector[EMRServerlessJobMetadata]):
         application_id: str,
         task_template: TaskTemplate,
         config: EMRServerless,
-    ) -> None:
+    ) -> Optional[Dict[str, Any]]:
         if config.is_script_mode and not config.image_configuration:
-            return
+            return None
         desired_uri = self._container_image(task_template)
         if not desired_uri and config.image_configuration:
             desired_uri = config.image_configuration.get("imageUri")
         if not desired_uri:
-            return
+            return None
+        desired = {"imageUri": desired_uri}
         current = (await handler.get_application(application_id)).get("imageConfiguration", {})
-        if current.get("imageUri") != desired_uri:
-            await handler.update_application(
-                application_id=application_id,
-                image_configuration={"imageUri": desired_uri},
-            )
+        if current.get("imageUri") == desired_uri:
+            return None
+        if not await handler.stop_application_if_needed(application_id):
+            return desired
+        await handler.update_application(
+            application_id=application_id,
+            image_configuration=desired,
+        )
+        return None
 
     @staticmethod
     def _execution_env(metadata: Optional[TaskExecutionMetadata]) -> Dict[str, str]:
@@ -312,6 +318,7 @@ class EMRServerlessConnector(AsyncConnector[EMRServerlessJobMetadata]):
         handler = self._get_handler(config.region)
         application_id = config.application_id
         created_application = False
+        pending_image_configuration = None
 
         if application_id and not _APPLICATION_ID_RE.fullmatch(application_id):
             requested_name = application_id
@@ -343,7 +350,12 @@ class EMRServerlessConnector(AsyncConnector[EMRServerlessJobMetadata]):
             )
             created_application = True
         elif config.sync_image:
-            await self._sync_application_image(handler, application_id, task_template, config)
+            pending_image_configuration = await self._sync_application_image(
+                handler,
+                application_id,
+                task_template,
+                config,
+            )
 
         if config.is_script_mode:
             job_driver = config.get_job_driver()
@@ -381,13 +393,14 @@ class EMRServerlessConnector(AsyncConnector[EMRServerlessJobMetadata]):
         request["client_token"] = config.client_token or _execution_token(task_execution_metadata, request)
         region = config.region or handler.client.meta.region_name
 
-        if not await handler.start_application_if_needed(application_id):
+        if pending_image_configuration or not await handler.start_application_if_needed(application_id):
             return EMRServerlessJobMetadata(
                 application_id=application_id,
                 region=region,
                 created_application=created_application,
                 is_script_mode=config.is_script_mode,
                 pending_job_request=request,
+                pending_image_configuration=pending_image_configuration,
             )
         return EMRServerlessJobMetadata(
             application_id=application_id,
@@ -405,6 +418,23 @@ class EMRServerlessConnector(AsyncConnector[EMRServerlessJobMetadata]):
             if not job_run_id:
                 if not resource_meta.pending_job_request:
                     return Resource(phase=TaskExecution.FAILED, message="Job submission metadata is missing")
+                if resource_meta.pending_image_configuration:
+                    current = await handler.get_application(resource_meta.application_id)
+                    desired_uri = resource_meta.pending_image_configuration.get("imageUri")
+                    current_uri = current.get("imageConfiguration", {}).get("imageUri")
+                    if current_uri != desired_uri:
+                        if not await handler.stop_application_if_needed(resource_meta.application_id):
+                            return Resource(
+                                phase=TaskExecution.RUNNING,
+                                message=(
+                                    "EMR Serverless application "
+                                    f"{resource_meta.application_id} is transitioning for image update"
+                                ),
+                            )
+                        await handler.update_application(
+                            application_id=resource_meta.application_id,
+                            image_configuration=resource_meta.pending_image_configuration,
+                        )
                 if not await handler.start_application_if_needed(resource_meta.application_id):
                     return Resource(
                         phase=TaskExecution.RUNNING,
@@ -458,6 +488,8 @@ class EMRServerlessConnector(AsyncConnector[EMRServerlessJobMetadata]):
         """Cancel the exact idempotent job represented by the metadata."""
         handler = self._get_handler(resource_meta.region)
         job_run_id = resource_meta.job_run_id
+        if not job_run_id and resource_meta.pending_image_configuration:
+            return
         if not job_run_id and resource_meta.pending_job_request:
             if not await handler.start_application_if_needed(resource_meta.application_id):
                 return

@@ -67,6 +67,7 @@ def handler() -> MagicMock:
         return_value={"applicationId": "app123", "state": "STARTED", "imageConfiguration": {}}
     )
     value.update_application = AsyncMock()
+    value.stop_application_if_needed = AsyncMock(return_value=True)
     value.start_application_if_needed = AsyncMock(return_value=True)
     value.start_job_run = AsyncMock(return_value="job123")
     value.get_job_run = AsyncMock(return_value={"state": "RUNNING"})
@@ -188,6 +189,31 @@ class TestCreate:
             application_id="app123",
             image_configuration={"imageUri": "example.invalid/flyte:v1"},
         )
+
+    async def test_started_pythonic_image_sync_is_deferred(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        connector = EMRServerlessConnector()
+        aws = handler()
+        aws.stop_application_if_needed.return_value = False
+        monkeypatch.setattr(connector, "_get_handler", lambda region: aws)
+        monkeypatch.setattr(
+            connector,
+            "_ensure_entrypoint_on_s3",
+            lambda handler, config: "s3://bucket/entrypoint.py",
+        )
+
+        meta = await connector.create(
+            template(EMRServerless(execution_role_arn="role", application_id="app123")),
+            "s3://bucket/run/a0",
+        )
+
+        assert meta.pending_image_configuration == {"imageUri": "example.invalid/flyte:v1"}
+        assert meta.pending_job_request is not None
+        aws.update_application.assert_not_awaited()
+        aws.start_application_if_needed.assert_not_awaited()
+        aws.start_job_run.assert_not_awaited()
 
     async def test_pythonic_rejects_non_a0_runtime(self, monkeypatch: pytest.MonkeyPatch) -> None:
         connector = EMRServerlessConnector()
@@ -349,6 +375,34 @@ class TestGetAndDelete:
         assert result.log_links[0].link_type == TaskLog.EXTERNAL
         aws.start_job_run.assert_awaited_once_with(application_id="app123", **request)
 
+    async def test_deferred_image_sync_updates_then_restarts(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        connector = EMRServerlessConnector()
+        aws = handler()
+        aws.start_application_if_needed.return_value = False
+        monkeypatch.setattr(connector, "_get_handler", lambda region: aws)
+        desired = {"imageUri": "example.invalid/flyte:v2"}
+        meta = EMRServerlessJobMetadata(
+            application_id="app123",
+            pending_job_request={
+                "execution_role_arn": "role",
+                "client_token": "stable",
+            },
+            pending_image_configuration=desired,
+        )
+
+        result = await connector.get(meta)
+
+        assert result.phase == TaskExecution.RUNNING
+        aws.update_application.assert_awaited_once_with(
+            application_id="app123",
+            image_configuration=desired,
+        )
+        aws.start_application_if_needed.assert_awaited_once_with("app123")
+        aws.start_job_run.assert_not_awaited()
+
     @pytest.mark.parametrize(
         "state,phase",
         [
@@ -389,6 +443,26 @@ class TestGetAndDelete:
             EMRServerlessJobMetadata(
                 application_id="app123",
                 pending_job_request={"execution_role_arn": "role", "client_token": "stable"},
+            )
+        )
+        aws.start_job_run.assert_not_awaited()
+        aws.cancel_job_run.assert_not_awaited()
+
+    async def test_delete_during_image_sync_does_not_submit(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        connector = EMRServerlessConnector()
+        aws = handler()
+        monkeypatch.setattr(connector, "_get_handler", lambda region: aws)
+        await connector.delete(
+            EMRServerlessJobMetadata(
+                application_id="app123",
+                pending_job_request={
+                    "execution_role_arn": "role",
+                    "client_token": "stable",
+                },
+                pending_image_configuration={"imageUri": "example.invalid/flyte:v2"},
             )
         )
         aws.start_job_run.assert_not_awaited()

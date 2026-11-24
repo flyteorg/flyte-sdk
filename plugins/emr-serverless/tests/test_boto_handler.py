@@ -74,6 +74,35 @@ class TestApplications:
         assert not await handler.start_application_if_needed("app123")
         call.assert_awaited_once_with("start_application", applicationId="app123")
 
+    async def test_started_requests_stop_for_update(
+        self,
+        handler: EMRServerlessHandler,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            handler,
+            "get_application",
+            AsyncMock(return_value={"state": "STARTED"}),
+        )
+        call = AsyncMock(return_value={})
+        monkeypatch.setattr(handler, "_call", call)
+        assert not await handler.stop_application_if_needed("app123")
+        call.assert_awaited_once_with("stop_application", applicationId="app123")
+
+    @pytest.mark.parametrize("state", ["CREATED", "STOPPED"])
+    async def test_stopped_application_is_ready_for_update(
+        self,
+        state: str,
+        handler: EMRServerlessHandler,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            handler,
+            "get_application",
+            AsyncMock(return_value={"state": state}),
+        )
+        assert await handler.stop_application_if_needed("app123")
+
     async def test_terminal_application_fails(
         self, handler: EMRServerlessHandler, monkeypatch: pytest.MonkeyPatch
     ) -> None:
