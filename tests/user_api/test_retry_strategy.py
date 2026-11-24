@@ -187,3 +187,32 @@ def test_task_accepts_valid_bare_retries(good):
     async def t(): ...
 
     assert isinstance(t.retries, RetryStrategy)
+
+
+def test_get_proto_retry_strategy_accepts_int():
+    from flyte._internal.runtime.task_serde import get_proto_retry_strategy
+
+    proto = get_proto_retry_strategy(3)
+    assert proto is not None
+    assert proto.retries == 3
+
+
+def test_get_proto_retry_strategy_accepts_zero():
+    from flyte._internal.runtime.task_serde import get_proto_retry_strategy
+
+    proto = get_proto_retry_strategy(0)
+    assert proto is not None
+    assert proto.retries == 0
+
+
+def test_get_proto_retry_strategy_none():
+    from flyte._internal.runtime.task_serde import get_proto_retry_strategy
+
+    assert get_proto_retry_strategy(None) is None
+
+
+def test_get_proto_retry_strategy_rejects_invalid_type():
+    from flyte._internal.runtime.task_serde import get_proto_retry_strategy
+
+    with pytest.raises(ValueError, match=r"retries must be an int \(a retry count\) or a flyte\.RetryStrategy"):
+        get_proto_retry_strategy("3")

@@ -522,3 +522,54 @@ class TestTaskDetailsOverrideSecurityContext:
         assert sc.run_as.k8s_service_account == "ml-sa"
         assert len(sc.secrets) == 1
         assert sc.secrets[0].key == "key2"
+
+
+class TestTaskDetailsOverrideRetries:
+    def _task_details(self, retries: int | flyte.RetryStrategy | None = None) -> TaskDetails:
+        from flyteidl2.task import task_definition_pb2
+
+        from flyte._internal.runtime.task_serde import get_proto_retry_strategy
+
+        pb2 = task_definition_pb2.TaskDetails()
+        if retries is not None:
+            proto = get_proto_retry_strategy(retries)
+            if proto is not None:
+                pb2.spec.task_template.metadata.retries.CopyFrom(proto)
+        return TaskDetails(pb2)
+
+    def test_override_retries_with_int(self):
+        td = self._task_details()
+        out = td.override(retries=3)
+        assert out.pb2.spec.task_template.metadata.retries.retries == 3
+
+    def test_override_retries_with_zero(self):
+        td = self._task_details(retries=3)
+        assert td.pb2.spec.task_template.metadata.retries.retries == 3
+        out = td.override(retries=0)
+        assert out.pb2.spec.task_template.metadata.retries.retries == 0
+
+    def test_override_retries_with_strategy(self):
+        td = self._task_details()
+        strategy = flyte.RetryStrategy(
+            count=5,
+            backoff=flyte.Backoff(base=timedelta(seconds=2), factor=2.0, cap=timedelta(seconds=10)),
+        )
+        out = td.override(retries=strategy)
+        md = out.pb2.spec.task_template.metadata
+        assert md.retries.retries == 5
+        assert md.retries.backoff.factor == 2.0
+
+    def test_override_without_retries_preserves_existing(self):
+        td = self._task_details(retries=4)
+        out = td.override(short_name="renamed")
+        assert out.pb2.spec.task_template.metadata.retries.retries == 4
+
+    def test_override_retries_rejects_negative_int(self):
+        td = self._task_details()
+        with pytest.raises(ValueError, match=r"RetryStrategy\.count must be greater than or equal to 0"):
+            td.override(retries=-1)
+
+    def test_override_retries_rejects_invalid_type(self):
+        td = self._task_details()
+        with pytest.raises(ValueError, match=r"retries must be an int \(a retry count\) or a flyte\.RetryStrategy"):
+            td.override(retries="invalid")

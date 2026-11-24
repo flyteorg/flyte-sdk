@@ -142,7 +142,9 @@ def get_proto_retry_strategy(
         return None
 
     if isinstance(retries, int):
-        raise AssertionError("Retries should be an instance of RetryStrategy, not int")
+        retries = RetryStrategy(count=retries)
+    elif not isinstance(retries, RetryStrategy):
+        raise ValueError(f"retries must be an int (a retry count) or a flyte.RetryStrategy, got {retries!r}")
 
     proto = literals_pb2.RetryStrategy(retries=retries.count)
     if retries.backoff is not None:

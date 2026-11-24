@@ -472,7 +472,7 @@ class TaskDetails(ToJSONMixin):
         *,
         short_name: Optional[str] = None,
         resources: Optional[flyte.Resources] = None,
-        retries: Union[int, flyte.RetryStrategy] = 0,
+        retries: Union[int, flyte.RetryStrategy, None] = None,
         timeout: Optional[flyte.TimeoutType] = None,
         env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[flyte.SecretRequest] = None,
@@ -575,8 +575,12 @@ class TaskDetails(ToJSONMixin):
         if produces_artifacts is not None:
             md.produces_artifacts = produces_artifacts
 
-        if retries:
-            md.retries.CopyFrom(get_proto_retry_strategy(retries))
+        if retries is not None:
+            proto_retries = get_proto_retry_strategy(retries)
+            if proto_retries is not None:
+                md.retries.CopyFrom(proto_retries)
+            else:
+                md.ClearField("retries")
 
         if timeout:
             mr = get_proto_max_runtime(timeout)
