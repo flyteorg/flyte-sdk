@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from asyncio import Queue
 from typing import AsyncIterator, Callable, Dict, Optional, Tuple, cast
 
@@ -174,6 +175,10 @@ class Informer:
         max_watch_retries: int = 40,
         # Reconnect a synced watch silent this long; keep it well under the executor's TaskAction GC TTL.
         watch_idle_timeout_sec: Optional[float] = 300.0,
+        # A watch that delivered an update after its snapshot, or stayed open this long, was
+        # working, so its failure starts a new count. Any other failure adds to the count, even
+        # one that came after the snapshot.
+        watch_healthy_after_sec: float = 60.0,
     ):
         self.name = self.mkname(run_name=run_id.name, parent_action_name=parent_action_name)
         self.parent_action_name = parent_action_name
@@ -190,6 +195,7 @@ class Informer:
         self._watch_conn_timeout_sec = watch_conn_timeout_sec
         self._max_watch_retries = max_watch_retries
         self._watch_idle_timeout_sec = watch_idle_timeout_sec
+        self._watch_healthy_after_sec = watch_healthy_after_sec
 
     @classmethod
     def mkname(cls, *, run_name: str, parent_action_name: str) -> str:
@@ -268,6 +274,14 @@ class Informer:
         # sentinel = False
         retries = 0
         last_exc: Exception | None = None
+        connected_at: float | None = None
+        synced = live_update = False
+
+        def failures() -> int:
+            """The consecutive failure count, including the one just seen."""
+            stayed_up = connected_at is not None and time.monotonic() - connected_at >= self._watch_healthy_after_sec
+            return 1 if live_update or stayed_up else retries + 1
+
         while self._running:
             if retries >= self._max_watch_retries:
                 logger.error(
@@ -287,6 +301,8 @@ class Informer:
                     "x-actions-run": self._run_id.name,
                     "x-actions-parent-action": self.parent_action_name,
                 }
+                connected_at = time.monotonic()
+                synced = live_update = False
                 if self._actions_client:
                     watcher = self._actions_client.watch_for_updates(
                         actions_service_pb2.WatchForUpdatesRequest(
@@ -301,7 +317,10 @@ class Informer:
                         ),
                     )
                 async for resp in self._with_idle_timeout(cast(AsyncIterator, watcher)):
-                    retries = 0
+                    # A response alone doesn't reset the failure count: a proxy that drops every
+                    # connection lets each new watch deliver its snapshot first, and resetting
+                    # here kept such a watch reconnecting forever. failures() resets it for a
+                    # watch that delivered something new or stayed open.
                     if resp is None:
                         # gRPC deserialization failure: _transform() caught an
                         # exception and returned None instead of raising.  Skip
@@ -312,8 +331,10 @@ class Informer:
                         continue
                     if resp.control_message is not None and resp.control_message.sentinel:
                         logger.info(f"Received Sentinel, for run {self.name}")
+                        synced = True
                         await self._set_ready()
                         continue
+                    live_update = live_update or synced
                     node = await self._action_cache.observe_state(resp.action_update)
                     await self._shared_queue.put(node)
                     # hack to work in the absence of sentinel
@@ -327,7 +348,7 @@ class Informer:
             except asyncio.TimeoutError as e:
                 logger.error(f"Watch timeout: {self.name}, {e}", exc_info=False)
                 last_exc = e
-                retries += 1
+                retries = failures()
             except ConnectError as e:
                 # CANCELED is how our own stop() ends the stream, but also how a
                 # server or a proxy reports a stream it dropped (a connection
@@ -338,11 +359,11 @@ class Informer:
                     return
                 logger.error(f"RPC error: {self.name}, {e}", exc_info=False)
                 last_exc = e
-                retries += 1
+                retries = failures()
             except Exception as e:
                 logger.exception(f"Watch error: {self.name}", exc_info=e)
                 last_exc = e
-                retries += 1
+                retries = failures()
             backoff = jittered(min(self._min_watch_backoff * (2 ** min(retries, 20)), self._max_watch_backoff))
             logger.warning(f"Watch for {self.name} failed, retrying in {backoff:.2f} seconds...")
             await asyncio.sleep(backoff)
