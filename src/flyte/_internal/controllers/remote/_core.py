@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sys
 import threading
 import time
 from asyncio import Event
@@ -260,17 +259,10 @@ class Controller:
         # We will wait for this to signal that the thread is ready
         # Signal the main thread that we're ready
         logger.debug("Background thread initialization complete")
-        if sys.version_info >= (3, 11):
-            async with asyncio.TaskGroup() as tg:
-                for i in range(self._workers):
-                    tg.create_task(self._bg_run(f"worker-{i}"))
-                self._thread_ready.set()
-        else:
-            tasks = []
+        async with asyncio.TaskGroup() as tg:
             for i in range(self._workers):
-                tasks.append(asyncio.create_task(self._bg_run(f"worker-{i}")))
+                tg.create_task(self._bg_run(f"worker-{i}"))
             self._thread_ready.set()
-            await asyncio.gather(*tasks)
 
     def _bg_thread_target(self):
         """Target function for the controller thread that creates and manages its own event loop"""
