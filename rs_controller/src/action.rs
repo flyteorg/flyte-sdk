@@ -11,7 +11,7 @@ use prost::Message;
 use pyo3::prelude::*;
 use tracing::debug;
 
-#[pyclass(eq, eq_int)]
+#[pyclass(eq, eq_int, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionType {
     Task = 0,
@@ -21,7 +21,7 @@ pub enum ActionType {
     Condition = 2,
 }
 
-#[pyclass(dict, get_all, set_all)]
+#[pyclass(dict, get_all, set_all, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Action {
     pub action_id: ActionIdentifier,
