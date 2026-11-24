@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -78,6 +79,11 @@ def test_override_completion_context_collects_previous_overrides() -> None:
     assert context == (["training.epochs=5", "hydra/launcher=flyte"], "+task_env=", "")
 
 
+@pytest.mark.xfail(
+    sys.version_info >= (3, 14),
+    reason="hydra-core 1.3 passes argparse a help object that Python 3.14 rejects; fixed in hydra-core 1.4",
+    raises=ValueError,
+)
 def test_complete_hydra_override_values_uses_hydra_config(hydra_conf) -> None:
     suggestions = _complete_hydra_override_values(
         config_path=str(hydra_conf),
