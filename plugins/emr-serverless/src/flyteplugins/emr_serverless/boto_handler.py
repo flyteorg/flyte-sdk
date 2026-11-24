@@ -63,7 +63,14 @@ class EMRServerlessHandler:
         applications = await self._paginate(
             "list_applications",
             result_key="applications",
-            states=["CREATED", "STARTED", "STOPPED"],
+            states=[
+                "CREATING",
+                "CREATED",
+                "STARTING",
+                "STARTED",
+                "STOPPING",
+                "STOPPED",
+            ],
         )
         for application in applications:
             if application.get("name") == name:

@@ -22,6 +22,14 @@ class TestApplications:
         assert (await handler.get_application("app123"))["state"] == "STARTED"
         assert await handler.find_application_by_name("analytics") == "app123"
         assert await handler.find_application_by_name("missing") is None
+        assert set(paginate.await_args.kwargs["states"]) == {
+            "CREATING",
+            "CREATED",
+            "STARTING",
+            "STARTED",
+            "STOPPING",
+            "STOPPED",
+        }
 
     async def test_create_forwards_every_field(
         self, handler: EMRServerlessHandler, monkeypatch: pytest.MonkeyPatch
