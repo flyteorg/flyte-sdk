@@ -1,3 +1,4 @@
+import sys
 import urllib.parse
 
 from rich import print as rich_print
@@ -117,7 +118,7 @@ class DeviceCodeAuthenticator(Authenticator):
         text = (
             f"To Authenticate, navigate in a browser to the following URL: [blue link={full_uri}]{full_uri}[/blue link]"
         )
-        rich_print(text)
+        rich_print(text, file=sys.stderr)
         try:
             token, refresh_token, expires_in = await token_client.poll_token_endpoint(
                 resp,
