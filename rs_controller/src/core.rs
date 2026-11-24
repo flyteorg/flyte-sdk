@@ -913,6 +913,9 @@ impl CoreBaseController {
             recovered_from: None,
             // This controller does not apply overrides to an action's inputs or code.
             override_applied: false,
+            // Set server-side on the root action only; never set by clients on enqueue.
+            created_by: None,
+            trigger: None,
             spec: Some(spec),
         };
         Ok(EnqueueRequest {
