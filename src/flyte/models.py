@@ -5,8 +5,9 @@ import inspect
 import os
 import pathlib
 import typing
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import MISSING, dataclass, field, fields, replace
 from datetime import datetime, timezone
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Mapping, Optional, Tuple, Type
 
 import rich.repr
@@ -288,6 +289,16 @@ class TaskContext:
             `@trace` swaps out for a per-trace pseudo-action — this stays pinned to the running task for the whole
             execution. Defaults to `action` when not given. Used as `parent_action_name` when submitting trace
             records, so trace bookkeeping nests under the real running task — not the outer trace's pseudo-action.
+        retry_attempt: The 0-based retry attempt of this execution, as delivered with the invocation. Runtimes that
+            run several executions in one long-lived process, such as reusable containers, set it per invocation
+            because the process environment there belongs to the worker and goes stale between executions. When it
+            is unset, `attempt_number` falls back to the `FLYTE_ATTEMPT_NUMBER` environment variable.
+        invocation_env: The env vars delivered with this execution, as a read-only mapping. Runtimes that run
+            several executions in one process, such as reusable containers, set it per invocation instead of
+            writing to `os.environ`, which is shared by every execution running in that process. It is empty when
+            the runtime delivered nothing, in which case `os.environ` is the execution's environment. It is left out
+            of the repr, since run-level env vars can hold secrets. This field is internal for now: how task code
+            should read per-invocation env vars is not settled yet.
     """
 
     action: ActionID
@@ -311,6 +322,8 @@ class TaskContext:
     in_driver_literal_conversion: bool = False
     run_start_time: Optional[datetime] = field(default_factory=lambda: datetime.now(timezone.utc))
     task_action: ActionID | None = None
+    retry_attempt: int | None = None
+    invocation_env: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}), repr=False)
     #: Numbers sub-action calls launched from `action`; controllers call `_call_counter.next(call_key)`.
     #: Living on the context rather than the process-wide controller means every attempt starts from zero,
     #: even when a reusable container runs many actions and retries through one controller.
@@ -322,6 +335,19 @@ class TaskContext:
         # but task_action must keep pointing at the real running task; replace() copies it across those swaps.
         if self.task_action is None:
             object.__setattr__(self, "task_action", self.action)
+        # Keep a read-only copy, so neither task code nor whoever passed the mapping in can change it later.
+        object.__setattr__(self, "invocation_env", MappingProxyType(dict(self.invocation_env or {})))
+
+    def __rich_repr__(self):
+        # rich.repr.auto builds the repr from every __init__ argument, which would print invocation_env.
+        # Follow each field's repr flag instead, and like rich.repr.auto leave out values equal to the default.
+        for f in fields(self):
+            if not f.repr:
+                continue
+            if f.default is MISSING:
+                yield f.name, getattr(self, f.name)
+            else:
+                yield f.name, getattr(self, f.name), f.default
 
     def replace(self, **kwargs) -> TaskContext:
         # A new action (e.g. a @trace scope) numbers its own sub-actions; same-action copies (groups) share.
@@ -386,11 +412,17 @@ class TaskContext:
     @property
     def attempt_number(self) -> int:
         """
-        Get the attempt number for the current task.
+        Get the attempt number for the current task. It is 0 on the first attempt, 1 on the first retry, and so on.
+
+        The value delivered with the current invocation (`retry_attempt`) wins over the `FLYTE_ATTEMPT_NUMBER`
+        environment variable, because a reusable container's worker process keeps the environment it started
+        with and runs many executions, including retries, under it.
 
         Returns:
             The attempt number.
         """
+        if self.retry_attempt is not None:
+            return self.retry_attempt
         return int(os.environ.get("FLYTE_ATTEMPT_NUMBER", "0"))
 
     # ------------------------------------------------------------------
