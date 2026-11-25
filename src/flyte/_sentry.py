@@ -156,7 +156,7 @@ def _is_user_actionable_connect_error(exc: BaseException) -> bool:
 
 # Reason phrases of the 2xx statuses other than 200 OK ("Created", "Accepted",
 # "No Content", ...). connectrpc only maps a handful of HTTP statuses onto Connect
-# codes (401/403/404/429/502/503/504); everything else falls through to
+# codes (400/401/403/404/429/502/503/504); everything else falls through to
 # `ConnectWireError.from_http_status`, which produces Code.UNKNOWN and keeps the
 # stdlib reason phrase as the whole message. The numeric status is dropped on the
 # floor, so matching the phrase is the only way back to the status class.
@@ -175,10 +175,28 @@ _NON_OK_SUCCESS_HTTP_PHRASES: frozenset[str] = frozenset(
 _NOT_A_CONNECT_ROUTE_HTTP_PHRASES: frozenset[str] = frozenset({HTTPStatus.METHOD_NOT_ALLOWED.phrase})
 
 
+# 400 Bad Request, the one synthesized status that does not arrive as Code.UNKNOWN.
+# `_http_status_code_to_error` (connectrpc/_protocol.py) maps eight statuses onto Connect
+# codes and `from_http_status` applies that mapping whether or not a Connect body was ever
+# parsed -- so "the code is UNKNOWN" is not the same test as "this error was synthesized
+# from the HTTP status", it merely coincides for the unmapped statuses. Seven of the eight
+# (401/403/404/429/502/503/504) land in _USER_ACTIONABLE_CONNECT_CODES and are filtered by
+# `_is_user_actionable_connect_error` before they ever reach here. 400 -> INTERNAL is the
+# only one that does not, INTERNAL being deliberately held back as real-bug signal.
+#
+# It gets here the same way a 405 does: `validate_response` calls `from_http_status` only
+# for a non-200 whose content-type is *not* `application/json`, and a Connect handler
+# answers every error with a Connect JSON body. A 400 the backend itself produced carries
+# `code: invalid_argument` off the wire, becomes Code.INVALID_ARGUMENT, and is filtered as
+# user-actionable long before this predicate runs.
+_SYNTHESIZED_BAD_REQUEST_PHRASE: str = HTTPStatus.BAD_REQUEST.phrase
+
+
 # connectrpc rejects a response whose content-type it cannot decode with
 # `ConnectError(Code.UNKNOWN, f"invalid content-type: '{received}'; expecting '{wanted}'")`
 # (connectrpc/_protocol_connect.py). A `text/*` body — an HTML error page, a login
-# page, a plain-text banner — is never something a Connect handler produces.
+# page, a plain-text banner — is never something a Connect handler produces, and
+# neither is a 200 with no content-type at all. `[^']*` deliberately matches `''`.
 _INVALID_CONTENT_TYPE_RE = re.compile(r"^invalid content-type: '(?P<received>[^']*)'")
 
 
@@ -186,10 +204,10 @@ def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
     """A Connect RPC was answered by something that is not a Connect endpoint.
 
     A Connect endpoint replies to a unary POST with 200 and a Connect body, or
-    with an error status and a Connect JSON body. Two response shapes prove the
+    with an error status and a Connect JSON body. Each of these response shapes proves the
     request never reached a Connect handler at all — a proxy, VPN appliance,
-    captive portal, corporate TLS interceptor or misrouted ingress absorbed it and
-    answered on the backend's behalf:
+    captive portal, corporate TLS interceptor, local tunnel/port-forward or
+    misrouted ingress absorbed it and answered on the backend's behalf:
 
     1. A *success* status that is not 200 (204 No Content, 202 Accepted, ...).
        FLYTE-SDK-77 / FLYTE-SDK-78: `flyte run` and `flyte deploy` from a Windows
@@ -207,19 +225,32 @@ def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
        `_NOT_A_CONNECT_ROUTE_HTTP_PHRASES`), and a Connect handler always accepts
        POST on its procedure path, so a 405 means the request was routed somewhere
        that serves no Connect procedures.
+    4. A 400 Bad Request synthesized from the status rather than read off the wire.
+       FLYTE-SDK-7C: `flyte deploy` surfaced as `RuntimeSystemError: Upload failed
+       for ...: Bad Request`, 29 events concentrated on three corporate laptops
+       across four SDK releases — correlated with the machine, not with our code.
+       A 400 the backend produced arrives as `code: invalid_argument` in a Connect
+       JSON body and never reaches here; see `_SYNTHESIZED_BAD_REQUEST_PHRASE`.
+    5. A 200 with an *empty* content-type. FLYTE-SDK-93: `flyte run` through a local
+       tunnel (`https://127.0.0.1:18444/...ClusterService/SelectCluster`) got
+       `invalid content-type: ''; expecting 'application/proto'`, surfaced as
+       `RuntimeSystemError: Upload failed for ...`. A Connect handler always sets
+       `application/proto` or `application/json` on a unary success, and the SDK's
+       codec has no say in what the server sends back, so a missing header means
+       whatever answered was not a Connect handler.
 
     Either way it is endpoint/network configuration, never a Python-SDK logic bug,
     and the SDK cannot recover from it.
 
-    Deliberately narrow on both counts. connectrpc synthesizes the same shape of
-    error — Code.UNKNOWN, no details, message == a bare HTTP reason phrase — for
-    *any* unmapped status, including 500 ("Internal Server Error"). Those stay
-    reported: a 500 means something genuinely broke and is worth tracking
-    (FLYTE-SDK-64 and friends are exactly that, and are real backend signal). Only
-    the 2xx class is unambiguously "an intermediary answered instead of the
-    backend". Likewise only `text/*` is filtered on content-type, so an
-    `application/*` mismatch — which would point at a codec bug on our side —
-    keeps reporting.
+    Deliberately narrow on every count. connectrpc synthesizes the same shape of
+    error — no details, message == a bare HTTP reason phrase — for *any* status it
+    cannot read a Connect body for, including 500 ("Internal Server Error"). Those
+    stay reported: a 500 means something genuinely broke and is worth tracking
+    (FLYTE-SDK-64 and friends are exactly that, and are real backend signal), and
+    unlike a 400 they are not concentrated on particular machines. Likewise only
+    `text/*` and an empty content-type are filtered — neither can be produced by a
+    Connect handler — so an `application/*` mismatch, which would point at a codec
+    bug on our side, keeps reporting.
     """
     try:
         from connectrpc.code import Code
@@ -229,16 +260,23 @@ def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
     if not isinstance(exc, ConnectError):
         return False
     # A Connect JSON error body always yields either an explicit code or details;
-    # from_http_status and the content-type check both yield UNKNOWN with neither.
-    if getattr(exc, "code", None) is not Code.UNKNOWN:
-        return False
+    # from_http_status and the content-type check yield neither.
     if getattr(exc, "details", ()):
         return False
+    code = getattr(exc, "code", None)
     message = (getattr(exc, "message", "") or "").strip()
+    if code is not Code.UNKNOWN:
+        # A status connectrpc maps onto a code. Only the exact reason phrase it
+        # synthesizes proves the body was not a Connect error body, and 400 is the
+        # only mapped status that gets this far.
+        return code is Code.INTERNAL and message == _SYNTHESIZED_BAD_REQUEST_PHRASE
     if message in _NON_OK_SUCCESS_HTTP_PHRASES or message in _NOT_A_CONNECT_ROUTE_HTTP_PHRASES:
         return True
     content_type = _INVALID_CONTENT_TYPE_RE.match(message)
-    return bool(content_type and content_type.group("received").strip().lower().startswith("text/"))
+    if content_type is None:
+        return False
+    received = content_type.group("received").strip().lower()
+    return received == "" or received.startswith("text/")
 
 
 def _is_exhausted_upload_retry(exc: BaseException) -> bool:
@@ -290,7 +328,7 @@ def _is_exhausted_upload_retry(exc: BaseException) -> bool:
 # does exist its value is not portable -- 122 on Linux, 69 on macOS and the BSDs. Look it up rather than
 # hard-coding it, and drop it when the platform has no such thing, so importing this module cannot fail.
 _USER_ENVIRONMENT_OSERROR_ERRNOS: frozenset[int] = frozenset(
-    code for code in (errno.ENOSPC, getattr(errno, "EDQUOT", None)) if code is not None
+    code for code in (errno.ENOSPC, errno.EADDRINUSE, getattr(errno, "EDQUOT", None)) if code is not None
 )
 
 
@@ -309,7 +347,15 @@ def _is_user_environment_oserror(exc: BaseException) -> bool:
     `create_bundle` writes the code-bundle tarball. The user has to free space or
     get their quota raised either way; neither is something the SDK can fix.
 
-    Kept to those two. The neighbouring errnos are not the same story: EACCES,
+    EADDRINUSE ("Address already in use") surfaces from asyncio.start_server in
+    the PKCE authenticator's local OAuth callback server (pkce.py
+    _create_callback_server) when the redirect-URI port is already bound -- a
+    stale/concurrent login flow or another local process is holding it
+    (FLYTE-SDK-53 / FLYTE-SDK-57). The port comes from the backend's redirect_uri
+    config, so the SDK can't pick a different one; freeing the port is a
+    user-environment action, not an SDK bug.
+
+    Kept to those three. The neighbouring errnos are not the same story: EACCES,
     EPERM and EROFS can equally mean the SDK wrote somewhere it should not have,
     and EMFILE / ENFILE would hide a file-descriptor leak of our own.
     """
