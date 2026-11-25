@@ -198,9 +198,8 @@ def test_node_cache_rejects_another_checkpoint(store, tmp_path):
 
 def test_node_cache_ignores_a_crashed_download_of_another_checkpoint(store, tmp_path):
     """Shards left by an unfinished download are removed, not loaded with the new weights."""
-    from safetensors.torch import save_file
-
     from flyte.extras.model_streamer import ModelStreamer
+    from safetensors.torch import save_file
 
     _, model = store
     cache = tmp_path / "cache"
@@ -220,9 +219,8 @@ def test_node_cache_ignores_a_crashed_download_of_another_checkpoint(store, tmp_
 
 def test_node_cache_reads_only_indexed_tensors(store, tmp_path):
     """With an index, a tensor or file it doesn't list is never loaded."""
-    from safetensors.torch import save_file
-
     from flyte.extras.model_streamer import ModelStreamer
+    from safetensors.torch import save_file
 
     _, model = store
     cache = tmp_path / "cache"

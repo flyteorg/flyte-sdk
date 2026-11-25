@@ -95,7 +95,7 @@ Methods that need no separate weights work the same way, without a draft model â
 useful floor to measure a real speculator against:
 
 ```python
-speculative_config={"method": "ngram", "num_speculative_tokens": 5, "prompt_lookup_max": 4}
+speculative_config = {"method": "ngram", "num_speculative_tokens": 5, "prompt_lookup_max": 4}
 ```
 
 Two caveats worth knowing up front:
