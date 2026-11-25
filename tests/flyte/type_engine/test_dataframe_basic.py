@@ -553,3 +553,57 @@ def test_flyte_run_with_pd_dataframe_to_flyte_dataframe(sample_dataframe):
     run = flyte.run(df_to_fdf, df=sample_dataframe)
     result = run.outputs()[0]
     assert isinstance(result, DataFrame)
+
+
+@pytest.mark.asyncio
+async def test_dataframe_handlers_file_uri(tmp_path, sample_dataframe):
+    """Test that all basic dataframe encoders and decoders work with file:// URIs."""
+    pa = pytest.importorskip("pyarrow")
+    from flyteidl2.core.literals_pb2 import StructuredDatasetMetadata
+
+    from flyte.io._dataframe.basic_dfs import (
+        CSV,
+        PARQUET,
+        ArrowToParquetEncodingHandler,
+        CSVToPandasDecodingHandler,
+        PandasToCSVEncodingHandler,
+        PandasToParquetEncodingHandler,
+        ParquetToArrowDecodingHandler,
+        ParquetToPandasDecodingHandler,
+    )
+
+    # 1. PandasToParquet encode with file:// URI
+    p_uri = (tmp_path / "parquet_ds").as_uri()
+    df = DataFrame.wrap_df(val=sample_dataframe, uri=p_uri)
+    encoder = PandasToParquetEncodingHandler()
+    sd = await encoder.encode(df, types_pb2.StructuredDatasetType(format=PARQUET))
+    assert sd.uri == p_uri
+
+    # 2. ParquetToPandas decode with file:// URI
+    decoder = ParquetToPandasDecodingHandler()
+    df_read = await decoder.decode(sd, StructuredDatasetMetadata())
+    assert df_read.equals(sample_dataframe)
+
+    # 3. ParquetToArrow decode with file:// URI
+    arrow_decoder = ParquetToArrowDecodingHandler()
+    table_read = await arrow_decoder.decode(sd, StructuredDatasetMetadata())
+    assert table_read.num_rows == len(sample_dataframe)
+
+    # 4. ArrowToParquet encode with file:// URI
+    a_uri = (tmp_path / "arrow_ds").as_uri()
+    df_arrow = DataFrame.wrap_df(val=pa.Table.from_pandas(sample_dataframe), uri=a_uri)
+    arrow_encoder = ArrowToParquetEncodingHandler()
+    sd_arrow = await arrow_encoder.encode(df_arrow, types_pb2.StructuredDatasetType(format=PARQUET))
+    assert sd_arrow.uri == a_uri
+
+    # 5. PandasToCSV encode with file:// URI
+    csv_uri = (tmp_path / "csv_ds").as_uri()
+    df_csv = DataFrame.wrap_df(val=sample_dataframe, uri=csv_uri)
+    csv_encoder = PandasToCSVEncodingHandler()
+    sd_csv = await csv_encoder.encode(df_csv, types_pb2.StructuredDatasetType(format=CSV))
+    assert sd_csv.uri == csv_uri
+
+    # 6. CSVToPandas decode with file:// URI
+    csv_decoder = CSVToPandasDecodingHandler()
+    csv_read = await csv_decoder.decode(sd_csv, StructuredDatasetMetadata())
+    assert len(csv_read) == len(sample_dataframe)
