@@ -1,0 +1,87 @@
+[project]
+name = "flyteplugins-sagemaker"
+dynamic = ["version"]
+description = "AWS SageMaker managed jobs plugin for Flyte"
+readme = "README.md"
+authors = [{ name = "Rohit Sharma", email = "rohitrsh@gmail.com" }]
+requires-python = ">=3.11"
+dependencies = [
+    "flyte[connector]",
+    "boto3>=1.34",
+    "xxhash>=3.5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+    "pytest-asyncio>=0.26.0",
+]
+
+[project.entry-points."flyte.connectors"]
+boto = "flyteplugins.sagemaker.connectors:BotoConnector"
+sagemaker-training = "flyteplugins.sagemaker.connectors:SageMakerTrainingJobConnector"
+sagemaker-training-task = "flyteplugins.sagemaker.connectors:SageMakerTrainingTaskConnector"
+sagemaker-processing = "flyteplugins.sagemaker.connectors:SageMakerProcessingJobConnector"
+sagemaker-processing-task = "flyteplugins.sagemaker.connectors:SageMakerProcessingTaskConnector"
+sagemaker-transform = "flyteplugins.sagemaker.connectors:SageMakerTransformJobConnector"
+sagemaker-hyperparameter-tuning = "flyteplugins.sagemaker.connectors:SageMakerHyperParameterTuningJobConnector"
+sagemaker-inference-recommender = "flyteplugins.sagemaker.connectors:SageMakerInferenceRecommenderJobConnector"
+sagemaker-endpoint = "flyteplugins.sagemaker.connectors:SageMakerEndpointConnector"
+
+[build-system]
+requires = ["setuptools", "setuptools_scm"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+license-files = ["licenses/*.txt", "LICENSE"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["flyteplugins*"]
+
+[tool.setuptools_scm]
+root = "../../"
+
+[tool.pytest.ini_options]
+norecursedirs = []
+log_cli = true
+log_cli_level = 20
+markers = []
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+branch = true
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "PLW",
+    "YTT",
+    "ASYNC",
+    "C4",
+    "T10",
+    "EXE",
+    "ISC",
+    "LOG",
+    "PIE",
+    "Q",
+    "RSE",
+    "FLY",
+    "PGH",
+    "PLC",
+    "PLE",
+    "PLW",
+    "FURB",
+    "RUF",
+]
+ignore = ["PGH003", "PLC0415"]
+
+[tool.uv.sources]
+flyte = { path = "../../", editable = true }
