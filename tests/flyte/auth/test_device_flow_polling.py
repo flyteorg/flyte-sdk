@@ -6,7 +6,11 @@ import httpx
 import pytest
 
 from flyte.remote._client.auth import _token_client as token_client
-from flyte.remote._client.auth._authenticators.device_code import _verification_uri_with_code
+from flyte.remote._client.auth._authenticators.device_code import (
+    DeviceCodeAuthenticator,
+    _verification_uri_with_code,
+)
+from flyte.remote._client.auth._client_config import ClientConfig, StaticClientConfigStore
 from flyte.remote._client.auth.errors import AuthenticationError
 
 
@@ -159,6 +163,35 @@ class TestPolling:
             return httpx.Response(200, json={"access_token": "a", "refresh_token": "r", "expires_in": 42})
 
         assert await _poll(_session(handler)) == ("a", "r", 42)
+
+
+@pytest.mark.asyncio
+async def test_device_flow_prompts_on_stderr(capsys):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/device":
+            return httpx.Response(200, json=_device_code().model_dump())
+        return httpx.Response(200, json={"access_token": "a", "refresh_token": "r", "expires_in": 42})
+
+    authenticator = DeviceCodeAuthenticator(
+        endpoint="https://example.com",
+        cfg_store=StaticClientConfigStore(
+            ClientConfig(
+                token_endpoint="https://login.example.com/token",
+                authorization_endpoint="https://login.example.com/authorize",
+                redirect_uri="http://localhost:12345/callback",
+                client_id="client",
+                device_authorization_endpoint="https://login.example.com/device",
+            )
+        ),
+        http_session=_session(handler),
+        disable_keyring=True,
+    )
+
+    await authenticator.refresh_credentials()
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "https://login.example.com/device?user_code=BCDF-GHJK" in captured.err
 
 
 class TestVerificationUri:
