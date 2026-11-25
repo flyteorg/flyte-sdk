@@ -92,7 +92,12 @@ class S3(Storage):
     credential provider so profile-based auth can be used. This requires that the `boto3` library
     is installed.
 
-    3. If neither of the above applies, obstore uses the default AWS credential chain
+    3. If a container credential endpoint is available (for example on EMR
+    Serverless, ECS, or EKS Pod Identity), Flyte configures the same refreshable
+    boto3-backed provider so `AWS_CONTAINER_CREDENTIALS_FULL_URI` and
+    `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` are honored.
+
+    4. If none of the above applies, obstore uses the default AWS credential chain
     (for remote runs this commonly resolves via workload identity / IAM attached to
     the service account and then IMDS fallbacks where applicable).
     """
@@ -165,6 +170,15 @@ class S3(Storage):
         )
         return Boto3CredentialProvider(session=boto3_session)
 
+    def _build_s3_credential_provider_from_default_chain(
+        self,
+        region: str | None,
+    ) -> typing.Any:
+        import boto3.session
+        from obstore.auth.boto3 import Boto3CredentialProvider
+
+        return Boto3CredentialProvider(session=boto3.session.Session(region_name=region))
+
     def get_fsspec_kwargs(self, anonymous: bool = False, **kwargs) -> typing.Dict[str, typing.Any]:
         kwargs = super().get_fsspec_kwargs(anonymous=anonymous, **kwargs)
 
@@ -205,6 +219,18 @@ class S3(Storage):
                 except Exception as e:
                     logger.warning(
                         "Unable to initialize S3 profile/config credential provider (%s). "
+                        "Falling back to default AWS credential resolution.",
+                        e,
+                    )
+            elif os.getenv("AWS_CONTAINER_CREDENTIALS_FULL_URI") or os.getenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"):
+                try:
+                    kwargs["credential_provider"] = self._build_s3_credential_provider_from_default_chain(
+                        region=self.region or os.getenv("AWS_REGION", None),
+                    )
+                    logger.debug("Using S3 credentials from the AWS container credential endpoint")
+                except Exception as e:
+                    logger.warning(
+                        "Unable to initialize S3 container credential provider (%s). "
                         "Falling back to default AWS credential resolution.",
                         e,
                     )
