@@ -23,7 +23,12 @@ def is_terminal_phase(phase: TaskExecution.Phase) -> bool:
     """
     Return true if the phase is terminal.
     """
-    return phase in [TaskExecution.SUCCEEDED, TaskExecution.ABORTED, TaskExecution.FAILED]
+    return phase in [
+        TaskExecution.SUCCEEDED,
+        TaskExecution.ABORTED,
+        TaskExecution.FAILED,
+        TaskExecution.RETRYABLE_FAILED,
+    ]
 
 
 def convert_to_flyte_phase(state: str) -> TaskExecution.Phase:
