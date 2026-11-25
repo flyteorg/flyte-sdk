@@ -48,6 +48,9 @@ branch = true
 
 [tool.ruff]
 line-length = 120
+# Repo tooling such as the docstring checker parses every file with an older
+# Python than this plugin requires, so keep the syntax 3.11-compatible.
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "PLW", "YTT", "ASYNC", "C4", "T10", "EXE", "ISC", "LOG", "PIE", "Q", "RSE", "FLY", "PGH", "PLC", "PLE", "PLW", "FURB", "RUF"]
