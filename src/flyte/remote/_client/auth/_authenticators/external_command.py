@@ -12,12 +12,13 @@ class AsyncCommandAuthenticator(Authenticator):
     This Authenticator retrieves access_token using the provided command
     """
 
-    def __init__(self, command: typing.Optional[typing.List[str]], **kwargs):
+    def __init__(self, command: typing.Optional[typing.List[str]], header_key: str = "authorization", **kwargs):
         """
         Initialize the command authenticator.
 
         Args:
             command: List of command strings to execute for token retrieval
+            header_key: Header the token is sent in (defaults to "authorization")
             kwargs: Additional keyword arguments passed to the base Authenticator
                 **Keyword Arguments passed to base Authenticator**:
             endpoint: The endpoint URL for authentication
@@ -29,14 +30,13 @@ class AsyncCommandAuthenticator(Authenticator):
             verify: Whether to verify SSL certificates (default: True)
             ca_cert_path: Optional path to CA certificate file
                 **Additional Keyword Arguments**:
-            header_key: Header key to use for authentication (defaults to "authorization")
             proxy_env: Environment variables for the command execution
             proxy_timeout: Timeout for command execution
         """
         self._cmd = command
         if not self._cmd:
             raise AuthenticationError("Command cannot be empty for command authenticator")
-        super().__init__(**kwargs)
+        super().__init__(default_header_key=header_key, **kwargs)
 
     async def _do_refresh_credentials(self) -> Credentials:
         """

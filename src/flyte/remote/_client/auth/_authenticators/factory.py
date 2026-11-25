@@ -236,6 +236,7 @@ def get_async_proxy_authenticator(endpoint: str, *, proxy_command: typing.List[s
     Returns:
         An authenticator instance for proxy authentication
     """
-    return AsyncCommandAuthenticator(
-        endpoint=endpoint, command=proxy_command, header_key="proxy-authorization", **kwargs
-    )
+    # kwargs is shared with the regular authenticator, so its own `command` would collide with proxy_command.
+    kwargs.pop("command", None)
+    kwargs.setdefault("header_key", "proxy-authorization")
+    return AsyncCommandAuthenticator(endpoint=endpoint, command=proxy_command, **kwargs)
