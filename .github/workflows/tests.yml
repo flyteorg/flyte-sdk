@@ -91,7 +91,11 @@ jobs:
     strategy:
       matrix:
         plugin: ${{ fromJson(needs.discover-plugins.outputs.plugins) }}
-        python-version: ["3.12"]
+        python-version: ["3.12", "3.14"]
+        exclude:
+          # The ray plugin supports Python below 3.13 only (requires-python in plugins/ray).
+          - plugin: ray
+            python-version: "3.14"
       fail-fast: false
     defaults:
       run:
