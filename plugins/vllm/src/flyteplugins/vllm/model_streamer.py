@@ -53,6 +53,7 @@ _KEYS = (_PATH, _CHUNK_SIZE, _MAX_CONCURRENCY, _NODE_CACHE_DIR)
 # take in turn, and a marker naming the checkpoint once it is fully downloaded.
 _CACHE_LOCK = ".flyte-weights.lock"
 _CACHE_COMPLETE = ".flyte-weights-complete"
+_INDEX = "model.safetensors.index.json"
 
 
 async def engine_args(
@@ -165,7 +166,8 @@ def _weights_from_node_cache(
     rest find the marker and go straight to reading. A marker naming a
     different checkpoint is an error, so a reused directory never loads the
     wrong weights. A download that dies leaves no marker, and the next rank
-    downloads again.
+    removes its weight files and downloads again, so shards left by a crashed
+    download of another checkpoint are never read.
     """
     import fcntl
 
@@ -185,28 +187,39 @@ def _weights_from_node_cache(
                         "Use a separate node_cache_dir for each checkpoint."
                     )
             else:
+                for stale in _weight_files(cache):
+                    stale.unlink()
                 _run_in_thread(lambda: streamer.download(cache))
                 marker.write_text(streamer.path)
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
 
-    # The index, when there is one, decides which file each tensor is read
-    # from, the same as streaming; otherwise the first copy of a name wins.
-    files = sorted(cache.glob("*.safetensors"))
-    index = cache / "model.safetensors.index.json"
+    # The index, when there is one, decides which files are read and which file
+    # each tensor comes from, the same as streaming; otherwise the first copy
+    # of a name wins.
+    index = cache / _INDEX
     owner: dict[str, str] | None = None
     if index.exists():
         import json
 
         owner = json.loads(index.read_text()).get("weight_map")
+    if owner is not None:
+        files = [cache / name for name in sorted(set(owner.values()))]
+    else:
+        files = sorted(cache.glob("*.safetensors"))
     seen: set[str] = set()
     for file in files:
         with safe_open(str(file), framework="pt") as f:
             for name in f.keys():
-                if name in seen or (owner is not None and owner.get(name, file.name) != file.name):
+                if name in seen or (owner is not None and owner.get(name) != file.name):
                     continue
                 seen.add(name)
                 yield name, f.get_tensor(name)
+
+
+def _weight_files(cache: pathlib.Path) -> list[pathlib.Path]:
+    """The files in the node cache that `_weights_from_node_cache` would read."""
+    return [*cache.glob("*.safetensors"), *cache.glob("*.safetensors.index.json")]
 
 
 def _run_in_thread(make_coro: typing.Callable[[], typing.Awaitable[typing.Any]]) -> typing.Any:

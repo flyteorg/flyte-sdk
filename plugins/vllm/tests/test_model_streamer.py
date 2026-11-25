@@ -196,6 +196,43 @@ def test_node_cache_rejects_another_checkpoint(store, tmp_path):
         dict(model_streamer._weights_from_node_cache(ModelStreamer(REMOTE), cache))
 
 
+def test_node_cache_ignores_a_crashed_download_of_another_checkpoint(store, tmp_path):
+    """Shards left by an unfinished download are removed, not loaded with the new weights."""
+    from safetensors.torch import save_file
+
+    from flyte.extras.model_streamer import ModelStreamer
+
+    _, model = store
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    # No completion marker: another checkpoint's download died partway.
+    save_file({"stale.weight": torch.ones(2)}, str(cache / "model-00009-of-00009.safetensors"))
+    save_file({"model.norm.weight": torch.zeros(32)}, str(cache / "model-00001-of-00002.safetensors"))
+
+    got = dict(model_streamer._weights_from_node_cache(ModelStreamer(REMOTE), cache))
+
+    want = _want(model)
+    assert got.keys() == want.keys()
+    for name, tensor in want.items():
+        assert torch.equal(got[name], tensor), name
+    assert not (cache / "model-00009-of-00009.safetensors").exists()
+
+
+def test_node_cache_reads_only_indexed_tensors(store, tmp_path):
+    """With an index, a tensor or file it doesn't list is never loaded."""
+    from safetensors.torch import save_file
+
+    from flyte.extras.model_streamer import ModelStreamer
+
+    _, model = store
+    cache = tmp_path / "cache"
+    dict(model_streamer._weights_from_node_cache(ModelStreamer(REMOTE), cache))
+    save_file({"extra.weight": torch.ones(2)}, str(cache / "zz-extra.safetensors"))
+
+    got = dict(model_streamer._weights_from_node_cache(ModelStreamer(REMOTE), cache))
+    assert got.keys() == _want(model).keys()
+
+
 def test_loader_reads_node_cache_through_vllm(store, tmp_path):
     pytest.importorskip("vllm")
     from vllm.config.load import LoadConfig
