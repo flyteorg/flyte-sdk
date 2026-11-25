@@ -79,7 +79,7 @@ def tool(
     _register_hermes_tool(tool_name, desc, parameters, wrapper)
     try:
         wrapper.__hermes_registered__ = True
-    except (AttributeError, TypeError):  # pragma: no cover - slotted/immutable callable
+    except AttributeError, TypeError:  # pragma: no cover - slotted/immutable callable
         pass
     return wrapper
 
@@ -135,5 +135,5 @@ def _as_content(result: typing.Any) -> str:
         return result
     try:
         return json.dumps(result, default=str)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return str(result)
