@@ -706,7 +706,8 @@ class File(BaseModel, Generic[T], SerializableType):
         """
         if storage.is_remote(self.path):
             return False
-        return local_path is None or Path(local_path).absolute() == Path(self.path).absolute()
+        src_path = _to_local_path(self.path)
+        return local_path is None or Path(local_path).absolute() == Path(src_path).absolute()
 
     # TODO sync needs to be implemented
     async def download(self, local_path: Optional[Union[str, Path]] = None) -> str:
@@ -746,7 +747,7 @@ class File(BaseModel, Generic[T], SerializableType):
         """
         if self._is_already_at(local_path):
             # Skip copying
-            return self.path
+            return _to_local_path(self.path)
 
         if local_path is None:
             local_path = storage.get_random_local_path(file_path_or_file_name=self.path)
@@ -762,20 +763,21 @@ class File(BaseModel, Generic[T], SerializableType):
 
         # If it's already a local file, just copy it
         if "file" in fs.protocol:
+            src_local_path = _to_local_path(self.path)
             # Apply directory logic for local-to-local copies
             local_path_for_copy = local_path
             if isinstance(local_path, str):
                 local_path_obj = Path(local_path)
                 # Check if it's a directory or ends with separator
                 if local_path.endswith(os.sep) or (local_path_obj.exists() and local_path_obj.is_dir()):
-                    remote_filename = Path(self.path).name
+                    remote_filename = Path(src_local_path).name
                     local_path_for_copy = str(local_path_obj / remote_filename)
 
             # Ensure parent directory exists
             Path(local_path_for_copy).parent.mkdir(parents=True, exist_ok=True)
 
             # Use aiofiles for async copy
-            async with aiofiles.open(self.path, "rb") as src:
+            async with aiofiles.open(src_local_path, "rb") as src:
                 async with aiofiles.open(local_path_for_copy, "wb") as dst:
                     await dst.write(await src.read())
             return str(local_path_for_copy)
@@ -821,7 +823,7 @@ class File(BaseModel, Generic[T], SerializableType):
         """
         if self._is_already_at(local_path):
             # Skip copying
-            return self.path
+            return _to_local_path(self.path)
 
         if local_path is None:
             local_path = storage.get_random_local_path(file_path_or_file_name=self.path)
@@ -837,19 +839,20 @@ class File(BaseModel, Generic[T], SerializableType):
 
         # If it's already a local file, just copy it
         if "file" in fs.protocol:
+            src_local_path = _to_local_path(self.path)
             # Apply directory logic for local-to-local copies
             local_path_for_copy = local_path
             if isinstance(local_path, str):
                 local_path_obj = Path(local_path)
                 # Check if it's a directory or ends with separator
                 if local_path.endswith(os.sep) or (local_path_obj.exists() and local_path_obj.is_dir()):
-                    remote_filename = Path(self.path).name
+                    remote_filename = Path(src_local_path).name
                     local_path_for_copy = str(local_path_obj / remote_filename)
 
             # Ensure parent directory exists
             Path(local_path_for_copy).parent.mkdir(parents=True, exist_ok=True)
 
-            shutil.copy2(self.path, local_path_for_copy)
+            shutil.copy2(src_local_path, local_path_for_copy)
             return str(local_path_for_copy)
 
         # Otherwise download from remote using sync functionality

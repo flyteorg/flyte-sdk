@@ -4,6 +4,7 @@ import asyncio
 import filecmp
 import os
 import tempfile
+from pathlib import Path
 from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -551,6 +552,33 @@ async def test_download_local_file_to_other_path_still_copies(tmp_path):
     sync_target = tmp_path / "out" / "sync.bin"
     assert file.download_sync(str(sync_target)) == str(sync_target)
     assert filecmp.cmp(local_file, sync_target, shallow=False)
+
+
+@pytest.mark.asyncio
+async def test_download_file_uri(tmp_path):
+    """File initialized with a file:// URI should download and download_sync correctly."""
+    local_file = tmp_path / "hello.txt"
+    local_file.write_text("hello file uri")
+    file_uri = local_file.as_uri()
+    f = File(path=file_uri)
+
+    # Without target path: should resolve to existing local path without copying
+    downloaded_async = await f.download()
+    assert Path(downloaded_async) == local_file
+    assert os.path.exists(downloaded_async)
+
+    downloaded_sync = f.download_sync()
+    assert Path(downloaded_sync) == local_file
+    assert os.path.exists(downloaded_sync)
+
+    # With target path: should copy correctly to target
+    async_target = tmp_path / "downloaded_async.txt"
+    assert await f.download(str(async_target)) == str(async_target)
+    assert async_target.read_text() == "hello file uri"
+
+    sync_target = tmp_path / "downloaded_sync.txt"
+    assert f.download_sync(str(sync_target)) == str(sync_target)
+    assert sync_target.read_text() == "hello file uri"
 
 
 # Tests for lazy_uploader functionality

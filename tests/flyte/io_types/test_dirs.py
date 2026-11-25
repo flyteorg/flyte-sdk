@@ -523,6 +523,34 @@ async def test_download_dir_with_no_local_target_local(tmp_path, tmp_dir_structu
     assert downloaded_path.endswith(suffix)
 
 
+@pytest.mark.asyncio
+async def test_download_dir_uri(tmp_path):
+    """Dir initialized with a file:// URI should download and download_sync correctly."""
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "file.txt").write_text("hello dir uri")
+    dir_uri = src_dir.as_uri()
+    d = Dir(path=dir_uri)
+
+    # Without target path: should resolve to existing local path
+    downloaded_async = await d.download()
+    assert pathlib.Path(downloaded_async) == src_dir
+    assert os.path.exists(downloaded_async)
+
+    downloaded_sync = d.download_sync()
+    assert pathlib.Path(downloaded_sync) == src_dir
+    assert os.path.exists(downloaded_sync)
+
+    # With target path: should copy tree correctly to target
+    async_target = tmp_path / "dst_async"
+    assert await d.download(str(async_target)) == str(async_target)
+    assert (async_target / "file.txt").read_text() == "hello dir uri"
+
+    sync_target = tmp_path / "dst_sync"
+    assert d.download_sync(str(sync_target)) == str(sync_target)
+    assert (sync_target / "file.txt").read_text() == "hello dir uri"
+
+
 # Tests for lazy_uploader functionality
 
 

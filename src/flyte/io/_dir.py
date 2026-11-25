@@ -27,7 +27,7 @@ from typing_extensions import TypeVar
 import flyte.storage as storage
 from flyte._context import internal_ctx
 from flyte._logging import logger
-from flyte.io._file import File
+from flyte.io._file import File, _to_local_path
 from flyte.syncify import syncify
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 
@@ -534,18 +534,19 @@ class Dir(BaseModel, Generic[T], SerializableType):
             The absolute path to the downloaded directory
         """
         # If no local_path specified, create a unique path + append source directory name
+        src_path = _to_local_path(self.path) if not storage.is_remote(self.path) else self.path
         if local_path is None:
             unique_path = storage.get_random_local_path()
-            source_dirname = Path(self.path).name  # will need to be updated for windows
+            source_dirname = Path(src_path).name  # will need to be updated for windows
             local_dest = str(Path(unique_path) / source_dirname)
         else:
             # If local_path is specified, use it directly (contents go into it)
             local_dest = str(local_path)
 
         if not storage.is_remote(self.path):
-            if not local_path or local_path == self.path:
+            if not local_path or local_path == self.path or Path(local_dest).resolve() == Path(src_path).resolve():
                 # Skip copying
-                return self.path
+                return src_path
             else:
                 # Shell out to a thread to copy
                 import asyncio
@@ -553,7 +554,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
                 async def copy_tree():
                     loop = asyncio.get_event_loop()
-                    await loop.run_in_executor(None, lambda: shutil.copytree(self.path, local_dest, dirs_exist_ok=True))
+                    await loop.run_in_executor(None, lambda: shutil.copytree(src_path, local_dest, dirs_exist_ok=True))
 
                 await copy_tree()
                 return local_dest
@@ -591,23 +592,24 @@ class Dir(BaseModel, Generic[T], SerializableType):
             The absolute path to the downloaded directory
         """
         # If no local_path specified, create a unique path + append source directory name
+        src_path = _to_local_path(self.path) if not storage.is_remote(self.path) else self.path
         if local_path is None:
             unique_path = storage.get_random_local_path()
-            source_dirname = Path(self.path).name
+            source_dirname = Path(src_path).name
             local_dest = str(Path(unique_path) / source_dirname)
         else:
             # If local_path is specified, use it directly (contents go into it)
             local_dest = str(local_path)
 
         if not storage.is_remote(self.path):
-            if not local_path or local_path == self.path:
+            if not local_path or local_path == self.path or Path(local_dest).resolve() == Path(src_path).resolve():
                 # Skip copying
-                return self.path
+                return src_path
             else:
                 # Shell out to a thread to copy
                 import shutil
 
-                shutil.copytree(self.path, local_dest, dirs_exist_ok=True)
+                shutil.copytree(src_path, local_dest, dirs_exist_ok=True)
                 return local_dest
 
         # Route through the obstore-aware storage.get (via syncify) rather than the raw fsspec
