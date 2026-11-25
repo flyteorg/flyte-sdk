@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 import flyte
@@ -214,3 +216,50 @@ def test_environment_include_usable_in_set():
 def test_environment_empty_include_is_hashable():
     env = Environment(name="inc_empty_hash")
     assert hash(env.include) == hash(())
+
+
+def _import_user_module(tmp_path, monkeypatch, project_dir, module_name):
+    # Mirrors how agents and `flyte deploy` load user code: the env is built
+    # while `importlib.import_module` is on the stack.
+    import importlib
+    import sys
+
+    project_dir.mkdir(parents=True)
+    (project_dir / f"{module_name}.py").write_text(
+        "from flyte._environment import Environment\n"
+        f"env = Environment(name='{module_name}', include=('agent.yaml',))\n"
+    )
+    monkeypatch.syspath_prepend(str(project_dir))
+    monkeypatch.delitem(sys.modules, module_name, raising=False)
+    return importlib.import_module(module_name).env
+
+
+def test_declaring_file_under_a_directory_named_flyte(tmp_path, monkeypatch):
+    # FLYTE-SDK-AH: a project under `/home/flyte/...` was mistaken for SDK code,
+    # so the stack walk skipped it and anchored `include` at stdlib `importlib/`.
+    project = tmp_path / "home" / "flyte" / "aon-agents" / "summarize"
+    env = _import_user_module(tmp_path, monkeypatch, project, "ah_agent_module")
+    assert env._declaring_file == str(project / "ah_agent_module.py")
+
+
+def test_declaring_file_is_never_a_stdlib_file(tmp_path, monkeypatch):
+    import importlib
+
+    project = tmp_path / "proj"
+    env = _import_user_module(tmp_path, monkeypatch, project, "ah_plain_module")
+    assert env._declaring_file == str(project / "ah_plain_module.py")
+    assert not env._declaring_file.startswith(os.path.dirname(importlib.__file__))
+
+
+def test_is_sdk_file_uses_package_location_not_path_substring(tmp_path):
+    import flyte
+    from flyte._environment import _is_sdk_file, _is_stdlib_file
+
+    assert _is_sdk_file(os.path.abspath(flyte.__file__))
+    assert not _is_sdk_file(str(tmp_path / "home" / "flyte" / "agent.py"))
+    assert not _is_sdk_file(str(tmp_path / "site-packages" / "flyte_user_pkg" / "x.py"))
+
+    import importlib
+
+    assert _is_stdlib_file(os.path.abspath(importlib.__file__))
+    assert not _is_stdlib_file(str(tmp_path / "agent.py"))

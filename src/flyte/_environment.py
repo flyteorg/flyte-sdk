@@ -3,6 +3,8 @@ from __future__ import annotations
 import inspect
 import os
 import re
+import sys
+import sysconfig
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
@@ -27,6 +29,40 @@ def list_loaded_environments() -> List[Environment]:
 
 def is_snake_or_kebab_with_numbers(s: str) -> bool:
     return re.fullmatch(r"^[a-z0-9]+([_-][a-z0-9]+)*$", s) is not None
+
+
+def _is_within(path: str, root: str) -> bool:
+    path, root = os.path.normcase(path), os.path.normcase(root)
+    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def _is_sdk_file(abs_path: str) -> bool:
+    """
+    Whether `abs_path` belongs to the flyte SDK (or a flyteplugins package).
+
+    Decided by package location, not by a substring of the path: a user whose
+    project lives under a directory named `flyte` (e.g. a `/home/flyte` home
+    directory) must not have their own files mistaken for SDK internals.
+    """
+    roots = [os.path.dirname(os.path.abspath(__file__))]
+    plugins = sys.modules.get("flyteplugins")
+    roots.extend(os.path.abspath(p) for p in getattr(plugins, "__path__", []) or [])
+    return any(_is_within(abs_path, root) for root in roots)
+
+
+def _is_stdlib_file(abs_path: str) -> bool:
+    """
+    Whether `abs_path` is part of the Python standard library (e.g. `importlib`).
+
+    Installed packages can sit under the stdlib directory (`site-packages` in
+    many Docker images), so those are not counted as stdlib.
+    """
+    paths = sysconfig.get_paths()
+    stdlib = [paths[k] for k in ("stdlib", "platstdlib") if paths.get(k)]
+    installed = [paths[k] for k in ("purelib", "platlib") if paths.get(k)]
+    if any(_is_within(abs_path, p) for p in installed) or "site-packages" in abs_path or "dist-packages" in abs_path:
+        return False
+    return any(_is_within(abs_path, p) for p in stdlib)
 
 
 @rich.repr.auto
@@ -101,7 +137,7 @@ class Environment:
             if not os.path.exists(filename):
                 return False
             abs_path = os.path.abspath(filename)
-            return ("site-packages/flyte" not in abs_path and "/flyte/" not in abs_path) or "/examples/" in abs_path
+            return not _is_sdk_file(abs_path) and not _is_stdlib_file(abs_path)
 
         frame = inspect.currentframe()
         while frame is not None:
@@ -115,8 +151,6 @@ class Environment:
             filename = frame_info.filename
             if is_user_file(filename):
                 return os.path.abspath(filename)
-
-        import sys
 
         main = sys.modules.get("__main__")
         main_file = getattr(main, "__file__", None)
