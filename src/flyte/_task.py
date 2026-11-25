@@ -23,6 +23,7 @@ from typing import (
     overload,
 )
 
+from flyte._namespace import validate_namespace
 from flyte._pod import PodTemplate
 from flyte.errors import (
     RuntimeSystemError,
@@ -121,6 +122,7 @@ class TaskTemplate(Generic[P, R, F]):
         env_vars: Optional The environment variables to set for the task.
         secrets: Optional The secrets that will be injected into the task at runtime.
         service_account: Optional Kubernetes service account to run task pods as.
+        namespace: Optional existing Kubernetes namespace in which to run this task. Requires backend support.
         timeout: Optional The timeout for the task.
         max_inline_io_bytes: Maximum allowed size (in bytes) for all inputs and outputs passed directly to the task
             (e.g., primitives, strings, dicts). Does not apply to files, directories, or dataframes.
@@ -145,6 +147,7 @@ class TaskTemplate(Generic[P, R, F]):
     env_vars: Optional[Dict[str, str]] = None
     secrets: Optional[SecretRequest] = None
     service_account: Optional[str] = None
+    namespace: Optional[str] = field(default=None, kw_only=True)
     timeout: Optional[TimeoutType] = None
     pod_template: Optional[Union[str, PodTemplate]] = None
     report: bool = False
@@ -203,6 +206,7 @@ class TaskTemplate(Generic[P, R, F]):
         if self.short_name == "":
             # If short_name is not set, use the name of the task
             self.short_name = self.name
+        validate_namespace(self.namespace)
         if self.service_account is not None and not isinstance(self.service_account, str):
             raise TypeError(f"Expected service_account to be of type str, got {type(self.service_account)}")
 
@@ -462,6 +466,7 @@ class TaskTemplate(Generic[P, R, F]):
         env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[SecretRequest] = None,
         service_account: Optional[str] = None,
+        namespace: Optional[str] = None,
         max_inline_io_bytes: int | None = None,
         pod_template: Optional[Union[str, PodTemplate]] = None,
         queue: Optional[str] = None,
@@ -486,6 +491,7 @@ class TaskTemplate(Generic[P, R, F]):
             env_vars: Optional override for the environment variables to set for the task.
             secrets: Optional override for the secrets that will be injected into the task at runtime.
             service_account: Optional override for the Kubernetes service account to run task pods as.
+            namespace: Optional override for the existing Kubernetes namespace to run this task in.
             max_inline_io_bytes: Optional override for the maximum allowed size (in bytes) for all inputs and outputs
                 passed directly to the task.
             pod_template: Optional override for the pod template to use for the task.
@@ -529,6 +535,10 @@ class TaskTemplate(Generic[P, R, F]):
                     "Cannot override secrets when reusable is set."
                     " Reusable tasks will use the parent env's secrets. You can disable reusability and "
                     "override secrets if needed. (set reusable='off')"
+                )
+            if namespace is not None:
+                raise ValueError(
+                    "Cannot override namespace when reusable is set. Set reusable='off' to use another namespace."
                 )
             if service_account is not None:
                 raise ValueError(
@@ -578,6 +588,7 @@ class TaskTemplate(Generic[P, R, F]):
             env_vars=env_vars,
             secrets=secrets,
             service_account=service_account,
+            namespace=namespace if namespace is not None else self.namespace,
             max_inline_io_bytes=max_inline_io_bytes,
             pod_template=pod_template or self.pod_template,
             interruptible=interruptible,

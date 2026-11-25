@@ -18,6 +18,7 @@ from google.protobuf.wrappers_pb2 import BoolValue
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
 from flyte._logging import logger
+from flyte._namespace import TASK_NAMESPACE_CONFIG_KEY
 from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate, _clone_with_primary
 from flyte._secret import SecretRequest, secrets_from_request
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
@@ -196,6 +197,8 @@ def get_proto_task(
     )
 
     extra_config: typing.Dict[str, str] = {INPUT_ORDER_CONFIG_KEY: ",".join(task.native_interface.inputs)}
+    if task.namespace is not None:
+        extra_config[TASK_NAMESPACE_CONFIG_KEY] = task.namespace
     pod = None
     container = None
     sql = task.sql(serialize_context)

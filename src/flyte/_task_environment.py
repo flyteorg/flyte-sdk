@@ -26,6 +26,7 @@ from ._environment import Environment
 from ._image import Image
 from ._link import Link
 from ._logging import logger
+from ._namespace import validate_namespace
 from ._pod import PodTemplate
 from ._resources import Resources
 from ._retry import RetryStrategy
@@ -85,6 +86,7 @@ class TaskEnvironment(Environment):
     | `env_vars` | Yes | — | Yes* |
     | `secrets` | Yes | — | Yes* |
     | `service_account` | Yes | Yes | Yes* |
+    | `namespace` | Yes | Yes | Yes* |
     | `cache` | Yes | Yes | Yes |
     | `pod_template` | Yes | Yes | Yes |
     | `reusable` | Yes | — | Yes |
@@ -136,6 +138,8 @@ class TaskEnvironment(Environment):
             `task.override()` requires passing `reusable="off"` in the same call.
             Additionally, `secrets` cannot be overridden at the `@env.task`
             decorator level when the environment has `reusable` set.
+        namespace: Existing Kubernetes namespace to run task workloads in. Also settable in
+            `@env.task(namespace=...)` and `task.override(namespace=...)`. Requires backend support.
         queue: Queue name for scheduling. Queues identify specific partitions
             of your compute infrastructure (e.g., a particular cluster in a
             multi-cluster deployment) and are configured as part of your Flyte/Union
@@ -150,11 +154,13 @@ class TaskEnvironment(Environment):
     reusable: ReusePolicy | None = None
     plugin_config: Optional[Any] = None
     queue: Optional[str] = None
+    namespace: Optional[str] = field(default=None, kw_only=True)
 
     _tasks: Dict[str, TaskTemplate] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        validate_namespace(self.namespace)
         if self.reusable is not None and self.plugin_config is not None:
             from flyte.extend import TaskPluginRegistry
 
@@ -178,6 +184,7 @@ class TaskEnvironment(Environment):
         interruptible: Optional[bool] = None,
         include: Optional[Tuple[str, ...]] = None,
         service_account: Optional[str] = None,
+        namespace: Optional[str] = None,
         **kwargs: Any,
     ) -> TaskEnvironment:
         """
@@ -209,6 +216,7 @@ class TaskEnvironment(Environment):
             env_vars: Override environment variables.
             secrets: Override secrets.
             service_account: Override the Kubernetes service account.
+            namespace: Override the existing Kubernetes namespace.
             depends_on: Override deployment dependencies.
             description: Override the description.
             interruptible: Override the interruptible setting.
@@ -242,6 +250,8 @@ class TaskEnvironment(Environment):
             kwargs["secrets"] = secrets
         if service_account is not None:
             kwargs["service_account"] = service_account
+        if namespace is not None:
+            kwargs["namespace"] = namespace
         if depends_on is not None:
             kwargs["depends_on"] = depends_on
         if description is not None:
@@ -268,6 +278,7 @@ class TaskEnvironment(Environment):
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
         queue: Optional[str] = None,
         service_account: Optional[str] = None,
+        namespace: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
         links: Tuple[Link, ...] | Link = (),
         task_resolver: Any | None = None,
@@ -298,6 +309,7 @@ class TaskEnvironment(Environment):
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
         queue: Optional[str] = None,
         service_account: Optional[str] = None,
+        namespace: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
         links: Tuple[Link, ...] | Link = (),
         task_resolver: Any | None = None,
@@ -345,6 +357,7 @@ class TaskEnvironment(Environment):
             links: Optional A tuple of links to associate with the task. Links can be used to provide
                 additional context or information about the task. Links should implement the `flyte.Link` protocol
             interruptible: Optional Whether the task is interruptible, defaults to environment setting.
+            namespace: Existing Kubernetes namespace for this task, overriding the environment default.
             queue: Optional queue name to use for this task. If not set, the environment's queue will be used.
             entrypoint: Optionally mark a task as an entrypoint task, defaults to False. This serves as a hint to
                 the UI.
@@ -361,6 +374,8 @@ class TaskEnvironment(Environment):
         if self.reusable is not None:
             if pod_template is not None:
                 raise ValueError("Cannot set pod_template when environment is reusable.")
+            if namespace is not None and namespace != self.namespace:
+                raise ValueError("Cannot override namespace when environment is reusable.")
             if service_account is not None and service_account != self.service_account:
                 raise ValueError("Cannot override service_account when environment is reusable.")
 
@@ -411,6 +426,7 @@ class TaskEnvironment(Environment):
                 env_vars=self.env_vars,
                 secrets=self.secrets,
                 service_account=service_account or self.service_account,
+                namespace=namespace if namespace is not None else self.namespace,
                 pod_template=pod_template or self.pod_template,
                 parent_env=weakref.ref(self),
                 parent_env_name=self.name,
