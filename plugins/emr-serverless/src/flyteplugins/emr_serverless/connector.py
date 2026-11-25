@@ -45,6 +45,7 @@ _ENV_FALLBACK_BUCKET = "FLYTE_AWS_S3_BUCKET"
 _ENV_ALLOWED_REGIONS = "FLYTE_EMR_ALLOWED_REGIONS"
 _ENV_ALLOWED_EXECUTION_ROLE_ARNS = "FLYTE_EMR_ALLOWED_EXECUTION_ROLE_ARNS"
 _ENV_ALLOWED_APPLICATION_IDS = "FLYTE_EMR_ALLOWED_APPLICATION_IDS"
+_ENV_ALLOWED_APPLICATION_NAME_PREFIXES = "FLYTE_EMR_ALLOWED_APPLICATION_NAME_PREFIXES"
 
 
 def _policy_values(name: str) -> frozenset[str]:
@@ -58,6 +59,7 @@ class EMRServerlessConnectorPolicy:
     allowed_regions: frozenset[str]
     allowed_execution_role_arns: frozenset[str]
     allowed_application_ids: frozenset[str]
+    allowed_application_name_prefixes: frozenset[str]
 
     @classmethod
     def from_env(cls) -> EMRServerlessConnectorPolicy:
@@ -66,6 +68,7 @@ class EMRServerlessConnectorPolicy:
             allowed_regions=_policy_values(_ENV_ALLOWED_REGIONS),
             allowed_execution_role_arns=_policy_values(_ENV_ALLOWED_EXECUTION_ROLE_ARNS),
             allowed_application_ids=_policy_values(_ENV_ALLOWED_APPLICATION_IDS),
+            allowed_application_name_prefixes=_policy_values(_ENV_ALLOWED_APPLICATION_NAME_PREFIXES),
         )
 
     @staticmethod
@@ -93,7 +96,10 @@ class EMRServerlessConnectorPolicy:
         if application_id in self.allowed_application_ids:
             return True
         tags = application.get("tags") or {}
-        return all(tags.get(key) == value for key, value in FLYTE_TAGS.items())
+        name = str(application.get("name") or "")
+        return all(tags.get(key) == value for key, value in FLYTE_TAGS.items()) and any(
+            name.startswith(prefix) for prefix in self.allowed_application_name_prefixes
+        )
 
 
 def _restore_integer_values(value: Any) -> Any:
@@ -284,7 +290,8 @@ class EMRServerlessConnector(AsyncConnector[EMRServerlessJobMetadata]):
         if not policy.authorizes_application(application_id, application):
             raise ValueError(
                 f"EMR Serverless application {application_id!r} is neither listed in "
-                f"{_ENV_ALLOWED_APPLICATION_IDS} nor tagged as connector-owned"
+                f"{_ENV_ALLOWED_APPLICATION_IDS} nor tagged as connector-owned under "
+                f"a prefix configured by {_ENV_ALLOWED_APPLICATION_NAME_PREFIXES}"
             )
 
     @staticmethod

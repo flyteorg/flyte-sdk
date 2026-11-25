@@ -95,12 +95,15 @@ allowlists for task-selected AWS resources:
 - `FLYTE_EMR_ALLOWED_REGIONS`
 - `FLYTE_EMR_ALLOWED_EXECUTION_ROLE_ARNS`
 - `FLYTE_EMR_ALLOWED_APPLICATION_IDS` for approved shared applications
+- `FLYTE_EMR_ALLOWED_APPLICATION_NAME_PREFIXES` for connector-created
+  application namespaces
 
 An existing application not listed by ID is accepted only when it carries the
-connector-owned `Application=flyte` and `ManagedBy=flyte-connector` tags.
-Connector-created applications always receive those tags, and task tags cannot
-override them. This authorization check runs before application start, image
-synchronization, or job submission.
+connector-owned `Application=flyte` and `ManagedBy=flyte-connector` tags and its
+name starts with an operator-approved prefix. Connector-created applications
+always receive those tags, and task tags cannot override them. This
+authorization check runs before application start, image synchronization, or
+job submission.
 
 Creation forwards release, type, capacities, network, runtime, scheduler,
 automatic-stop, architecture, image, and tags. Existing applications can

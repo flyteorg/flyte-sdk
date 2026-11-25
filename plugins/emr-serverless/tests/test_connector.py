@@ -26,6 +26,7 @@ from flyteplugins.emr_serverless import (
 from flyteplugins.emr_serverless.connector import (
     _ENV_ALLOW_CREATE_APPLICATION,
     _ENV_ALLOWED_APPLICATION_IDS,
+    _ENV_ALLOWED_APPLICATION_NAME_PREFIXES,
     _ENV_ALLOWED_EXECUTION_ROLE_ARNS,
     _ENV_ALLOWED_REGIONS,
     _ENV_APPLICATION_NAME_PREFIX,
@@ -107,6 +108,7 @@ def connector_policy(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(_ENV_ALLOWED_REGIONS, "us-west-2")
     monkeypatch.setenv(_ENV_ALLOWED_EXECUTION_ROLE_ARNS, "role")
     monkeypatch.setenv(_ENV_ALLOWED_APPLICATION_IDS, "app123,resolved123")
+    monkeypatch.setenv(_ENV_ALLOWED_APPLICATION_NAME_PREFIXES, "managed-,flyte-v2-e2e-emr-")
 
 
 @pytest.mark.asyncio
@@ -187,7 +189,16 @@ class TestCreate:
         aws.start_application_if_needed.assert_not_awaited()
         aws.start_job_run.assert_not_awaited()
 
-        aws.get_application.return_value["tags"] = dict(FLYTE_TAGS)
+        aws.get_application.return_value.update(
+            {
+                "name": "unapproved-app",
+                "tags": dict(FLYTE_TAGS),
+            }
+        )
+        with pytest.raises(ValueError, match=_ENV_ALLOWED_APPLICATION_NAME_PREFIXES):
+            await connector.create(template(config), "s3://bucket/run/a0")
+
+        aws.get_application.return_value["name"] = "managed-app"
         result = await connector.create(template(config), "s3://bucket/run/a0")
         assert result.application_id == "app123"
         aws.start_job_run.assert_awaited_once()
