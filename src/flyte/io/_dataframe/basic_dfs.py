@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import TypeVar
 
 from flyteidl2.core import literals_pb2, types_pb2
-from fsspec.core import split_protocol, strip_protocol
+from fsspec.core import strip_protocol
 
 import flyte.storage as storage
 from flyte._logging import logger
@@ -15,6 +15,7 @@ from flyte.io._dataframe.dataframe import (
     DataFrameDecoder,
     DataFrameEncoder,
 )
+from flyte.io._file import _to_local_path
 
 if typing.TYPE_CHECKING:
     import pandas as pd
@@ -34,11 +35,15 @@ def _get_pandas_path_and_filesystem(uri: str, anonymous: bool = False) -> typing
     are obstore-shaped, so they must not be handed to pandas as `storage_options`: pandas would resolve
     the protocol through the global fsspec registry, which may hold s3fs or adlfs.
 
+    For local URIs (including file://), this returns the resolved local filesystem path and None.
+
     For anything else this is `(uri, None)`, which lets pandas resolve the path itself.
     """
     if uri.startswith(("s3://", "abfs://", "abfss://")):
         filesystem = storage.get_underlying_filesystem(path=uri, anonymous=anonymous)
         return filesystem._strip_protocol(uri), filesystem
+    if not storage.is_remote(uri):
+        return _to_local_path(uri), None
     return uri, None
 
 
@@ -60,7 +65,7 @@ class PandasToCSVEncodingHandler(DataFrameEncoder):
             uri = typing.cast(str, dataframe.uri)
 
         if not storage.is_remote(uri):
-            Path(uri).mkdir(parents=True, exist_ok=True)
+            Path(_to_local_path(uri)).mkdir(parents=True, exist_ok=True)
         csv_file = storage.join(uri, "data.csv")
         df = typing.cast(pd.DataFrame, dataframe.val)
         path, filesystem = _get_pandas_path_and_filesystem(csv_file)
@@ -134,7 +139,7 @@ class PandasToParquetEncodingHandler(DataFrameEncoder):
             uri = typing.cast(str, dataframe.uri)
 
         if not storage.is_remote(uri):
-            Path(uri).mkdir(parents=True, exist_ok=True)
+            Path(_to_local_path(uri)).mkdir(parents=True, exist_ok=True)
         path, filesystem = _get_pandas_path_and_filesystem(storage.join(uri, f"{0:05}"))
         df = typing.cast(pd.DataFrame, dataframe.val)
         df.to_parquet(
@@ -195,7 +200,7 @@ class ArrowToParquetEncodingHandler(DataFrameEncoder):
             uri = typing.cast(str, dataframe.uri)
 
         if not storage.is_remote(uri):
-            Path(uri).mkdir(parents=True, exist_ok=True)
+            Path(_to_local_path(uri)).mkdir(parents=True, exist_ok=True)
         path = storage.join(uri, f"{0:05}")
         filesystem = storage.get_underlying_filesystem(path=path)
         pq.write_table(dataframe.val, strip_protocol(path), filesystem=filesystem)
@@ -218,8 +223,8 @@ class ParquetToArrowDecodingHandler(DataFrameDecoder):
 
         path = flyte_value.uri
         if not storage.is_remote(path):
+            path = _to_local_path(path)
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-            _, path = split_protocol(path)
 
         columns = None
         if current_task_metadata.structured_dataset_type and current_task_metadata.structured_dataset_type.columns:
