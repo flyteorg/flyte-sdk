@@ -89,6 +89,19 @@ an application, omit it and set `application_name`. Creation is denied unless
 the connector has `FLYTE_EMR_ALLOW_CREATE_APPLICATION=true`. An optional
 `FLYTE_EMR_APPLICATION_NAME_PREFIX` is prepended once.
 
+The connector fails closed unless its operator configures exact comma-separated
+allowlists for task-selected AWS resources:
+
+- `FLYTE_EMR_ALLOWED_REGIONS`
+- `FLYTE_EMR_ALLOWED_EXECUTION_ROLE_ARNS`
+- `FLYTE_EMR_ALLOWED_APPLICATION_IDS` for approved shared applications
+
+An existing application not listed by ID is accepted only when it carries the
+connector-owned `Application=flyte` and `ManagedBy=flyte-connector` tags.
+Connector-created applications always receive those tags, and task tags cannot
+override them. This authorization check runs before application start, image
+synchronization, or job submission.
+
 Creation forwards release, type, capacities, network, runtime, scheduler,
 automatic-stop, architecture, image, and tags. Existing applications can
 synchronize the task or explicit image when `sync_image=True`.
@@ -141,8 +154,9 @@ iam:PassRole
 ```
 
 Narrow these permissions when lookup, creation, image synchronization, or
-Pythonic staging is not enabled. The execution role needs access to task code,
-inputs, outputs, logs, and job data.
+Pythonic staging is not enabled. Scope `iam:PassRole` to the same roles listed
+in `FLYTE_EMR_ALLOWED_EXECUTION_ROLE_ARNS`. The execution role needs access to
+task code, inputs, outputs, logs, and job data.
 
 ## Flytekit parity matrix
 

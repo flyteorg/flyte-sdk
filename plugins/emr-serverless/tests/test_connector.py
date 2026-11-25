@@ -25,8 +25,12 @@ from flyteplugins.emr_serverless import (
 )
 from flyteplugins.emr_serverless.connector import (
     _ENV_ALLOW_CREATE_APPLICATION,
+    _ENV_ALLOWED_APPLICATION_IDS,
+    _ENV_ALLOWED_EXECUTION_ROLE_ARNS,
+    _ENV_ALLOWED_REGIONS,
     _ENV_APPLICATION_NAME_PREFIX,
     _ENV_ENTRYPOINT_BUCKET,
+    FLYTE_TAGS,
     _execution_token,
 )
 
@@ -98,8 +102,103 @@ def execution_metadata() -> TaskExecutionMetadata:
     )
 
 
+@pytest.fixture(autouse=True)
+def connector_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(_ENV_ALLOWED_REGIONS, "us-west-2")
+    monkeypatch.setenv(_ENV_ALLOWED_EXECUTION_ROLE_ARNS, "role")
+    monkeypatch.setenv(_ENV_ALLOWED_APPLICATION_IDS, "app123,resolved123")
+
+
 @pytest.mark.asyncio
 class TestCreate:
+    async def test_operator_policy_is_required_before_aws_calls(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        connector = EMRServerlessConnector()
+        aws = handler()
+        monkeypatch.setattr(connector, "_get_handler", lambda region: aws)
+        monkeypatch.delenv(_ENV_ALLOWED_EXECUTION_ROLE_ARNS)
+
+        with pytest.raises(ValueError, match=_ENV_ALLOWED_EXECUTION_ROLE_ARNS):
+            await connector.create(
+                template(
+                    EMRServerless(
+                        execution_role_arn="role",
+                        application_id="app123",
+                        sync_image=False,
+                    )
+                ),
+                "s3://bucket/run/a0",
+            )
+
+        aws.get_application.assert_not_awaited()
+        aws.start_job_run.assert_not_awaited()
+
+    async def test_operator_policy_rejects_region_and_role(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        connector = EMRServerlessConnector()
+        aws = handler()
+        monkeypatch.setattr(connector, "_get_handler", lambda region: aws)
+
+        with pytest.raises(ValueError, match="execution role"):
+            await connector.create(
+                template(
+                    EMRServerless(
+                        execution_role_arn="other-role",
+                        application_id="app123",
+                        sync_image=False,
+                    )
+                ),
+                "s3://bucket/run/a0",
+            )
+
+        with pytest.raises(ValueError, match="AWS region"):
+            await connector.create(
+                template(
+                    EMRServerless(
+                        execution_role_arn="role",
+                        application_id="app123",
+                        region="us-east-1",
+                        sync_image=False,
+                    )
+                ),
+                "s3://bucket/run/a0",
+            )
+
+        aws.start_job_run.assert_not_awaited()
+
+    async def test_existing_application_requires_allowlist_or_owner_tags(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        connector = EMRServerlessConnector()
+        aws = handler()
+        monkeypatch.setattr(connector, "_get_handler", lambda region: aws)
+        monkeypatch.delenv(_ENV_ALLOWED_APPLICATION_IDS)
+        aws.get_application.return_value = {
+            "applicationId": "app123",
+            "state": "STARTED",
+            "tags": {},
+        }
+        config = EMRServerless(
+            execution_role_arn="role",
+            application_id="app123",
+            spark_job_driver=EMRServerlessSparkJobDriver("s3://bucket/main.py"),
+            sync_image=False,
+        )
+
+        with pytest.raises(ValueError, match="connector-owned"):
+            await connector.create(template(config), "s3://bucket/run/a0")
+
+        aws.start_application_if_needed.assert_not_awaited()
+        aws.start_job_run.assert_not_awaited()
+
+        aws.get_application.return_value["tags"] = dict(FLYTE_TAGS)
+        result = await connector.create(template(config), "s3://bucket/run/a0")
+        assert result.application_id == "app123"
+        aws.start_job_run.assert_awaited_once()
+
+    async def test_managed_tags_cannot_be_overridden(self) -> None:
+        assert EMRServerlessConnector._merge_tags({"Application": "other", "ManagedBy": "other", "team": "data"}) == {
+            "Application": "flyte",
+            "ManagedBy": "flyte-connector",
+            "team": "data",
+        }
+
     async def test_script_spark_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
         config = EMRServerless(
             execution_role_arn="role",
@@ -238,7 +337,7 @@ class TestCreate:
             "spark_job_driver": EMRServerlessSparkJobDriver("s3://bucket/main.py"),
         }
         await connector.create(template(EMRServerless(**base)), "s3://bucket/run/a0")
-        aws.get_application.assert_not_awaited()
+        aws.get_application.assert_awaited_once()
 
         configured = EMRServerless(
             **base,

@@ -42,6 +42,58 @@ _ENV_ALLOW_CREATE_APPLICATION = "FLYTE_EMR_ALLOW_CREATE_APPLICATION"
 _ENV_APPLICATION_NAME_PREFIX = "FLYTE_EMR_APPLICATION_NAME_PREFIX"
 _ENV_ENTRYPOINT_BUCKET = "FLYTE_EMR_ENTRYPOINT_S3_BUCKET"
 _ENV_FALLBACK_BUCKET = "FLYTE_AWS_S3_BUCKET"
+_ENV_ALLOWED_REGIONS = "FLYTE_EMR_ALLOWED_REGIONS"
+_ENV_ALLOWED_EXECUTION_ROLE_ARNS = "FLYTE_EMR_ALLOWED_EXECUTION_ROLE_ARNS"
+_ENV_ALLOWED_APPLICATION_IDS = "FLYTE_EMR_ALLOWED_APPLICATION_IDS"
+
+
+def _policy_values(name: str) -> frozenset[str]:
+    return frozenset(value.strip() for value in os.getenv(name, "").split(",") if value.strip())
+
+
+@dataclass(frozen=True)
+class EMRServerlessConnectorPolicy:
+    """Operator-controlled boundary for task-supplied AWS resources."""
+
+    allowed_regions: frozenset[str]
+    allowed_execution_role_arns: frozenset[str]
+    allowed_application_ids: frozenset[str]
+
+    @classmethod
+    def from_env(cls) -> EMRServerlessConnectorPolicy:
+        """Load exact allowlists from the connector process environment."""
+        return cls(
+            allowed_regions=_policy_values(_ENV_ALLOWED_REGIONS),
+            allowed_execution_role_arns=_policy_values(_ENV_ALLOWED_EXECUTION_ROLE_ARNS),
+            allowed_application_ids=_policy_values(_ENV_ALLOWED_APPLICATION_IDS),
+        )
+
+    @staticmethod
+    def _require_allowed(value: str, allowed: frozenset[str], env_name: str, resource: str) -> None:
+        if not allowed:
+            raise ValueError(f"The connector operator must configure {env_name} before accepting {resource}")
+        if value not in allowed:
+            raise ValueError(f"{resource} {value!r} is not allowed by {env_name}")
+
+    def validate_region(self, region: str) -> None:
+        """Reject task-selected regions outside the operator policy."""
+        self._require_allowed(region, self.allowed_regions, _ENV_ALLOWED_REGIONS, "AWS region")
+
+    def validate_execution_role(self, role_arn: str) -> None:
+        """Reject task-selected execution roles outside the operator policy."""
+        self._require_allowed(
+            role_arn,
+            self.allowed_execution_role_arns,
+            _ENV_ALLOWED_EXECUTION_ROLE_ARNS,
+            "execution role",
+        )
+
+    def authorizes_application(self, application_id: str, application: Dict[str, Any]) -> bool:
+        """Return whether an existing application is explicitly allowed or connector-owned."""
+        if application_id in self.allowed_application_ids:
+            return True
+        tags = application.get("tags") or {}
+        return all(tags.get(key) == value for key, value in FLYTE_TAGS.items())
 
 
 def _restore_integer_values(value: Any) -> Any:
@@ -94,8 +146,15 @@ class EMRServerlessConnector(AsyncConnector[EMRServerlessJobMetadata]):
         "--conf spark.executorEnv.PYSPARK_PYTHON=/usr/bin/python3.11"
     )
 
+    def __init__(self, policy: Optional[EMRServerlessConnectorPolicy] = None) -> None:
+        super().__init__()
+        self._policy = policy
+
     def _get_handler(self, region: Optional[str] = None) -> EMRServerlessHandler:
         return EMRServerlessHandler(region)
+
+    def _get_policy(self) -> EMRServerlessConnectorPolicy:
+        return self._policy or EMRServerlessConnectorPolicy.from_env()
 
     @staticmethod
     def _extract_config(task_template: TaskTemplate) -> EMRServerless:
@@ -150,8 +209,8 @@ class EMRServerlessConnector(AsyncConnector[EMRServerlessJobMetadata]):
 
     @staticmethod
     def _merge_tags(tags: Optional[Dict[str, str]]) -> Dict[str, str]:
-        result = dict(FLYTE_TAGS)
-        result.update(tags or {})
+        result = dict(tags or {})
+        result.update(FLYTE_TAGS)
         return result
 
     @staticmethod
@@ -214,6 +273,19 @@ class EMRServerlessConnector(AsyncConnector[EMRServerlessJobMetadata]):
             image_configuration=desired,
         )
         return None
+
+    @staticmethod
+    async def _authorize_existing_application(
+        handler: EMRServerlessHandler,
+        policy: EMRServerlessConnectorPolicy,
+        application_id: str,
+    ) -> None:
+        application = await handler.get_application(application_id)
+        if not policy.authorizes_application(application_id, application):
+            raise ValueError(
+                f"EMR Serverless application {application_id!r} is neither listed in "
+                f"{_ENV_ALLOWED_APPLICATION_IDS} nor tagged as connector-owned"
+            )
 
     @staticmethod
     def _execution_env(metadata: Optional[TaskExecutionMetadata]) -> Dict[str, str]:
@@ -315,7 +387,13 @@ class EMRServerlessConnector(AsyncConnector[EMRServerlessJobMetadata]):
     ) -> EMRServerlessJobMetadata:
         """Resolve the application, request startup, and submit or defer the job."""
         config = self._extract_config(task_template)
+        policy = self._get_policy()
+        policy.validate_execution_role(config.execution_role_arn)
         handler = self._get_handler(config.region)
+        region = config.region or handler.client.meta.region_name
+        if not region:
+            raise ValueError("Unable to resolve the AWS region for EMR Serverless")
+        policy.validate_region(region)
         application_id = config.application_id
         created_application = False
         pending_image_configuration = None
@@ -349,13 +427,15 @@ class EMRServerlessConnector(AsyncConnector[EMRServerlessJobMetadata]):
                 auto_stop_config=config.auto_stop_config,
             )
             created_application = True
-        elif config.sync_image:
-            pending_image_configuration = await self._sync_application_image(
-                handler,
-                application_id,
-                task_template,
-                config,
-            )
+        else:
+            await self._authorize_existing_application(handler, policy, application_id)
+            if config.sync_image:
+                pending_image_configuration = await self._sync_application_image(
+                    handler,
+                    application_id,
+                    task_template,
+                    config,
+                )
 
         if config.is_script_mode:
             job_driver = config.get_job_driver()
@@ -391,7 +471,6 @@ class EMRServerlessConnector(AsyncConnector[EMRServerlessJobMetadata]):
             "retry_policy": config.retry_policy,
         }
         request["client_token"] = config.client_token or _execution_token(task_execution_metadata, request)
-        region = config.region or handler.client.meta.region_name
 
         if pending_image_configuration or not await handler.start_application_if_needed(application_id):
             return EMRServerlessJobMetadata(
