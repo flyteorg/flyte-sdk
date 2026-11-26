@@ -432,6 +432,134 @@ def test_download_snapshot_to_local_without_readme():
 
 
 # =============================================================================
+# _stream_to_remote_dir Tests
+# =============================================================================
+
+
+class _FakeHubFS:
+    """An HfFileSystem double serving in-memory files.
+
+    `on_read`, when set, runs on every read before data is returned, which lets a
+    test hold copies open to see whether they overlap.
+    """
+
+    def __init__(self, files: dict[str, bytes], on_read=None, fail: str | None = None):
+        self.files = files
+        self.on_read = on_read
+        self.fail = fail
+
+    def info(self, path, revision=None):
+        raise FileNotFoundError(path)
+
+    def ls(self, path, revision=None, detail=True):
+        entries = [{"name": f"{path}/{n}", "type": "file", "size": len(d)} for n, d in self.files.items()]
+        return [*entries, {"name": f"{path}/subdir", "type": "directory"}, "not-a-dict"]
+
+    def open(self, path, mode="rb", revision=None):
+        import io
+
+        name = path.split("/")[-1]
+        if name == self.fail:
+            raise OSError(f"cannot read {name}")
+        buf = io.BytesIO(self.files[name])
+        hook = self.on_read
+
+        class _Reader:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self, n=-1):
+                if hook is not None:
+                    hook()
+                return buf.read(n)
+
+        return _Reader()
+
+
+def _stream(files: dict[str, bytes], dest: str, **kwargs):
+    import fsspec
+
+    hub = MagicMock()
+    hub.HfFileSystem.return_value = kwargs.pop("hfs", None) or _FakeHubFS(files)
+    with (
+        patch.dict(sys.modules, {"huggingface_hub": hub}),
+        patch("flyte.storage.get_underlying_filesystem", return_value=fsspec.filesystem("file")),
+    ):
+        from flyte.prefetch._hf_model import _stream_to_remote_dir
+
+        return _stream_to_remote_dir("org/model", "abc123", None, dest, **kwargs)
+
+
+def test_stream_to_remote_dir_copies_every_file(tmp_path):
+    """Every regular file lands intact; directories and bare names are skipped."""
+    files = {f"model-{i:05d}.safetensors": os.urandom(1000 + i) for i in range(5)}
+    files["config.json"] = b'{"model_type": "llama"}'
+
+    path, card = _stream(files, str(tmp_path), concurrency=3)
+
+    assert path == str(tmp_path)
+    assert card is None
+    assert sorted(os.listdir(tmp_path)) == sorted(files)
+    for name, data in files.items():
+        assert (tmp_path / name).read_bytes() == data
+
+
+def test_stream_to_remote_dir_copies_files_concurrently(tmp_path):
+    """Two copies are in flight at once.
+
+    Each read waits at a two-party barrier, which only opens when a second copy
+    reaches it too. A one-at-a-time copy would time out there.
+    """
+    import threading
+
+    barrier = threading.Barrier(2, timeout=10)
+    passed = threading.Event()
+
+    def on_read():
+        if not passed.is_set():
+            barrier.wait()
+            passed.set()
+
+    files = {"a.safetensors": b"a" * 10, "b.safetensors": b"b" * 10}
+    _stream(files, str(tmp_path), concurrency=2, hfs=_FakeHubFS(files, on_read=on_read))
+
+    assert passed.is_set()
+    assert (tmp_path / "a.safetensors").read_bytes() == files["a.safetensors"]
+    assert (tmp_path / "b.safetensors").read_bytes() == files["b.safetensors"]
+
+
+def test_stream_to_remote_dir_raises_when_a_file_fails(tmp_path):
+    """A failed copy is raised, so the caller can fall back to a snapshot download."""
+    files = {"good.safetensors": b"x" * 10, "bad.safetensors": b"y" * 10}
+
+    with pytest.raises(OSError, match=r"cannot read bad\.safetensors"):
+        _stream(files, str(tmp_path), concurrency=2, hfs=_FakeHubFS(files, fail="bad.safetensors"))
+
+
+def test_stream_to_remote_dir_stops_other_copies_when_one_fails(tmp_path):
+    """A failure stops the copies still in flight instead of waiting for them.
+
+    The slow file takes about 5 s to copy one byte at a time. The failing file
+    errors at once, so the call should return long before the slow copy ends.
+    """
+    import time
+
+    def slow_read():
+        time.sleep(0.005)
+
+    files = {"slow.safetensors": b"s" * 1000, "bad.safetensors": b"y" * 10}
+    hfs = _FakeHubFS(files, on_read=slow_read, fail="bad.safetensors")
+    start = time.monotonic()
+    with patch("flyte.prefetch._hf_model.STREAM_CHUNK_SIZE", 1):
+        with pytest.raises(OSError, match=r"cannot read bad\.safetensors"):
+            _stream(files, str(tmp_path), concurrency=2, hfs=hfs)
+    assert time.monotonic() - start < 2
+
+
+# =============================================================================
 # Image Package Constants Tests
 # =============================================================================
 

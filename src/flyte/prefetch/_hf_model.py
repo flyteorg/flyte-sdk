@@ -141,6 +141,19 @@ class StoredModelInfo(BaseModel):
     metadata: dict[str, str]
 
 
+#: Files copied at the same time when streaming a repo to remote storage. One
+#: stream from the Hub to object storage uses a fraction of the pod's network,
+#: and large checkpoints are split into many weight files, so copying several
+#: at once is what keeps a large prefetch from taking hours. Each copy holds
+#: about one chunk in memory, plus the storage client's write buffer.
+STREAM_CONCURRENCY = 8
+
+#: Bytes read from the Hub and written to storage per step of a file copy.
+STREAM_CHUNK_SIZE = 64 * 1024 * 1024
+
+#: Seconds between refreshes of the prefetch report's progress tab.
+PROGRESS_FLUSH_INTERVAL_S = 30.0
+
 # Image definitions for the store task
 HF_DOWNLOAD_IMAGE_PACKAGES = [
     "huggingface-hub>=0.27.0",
@@ -407,21 +420,36 @@ def _stream_to_remote_dir(
     commit: str,
     token: str | None,
     remote_dir_path: str,
+    concurrency: int = STREAM_CONCURRENCY,
 ) -> tuple[str, str | None]:
     """
     Stream files directly from HuggingFace to a remote directory.
+
+    Files are copied `concurrency` at a time, each one in chunks, so nothing is
+    staged on local disk. If any file fails, or the copy is interrupted, the
+    other copies stop within one chunk and the first error is raised. Without
+    that, leaving the thread pool would wait for every copy in flight, which on
+    a large checkpoint takes minutes. Progress goes to the report's
+    "Progress" tab, since a long copy is otherwise silent at the default log
+    level.
 
     Args:
         repo_id: The HuggingFace repository ID.
         commit: The commit ID.
         token: HuggingFace token.
         remote_dir_path: Path to the remote directory.
+        concurrency: How many files to copy at the same time.
 
     Returns:
         Tuple of (remote_dir_path, readme_content).
     """
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     import huggingface_hub
 
+    import flyte.report
     import flyte.storage as storage
 
     hfs = huggingface_hub.HfFileSystem(token=token)
@@ -441,28 +469,64 @@ def _stream_to_remote_dir(
 
     # List all files in the repo
     repo_files = hfs.ls(f"{repo_id}", revision=commit, detail=True)
-
-    logger.info(f"Streaming {len(repo_files)} files to {remote_dir_path}")
-
+    files = []
     for file_info in repo_files:
         if isinstance(file_info, str):
             logger.info(f"  Skipping {file_info}...")
             continue
         if file_info["type"] == "file":
-            file_name = file_info["name"].split("/")[-1]
-            remote_file_path = f"{remote_dir_path}/{file_name}"
-            logger.info(f"  Streaming {file_name}...")
+            files.append(file_info)
 
-            # Stream file content directly to remote
-            with hfs.open(file_info["name"], "rb", revision=commit) as src:
-                with fs.open(remote_file_path, "wb") as dst:
-                    # Stream in chunks
-                    chunk_size = 64 * 1024 * 1024  # 64MB chunks
-                    while True:
-                        chunk = src.read(chunk_size)
-                        if not chunk:
-                            break
-                        dst.write(chunk)
+    total_bytes = sum(f.get("size") or 0 for f in files)
+    logger.info(
+        f"Streaming {len(files)} files ({total_bytes / 1e9:.1f} GB) to {remote_dir_path}, {concurrency} at a time"
+    )
+
+    stop = threading.Event()
+
+    class _Stopped(Exception):
+        pass
+
+    def copy(file_info: dict) -> int:
+        file_name = file_info["name"].split("/")[-1]
+        remote_file_path = f"{remote_dir_path}/{file_name}"
+        copied = 0
+        with hfs.open(file_info["name"], "rb", revision=commit) as src:
+            with fs.open(remote_file_path, "wb") as dst:
+                while True:
+                    if stop.is_set():
+                        raise _Stopped(file_name)
+                    chunk = src.read(STREAM_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    dst.write(chunk)
+                    copied += len(chunk)
+        return copied
+
+    progress = flyte.report.get_tab("Progress")
+    start = time.monotonic()
+    last_flush = start
+    done_bytes = 0
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+        futures = {pool.submit(copy, f): f["name"] for f in files}
+        try:
+            for i, future in enumerate(as_completed(futures), start=1):
+                done_bytes += future.result()
+                now = time.monotonic()
+                status = (
+                    f"{i}/{len(files)} files, {done_bytes / 1e9:.1f}/{total_bytes / 1e9:.1f} GB, "
+                    f"{done_bytes / max(now - start, 1e-6) / 1e6:.0f} MB/s"
+                )
+                logger.info(f"  {futures[future].split('/')[-1]}: {status}")
+                if i == len(files) or now - last_flush >= PROGRESS_FLUSH_INTERVAL_S:
+                    progress.replace(f"<p>Streaming {repo_id} to {remote_dir_path}: {status}</p>")
+                    flyte.report.flush()
+                    last_flush = now
+        except BaseException:
+            stop.set()
+            for pending in futures:
+                pending.cancel()
+            raise
 
     return remote_dir_path, card
 
