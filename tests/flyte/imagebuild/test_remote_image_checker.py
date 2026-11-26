@@ -69,3 +69,28 @@ def test_partial_build_run_records_nothing():
 def test_recording_failure_is_swallowed():
     """A broken message can never propagate out of the recording helper."""
     _maybe_record_build_run(Mock())
+
+
+def test_set_image_queue_names_the_lookup_queue():
+    """Inside a remote lookup for a queue, the request names it (flyteidl2 with GetImageRequest.queue)."""
+    from types import SimpleNamespace
+
+    from flyte._internal.imagebuild.remote_builder import _set_image_queue
+
+    req = SimpleNamespace()
+    with ib._image_cache_scope("union-ondemand"):
+        _set_image_queue(req)
+    assert req.queue == "union-ondemand"
+
+    req = SimpleNamespace()
+    _set_image_queue(req)
+    assert not hasattr(req, "queue"), "no queue: the default pool, as before"
+
+
+@pytest.mark.asyncio
+async def test_lookup_with_queue_on_flyteidl2_without_the_field():
+    """flyteidl2 without GetImageRequest.queue: the lookup still resolves, without the queue."""
+    image_pb = image_definition_pb2.Image(fqin="registry.example.com/my-image:v1.0")
+    with ib._image_cache_scope("union-ondemand"):
+        result = await _check_image(image_pb)
+    assert result == "registry.example.com/my-image:v1.0"
