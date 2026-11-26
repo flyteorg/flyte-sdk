@@ -69,6 +69,22 @@ tensor-parallel workers included). Weights are read from object storage as paral
 ranges and never written to local disk. For `transformers` models, or any `nn.Module`,
 use `flyte.extras.model_streamer` directly.
 
+With tensor parallelism, each rank streams the whole checkpoint, so an engine with
+eight ranks reads it eight times. For a large model, pass `node_cache_dir` instead:
+
+```python
+llm = LLM(**await engine_args(model_path, node_cache_dir="/cache/weights"), tensor_parallel_size=8)
+```
+
+`engine_args()` then downloads the whole checkpoint into that directory once, before
+the engine starts, and vLLM loads it from there with its usual loader. Put the directory
+on a memory-backed volume or a fast local disk: the ranks all read from it, and a slow
+disk makes the load slow. The copy stays until the pod ends. Engines on the same node
+can share it, and a later engine, or a container restarted in the same pod, skips the
+download. Every rank has to see the directory, so this is for engines on a single node.
+The download keeps 256 reads of 16 MiB in flight by default, about 4 GiB of memory;
+`chunk_size` and `max_concurrency` override that.
+
 Examples: `examples/genai/vllm/vllm_task_streamed.py`,
 `examples/ml/batch_inference_streamed.py`, `examples/ml/embed_streamed.py`.
 
@@ -95,7 +111,7 @@ Methods that need no separate weights work the same way, without a draft model â
 useful floor to measure a real speculator against:
 
 ```python
-speculative_config={"method": "ngram", "num_speculative_tokens": 5, "prompt_lookup_max": 4}
+speculative_config = {"method": "ngram", "num_speculative_tokens": 5, "prompt_lookup_max": 4}
 ```
 
 Two caveats worth knowing up front:
