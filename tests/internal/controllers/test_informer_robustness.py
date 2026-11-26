@@ -256,6 +256,83 @@ async def test_a_watch_that_delivers_between_drops_keeps_reconnecting():
         await informer.stop()
 
 
+class HangsThenFails:
+    """Every watch sends nothing for `hang` seconds and then fails."""
+
+    def __init__(self, hang: float):
+        self.watches = 0
+        self.hang = hang
+
+    async def watch_for_updates(self, req, **kwargs):
+        self.watches += 1
+        await asyncio.sleep(self.hang)
+        raise ConnectError(Code.UNAVAILABLE, "connect failed")
+        yield  # makes this an async generator
+
+
+@pytest.mark.asyncio
+async def test_a_watch_that_hangs_then_fails_gives_up():
+    """Time spent before the first response isn't time the watch was up, so a
+    connection that hangs past watch_healthy_after_sec and then fails still counts."""
+    service = HangsThenFails(hang=0.03)
+    informer = _informer(
+        service,
+        min_watch_backoff=0.001,
+        max_watch_backoff=0.002,
+        max_watch_retries=3,
+        watch_healthy_after_sec=0.02,
+    )
+    task = await informer.start(timeout=0.01)
+    try:
+        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=5)
+        assert isinstance(task.exception(), ConnectError)
+        assert service.watches == 3
+    finally:
+        await informer.stop()
+
+
+class DroppedThenHealthy:
+    """Odd watches are dropped right after their snapshot. Even watches stay up
+    past watch_healthy_after_sec and then end: cleanly, or by going idle."""
+
+    def __init__(self, up_for: float, ends: str):
+        self.watches = 0
+        self.up_for = up_for
+        self.ends = ends
+
+    async def watch_for_updates(self, req, **kwargs):
+        self.watches += 1
+        yield _sentinel()
+        if self.watches % 2:
+            raise ConnectError(Code.CANCELED, "upstream reset")
+        if self.ends == "idle":
+            await asyncio.Event().wait()
+        await asyncio.sleep(self.up_for)
+
+
+@pytest.mark.parametrize("ends", ["clean", "idle"])
+@pytest.mark.asyncio
+async def test_a_healthy_watch_resets_the_count_however_it_ends(ends):
+    """Drops separated by a healthy watch are not back to back, so they never add
+    up to max_watch_retries, whether the healthy watch ends cleanly or idles out."""
+    service = DroppedThenHealthy(up_for=0.03, ends=ends)
+    informer = _informer(
+        service,
+        min_watch_backoff=0.001,
+        max_watch_backoff=0.002,
+        max_watch_retries=2,
+        watch_healthy_after_sec=0.02,
+        watch_idle_timeout_sec=0.03,
+    )
+    task = await informer.start(timeout=5)
+    try:
+        while service.watches < 8:
+            await asyncio.sleep(0.01)
+            assert not task.done()
+    finally:
+        await informer.stop()
+
+
 @pytest.mark.asyncio
 async def test_stopping_the_informer_still_ends_its_watch():
     service = CancelledByTheServerOnce()

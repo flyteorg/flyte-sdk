@@ -175,9 +175,9 @@ class Informer:
         max_watch_retries: int = 40,
         # Reconnect a synced watch silent this long; keep it well under the executor's TaskAction GC TTL.
         watch_idle_timeout_sec: Optional[float] = 300.0,
-        # A watch that delivered an update after its snapshot, or stayed open this long, was
-        # working, so its failure starts a new count. Any other failure adds to the count, even
-        # one that came after the snapshot.
+        # A watch that delivered an update after its snapshot, or stayed open this long after its
+        # first response, was working: however it ends, the failure count starts over. Any other
+        # failure adds to the count, even one that came after the snapshot.
         watch_healthy_after_sec: float = 60.0,
     ):
         self.name = self.mkname(run_name=run_id.name, parent_action_name=parent_action_name)
@@ -274,13 +274,20 @@ class Informer:
         # sentinel = False
         retries = 0
         last_exc: Exception | None = None
-        connected_at: float | None = None
+        first_response_at: float | None = None
         synced = live_update = False
+
+        def healthy() -> bool:
+            """Whether the watch that just ended was working."""
+            if live_update:
+                return True
+            return (
+                first_response_at is not None and time.monotonic() - first_response_at >= self._watch_healthy_after_sec
+            )
 
         def failures() -> int:
             """The consecutive failure count, including the one just seen."""
-            stayed_up = connected_at is not None and time.monotonic() - connected_at >= self._watch_healthy_after_sec
-            return 1 if live_update or stayed_up else retries + 1
+            return 1 if healthy() else retries + 1
 
         while self._running:
             if retries >= self._max_watch_retries:
@@ -301,7 +308,7 @@ class Informer:
                     "x-actions-run": self._run_id.name,
                     "x-actions-parent-action": self.parent_action_name,
                 }
-                connected_at = time.monotonic()
+                first_response_at = None
                 synced = live_update = False
                 if self._actions_client:
                     watcher = self._actions_client.watch_for_updates(
@@ -317,10 +324,12 @@ class Informer:
                         ),
                     )
                 async for resp in self._with_idle_timeout(cast(AsyncIterator, watcher)):
+                    if first_response_at is None:
+                        first_response_at = time.monotonic()
                     # A response alone doesn't reset the failure count: a proxy that drops every
                     # connection lets each new watch deliver its snapshot first, and resetting
-                    # here kept such a watch reconnecting forever. failures() resets it for a
-                    # watch that delivered something new or stayed open.
+                    # here kept such a watch reconnecting forever. healthy() decides instead,
+                    # when the watch ends.
                     if resp is None:
                         # gRPC deserialization failure: _transform() caught an
                         # exception and returned None instead of raising.  Skip
@@ -344,6 +353,8 @@ class Informer:
             except _WatchIdleError:
                 # Not a failure: reconnect at once and let the snapshot re-sync the children.
                 logger.info(f"Watch for {self.name} idle for {self._watch_idle_timeout_sec}s, reconnecting")
+                if healthy():
+                    retries = 0
                 continue
             except asyncio.TimeoutError as e:
                 logger.error(f"Watch timeout: {self.name}, {e}", exc_info=False)
@@ -364,6 +375,10 @@ class Informer:
                 logger.exception(f"Watch error: {self.name}", exc_info=e)
                 last_exc = e
                 retries = failures()
+            else:
+                # The server ended the watch cleanly.
+                if healthy():
+                    retries = 0
             backoff = jittered(min(self._min_watch_backoff * (2 ** min(retries, 20)), self._max_watch_backoff))
             logger.warning(f"Watch for {self.name} failed, retrying in {backoff:.2f} seconds...")
             await asyncio.sleep(backoff)
