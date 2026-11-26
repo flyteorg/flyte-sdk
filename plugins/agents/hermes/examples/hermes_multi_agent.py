@@ -27,12 +27,25 @@ import flyte
 
 from flyteplugins.agents.hermes import run_agent, tool
 
+# hermes-agent is installed from git because upstream stopped publishing to
+# PyPI. Its setup.py only builds a wheel when HERMES_NIX_BUILD=1, and its own
+# pins conflict on Pillow, so the install overrides Pillow the same way
+# upstream's lock does.
+HERMES_AGENT_INSTALL = [
+    "echo pillow==13.0.0 > /tmp/hermes-overrides.txt",
+    "HERMES_NIX_BUILD=1 uv pip install --override /tmp/hermes-overrides.txt"
+    " 'hermes-agent @ git+https://github.com/NousResearch/hermes-agent@v0.23.4'",
+]
+
 env = flyte.TaskEnvironment(
     "hermes-research",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
-    image=flyte.Image.from_debian_base(name="hermes-research").with_local_v2_plugins(
-        ["flyteplugins-agents-core", "flyteplugins-agents-hermes"]
+    image=(
+        flyte.Image.from_debian_base(name="hermes-research", python_version=(3, 14))
+        .with_apt_packages("git")
+        .with_commands(HERMES_AGENT_INSTALL)
+        .with_local_v2_plugins(["flyteplugins-agents-core", "flyteplugins-agents-hermes"])
     ),
 )
 

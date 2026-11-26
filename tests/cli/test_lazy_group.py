@@ -1,10 +1,12 @@
 """The root CLI group imports a subcommand, and the plugins that extend it, only when it is used."""
 
+import re
 import sys
 from types import SimpleNamespace
 
 import click
 import pytest
+from click.testing import CliRunner
 
 from flyte.cli import _plugins
 from flyte.cli._lazy_group import LazyGroup
@@ -135,3 +137,26 @@ def test_every_registered_command_resolves():
         command = main.get_command(None, name)
         assert isinstance(command, click.Command), name
         assert command.name == name
+
+
+def test_plugin_command_that_fails_to_load_is_left_out_of_help(lazy_module, plugin_entry_points):
+    class _Broken(_EP):
+        def load(self):
+            self.loaded = True
+            raise KeyError(5)
+
+    broken = _Broken("broken", None)
+    plugin_entry_points[_plugins.COMMANDS_GROUP].append(broken)
+    group = _group(lazy_module)
+
+    assert "broken" in group.list_commands(None)
+    result = CliRunner().invoke(group, ["--help"])
+
+    assert result.exit_code == 0, result.output
+    assert broken.loaded
+    # Match command-table rows, not the "Failed to load plugin command broken" log line. CI forces
+    # color, so strip ANSI styling first.
+    output = click.unstyle(result.output)
+    assert re.search(r"│ greet\b", output)
+    assert not re.search(r"│ broken\b", output)
+    assert "broken" not in group.list_commands(None)

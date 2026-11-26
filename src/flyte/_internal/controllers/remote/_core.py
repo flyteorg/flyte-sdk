@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sys
 import threading
+import time
 from asyncio import Event
 from typing import Awaitable, Coroutine, Optional, cast
 
@@ -36,6 +36,11 @@ from ._service_protocol import (
 # the connection and every request on it hangs). After this many launch timeouts in a row,
 # the controller replaces the HTTP client so the next attempt opens a fresh connection.
 _LAUNCH_TIMEOUTS_BEFORE_NEW_CONNECTION = 3
+
+
+def _trace_record_unconfirmed(reason: str) -> dict[str, str]:
+    """Log fields that count a trace the server has not confirmed, in the form `flyte._metrics` emits."""
+    return {"metric_type": "counter", "metric_name": "trace_record_unconfirmed", "reason": reason}
 
 
 def _actions_metadata(action: Action) -> dict[str, str]:
@@ -94,7 +99,8 @@ class Controller:
         self._failure_event: Event | None = None
         self._enqueue_timeout = enqueue_timeout_sec
         self._consecutive_launch_timeouts = 0
-        self._informer_start_wait_timeout = thread_wait_timeout_sec
+        # How long to wait for an informer's first sync; a lookup made after it expires reads an unsynced cache.
+        self._informer_start_wait_timeout = float(os.getenv("_F_INFORMER_SYNC_TIMEOUT", thread_wait_timeout_sec))
         max_qps = int(os.getenv("_F_MAX_QPS", "100"))
         self._rate_limiter = AsyncLimiter(max_qps, 1.0)
 
@@ -253,17 +259,10 @@ class Controller:
         # We will wait for this to signal that the thread is ready
         # Signal the main thread that we're ready
         logger.debug("Background thread initialization complete")
-        if sys.version_info >= (3, 11):
-            async with asyncio.TaskGroup() as tg:
-                for i in range(self._workers):
-                    tg.create_task(self._bg_run(f"worker-{i}"))
-                self._thread_ready.set()
-        else:
-            tasks = []
+        async with asyncio.TaskGroup() as tg:
             for i in range(self._workers):
-                tasks.append(asyncio.create_task(self._bg_run(f"worker-{i}")))
+                tg.create_task(self._bg_run(f"worker-{i}"))
             self._thread_ready.set()
-            await asyncio.gather(*tasks)
 
     def _bg_thread_target(self):
         """Target function for the controller thread that creates and manages its own event loop"""
@@ -348,14 +347,32 @@ class Controller:
         # run for hours, so they wait without a timeout.
         if action.type == "trace":
             _trace_timeout = float(os.getenv("_F_TRACE_COMPLETION_TIMEOUT", "60"))
-            try:
-                await asyncio.wait_for(informer.wait_for_action_completion(action.name), timeout=_trace_timeout)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"{threading.current_thread().name} Trace completion wait timed out after {_trace_timeout}s "
-                    f"for {action.name}, continuing anyway"
-                )
-                await informer.fire_completion_event(action.name)
+            # An unlaunched trace is waited for as long as the launch's own retries can take. Retries on
+            # ResourceExhausted have no cap of their own, so the wait needs one.
+            _launch_deadline = time.monotonic() + self._max_retries * self._max_backoff_on_err
+            while True:
+                try:
+                    await asyncio.wait_for(informer.wait_for_action_completion(action.name), timeout=_trace_timeout)
+                    break
+                except asyncio.TimeoutError:
+                    current = await informer.get(action.name)
+                    unlaunched = current is not None and not current.is_started()
+                    if unlaunched and time.monotonic() < _launch_deadline:
+                        # Not launched yet, so the server has no record and a task that exits now loses
+                        # it. The launch is still being retried: count it and keep waiting.
+                        logger.warning(
+                            f"{threading.current_thread().name} Trace {action.name} not launched after "
+                            f"{_trace_timeout}s, still retrying",
+                            extra=_trace_record_unconfirmed("launch_pending"),
+                        )
+                        continue
+                    logger.warning(
+                        f"{threading.current_thread().name} Trace completion wait timed out after {_trace_timeout}s "
+                        f"for {action.name}, continuing anyway",
+                        extra=_trace_record_unconfirmed("launch_pending") if unlaunched else None,
+                    )
+                    await informer.fire_completion_event(action.name)
+                    break
         else:
             await informer.wait_for_action_completion(action.name)
         logger.info(f"{threading.current_thread().name} Action {action.name} completed")
@@ -546,13 +563,16 @@ class Controller:
                         logger.info(f"Action {action.name} already exists, continuing to monitor.")
                         action.mark_started()
                         return
-                    from ._org_limits import org_limit_exceeded
+                    from ._org_limits import org_entitlement_required, org_limit_exceeded, resource_exhausted
 
                     if (org_limit := org_limit_exceeded(e)) is not None:
                         # The org is at a limit (e.g. max_actions_per_run): no retry can clear it.
                         raise org_limit from e
-                    if e.code == Code.RESOURCE_EXHAUSTED:
-                        raise flyte.errors.ResourceExhaustedError(e.message) from e
+                    if (entitlement := org_entitlement_required(e)) is not None:
+                        # The org isn't entitled to what the action needs: no retry can clear that either.
+                        raise entitlement from e
+                    if (exhausted := resource_exhausted(e)) is not None:
+                        raise exhausted from e
                     if e.code == Code.ABORTED:
                         # The run was aborted; engine will auto-abort other in-flight actions.
                         # Surface as a system error — outer handler in _bg_run wraps and exits.
@@ -644,12 +664,16 @@ class Controller:
                     logger.warning(f"[{worker_id}] Retrying action {action.name} after backoff")
                     await self._shared_queue.put(action)
             except Exception as e:
-                if isinstance(e, flyte.errors.OrgLimitExceededError):
-                    # Expected when a run fans out past its org's limit: one per refused child, so not an error.
-                    logger.warning(f"[{worker_id}] Action {action.name} refused at an org limit: {e}")
+                org_refusal = isinstance(
+                    e, (flyte.errors.OrgLimitExceededError, flyte.errors.OrgEntitlementRequiredError)
+                )
+                if org_refusal:
+                    # Expected when a run fans out past its org's limit or entitlements: one per refused child, so not
+                    # an error.
+                    logger.warning(f"[{worker_id}] Action {action.name} refused for the org: {e}")
                 else:
                     logger.error(f"[{worker_id}] Error in controller loop for {action.name}: {e}")
-                if isinstance(e, flyte.errors.OrgLimitExceededError):
+                if org_refusal:
                     # A user error the parent can catch, not a controller failure: wrapping it as a system error
                     # would make the platform retry the whole parent.
                     err: Exception = e

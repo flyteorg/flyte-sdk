@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = ["flyte"]
 # ///
 """Remote builder BYOI: two teams, two Flyte-unaware images, Flyte fills the gaps.
@@ -9,7 +9,7 @@ no knowledge of Flyte. The Flyte engineer adapts by installing flyte via the
 right pip, fixing PATH, and setting PYTHONPATH.
 
   data_prep:  continuumio/miniconda3  — conda env, python at /opt/conda/bin/python
-  training:   python:3.10-slim        — venv at /opt/venv, python at /opt/venv/bin/python
+  training:   python:3.12-slim        — venv at /opt/venv, python at /opt/venv/bin/python
 
 Build and push base images first (from v2_guide/remote_builder/):
   docker build -f data_prep/Dockerfile -t <your-registry>/data-prep-base:latest data_prep/

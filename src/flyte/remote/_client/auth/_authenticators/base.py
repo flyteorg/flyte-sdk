@@ -174,23 +174,28 @@ class Authenticator(object):
 
         Args:
             creds_id: The id of credentials when they were last accessed by the caller.
-                If None, force a refresh regardless of id.
+                If None, force a refresh regardless of id, unless another caller refreshed
+                while this one waited for the lock: its result is used then.
 
         Raises:
             Exception: Authentication-related exceptions if the refresh fails.
         """
-        # If creds_id is None, force refresh
+        # If creds_id is None, force refresh (unless one completes while we wait for the lock)
         # If creds_id matches current value, credentials need refresh
         # If creds_id doesn't match, another thread already refreshed credentials
         if creds_id and creds_id != self._creds_id:
             # Credentials have been refreshed by another thread/coroutine since caller read them
             return
 
+        creds_id_before_wait = self._creds_id
         # Use the async lock to ensure coroutine safety
         async with self._async_lock:
             # Double-check pattern to avoid unnecessary work
             if creds_id and creds_id != self._creds_id:
                 # Another thread/coroutine refreshed credentials while we were waiting for the lock
+                return
+            if not creds_id and self._creds_id != creds_id_before_wait:
+                # A caller with no credentials yet waited behind another refresh: use its result.
                 return
 
             # Perform the actual credential refresh

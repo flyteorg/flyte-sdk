@@ -35,7 +35,7 @@ docker push "${REGISTRY}:data-prep-base-${TAG}"
 
 echo ""
 echo "==> Building Team B base image (training, pip venv)"
-echo "    python:3.10-slim | venv at /opt/venv | WORKDIR /workspace | no PYTHONPATH"
+echo "    python:3.12-slim | venv at /opt/venv | WORKDIR /workspace | no PYTHONPATH"
 echo "    Tag: ${REGISTRY}:training-base-${TAG}"
 docker build \
   --file "${SCRIPT_DIR}/training/Dockerfile" \

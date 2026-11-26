@@ -42,17 +42,12 @@ impl Authenticator {
 }
 
 impl Authenticator {
-    /// Headers sent with every request besides the bearer token: the attempt a
-    /// workload speaks for.
-    pub fn extra_headers(&self) -> Vec<(&'static str, String)> {
+    /// The bearer value for a request with these headers: the access token as is, or, for a
+    /// workload token, the composite credential wrapping it (see `encode_workload_credential`).
+    pub fn bearer_token(&self, creds: &Credentials, request_headers: &http::HeaderMap) -> String {
         match self {
-            Authenticator::ClientCredentials(_) => Vec::new(),
-            Authenticator::WorkloadToken(a) => {
-                vec![(
-                    super::workload_token::WORKLOAD_HEADER,
-                    a.workload().to_string(),
-                )]
-            }
+            Authenticator::ClientCredentials(_) => creds.access_token.clone(),
+            Authenticator::WorkloadToken(a) => a.credential(&creds.access_token, request_headers),
         }
     }
 }

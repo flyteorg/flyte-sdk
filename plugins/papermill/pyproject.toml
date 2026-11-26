@@ -4,7 +4,7 @@ dynamic = ["version"]
 description = "Papermill plugin for Flyte - Run Jupyter notebooks as Flyte tasks"
 readme = "README.md"
 authors = [{ name = "Samhita Alla", email = "samhita@union.ai" }]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "papermill",
     "nbconvert",
@@ -76,3 +76,6 @@ ignore = ["PGH003", "PLC0415", "ASYNC240"]
 
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]
+
+[tool.uv]
+constraint-dependencies = ["soupsieve>=4.0.0"]

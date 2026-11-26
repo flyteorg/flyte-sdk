@@ -216,11 +216,10 @@ class TypeTransformer(typing.Generic[T]):
             raise TypeTransformerFailedError(f"Value '{obj}' is not of container type {origin}")
 
     def assert_type(self, t: Type[T], v: T):
-        if sys.version_info >= (3, 10):
-            import types
+        import types
 
-            if isinstance(t, types.GenericAlias):
-                return self.isinstance_generic(v, t)
+        if isinstance(t, types.GenericAlias):
+            return self.isinstance_generic(v, t)
 
         if not hasattr(t, "__origin__") and not isinstance(v, t):
             raise TypeTransformerFailedError(f"Expected value of type {t} but got '{v}' of type {type(v)}")
@@ -2598,15 +2597,9 @@ def _are_types_castable(upstream: types_pb2.LiteralType, downstream: types_pb2.L
 
 def _is_union_type(t):
     """Returns True if t is a Union type."""
+    import types
 
-    if sys.version_info >= (3, 10):
-        import types
-
-        UnionType = types.UnionType
-    else:
-        UnionType = None
-
-    return t is typing.Union or get_origin(t) is typing.Union or (UnionType and isinstance(t, UnionType))
+    return t is typing.Union or get_origin(t) is typing.Union or isinstance(t, types.UnionType)
 
 
 class UnionTransformer(TypeTransformer[T]):

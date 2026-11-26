@@ -2,7 +2,7 @@
 #
 # Intentionally different from Team A:
 #   - Different base: CUDA runtime instead of debian slim
-#   - Different Python version: 3.10 (team B's standard)
+#   - Different Python version: 3.12 (team B's standard)
 #   - Different WORKDIR: /workspace (not /app)
 #   - Different PYTHONPATH: /workspace
 #   - Different system packages: CUDA tools
@@ -12,9 +12,9 @@
 #
 # In practice this would be:
 #   FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
-# Using python:3.10-slim here so you can build/test without a GPU machine.
+# Using python:3.12-slim here so you can build/test without a GPU machine.
 
-FROM python:3.10-slim
+FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -25,7 +25,7 @@ WORKDIR /workspace
 
 RUN pip install --no-cache-dir \
     flyte \
-    torch==2.1.2 \
+    torch==2.2.0 \
     numpy==1.26.4
 
 # Bake in workflow code at /workspace/workflow_code/.

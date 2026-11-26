@@ -6,7 +6,7 @@ requires = ["hatchling"]
 name = "uv-project-local-dep"
 version = "0.1.0"
 description = "Example uv project with local dependencies"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["my-app", "my-lib"]
 
 [tool.uv.sources]

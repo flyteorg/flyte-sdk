@@ -151,6 +151,15 @@ def unique_action_name(action_id: ActionID) -> str:
     return f"{action_id.name}_{action_id.run_name}"
 
 
+def _running_task(tctx):
+    """
+    The action of the task running in this pod. Inside a @trace, `tctx.action` is the trace's pseudo-action;
+    sub-actions, trace records and lookups nest under the real task (`task_action`), as the Python controller does. A
+    reusable pod's workload credential names this action, so naming the trace would fail authentication.
+    """
+    return tctx.task_action or tctx.action
+
+
 class RemoteController(BaseController):
     """
     This a specialized controller that wraps the core controller and performs IO, serialization and deserialization
@@ -306,7 +315,7 @@ class RemoteController(BaseController):
 
         action = Action.from_task(
             sub_action_id_bytes=sub_action_id_pb.SerializeToString(),
-            parent_action_name=current_action_id.name,
+            parent_action_name=_running_task(tctx).name,
             group_data=tctx.group_data.name if tctx.group_data else None,
             task_spec_bytes=task_spec.SerializeToString(),
             inputs_uri=inputs_uri,
@@ -517,7 +526,7 @@ class RemoteController(BaseController):
 
         prev_action = await self.get_action(
             sub_action_id_pb.SerializeToString(),
-            current_action_id.name,
+            _running_task(tctx).name,
         )
 
         if prev_action is None:
@@ -595,7 +604,7 @@ class RemoteController(BaseController):
         )
 
         trace_action = Action.from_trace(
-            parent_action_name=current_action_id.name,
+            parent_action_name=_running_task(tctx).name,
             action_id_bytes=action_id_pb.SerializeToString(),
             inputs_uri=info.inputs_path,
             outputs_uri=outputs_file_path,
@@ -693,7 +702,7 @@ class RemoteController(BaseController):
 
         action = Action.from_task(
             sub_action_id_bytes=sub_action_id_pb.SerializeToString(),
-            parent_action_name=current_action_id.name,
+            parent_action_name=_running_task(tctx).name,
             group_data=tctx.group_data.name if tctx.group_data else None,
             task_spec_bytes=_task.pb2.spec.SerializeToString(),
             inputs_uri=inputs_uri,

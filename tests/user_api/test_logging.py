@@ -325,3 +325,25 @@ def test_reset_root_logger_logs_warnings():
         root.handlers.clear()
         root.handlers.extend(saved_handlers)
         initialize_logger()
+
+
+def _format_json(**extra):
+    record = logging.LogRecord("flyte", logging.WARNING, __file__, 1, "message", None, None)
+    for key, value in extra.items():
+        setattr(record, key, value)
+    return json.loads(JSONFormatter().format(record))
+
+
+def test_json_formatter_emits_a_counter_without_a_duration():
+    """Before: every metric was read for `duration_seconds`, so a counter raised and its line was dropped."""
+    log_data = _format_json(metric_type="counter", metric_name="trace_record_unconfirmed", reason="launch_pending")
+    assert log_data["metric_type"] == "counter"
+    assert log_data["metric_name"] == "trace_record_unconfirmed"
+    assert log_data["reason"] == "launch_pending"
+    assert "duration_seconds" not in log_data
+
+
+def test_json_formatter_still_emits_a_timer_duration():
+    log_data = _format_json(metric_type="timer", metric_name="download_inputs", duration_seconds=1.5)
+    assert log_data["duration_seconds"] == 1.5
+    assert "reason" not in log_data
