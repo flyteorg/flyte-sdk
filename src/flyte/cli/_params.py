@@ -70,6 +70,9 @@ class DirParamType(click.ParamType):
         from flyte.io import Dir
         from flyte.storage import is_remote
 
+        if value is None or isinstance(value, Dir):
+            return value
+
         # Check if we're in local mode (when run_args is available and local=True)
         run_args = getattr(ctx.obj, "run_args", None) if ctx and ctx.obj else None
         if run_args is not None and run_args.local:
@@ -100,6 +103,9 @@ class StructuredDatasetParamType(click.ParamType):
         import flyte.io as io
         import flyte.remote as remote
         import flyte.storage as storage
+
+        if value is None or isinstance(value, io.DataFrame):
+            return value
 
         # Check if we're in local mode (when run_args is available and local=True)
         run_args = getattr(ctx.obj, "run_args", None) if ctx and ctx.obj else None
@@ -150,6 +156,9 @@ class FileParamType(click.ParamType):
         import flyte.remote as remote
         from flyte.io import File
         from flyte.storage import is_remote
+
+        if value is None or isinstance(value, File):
+            return value
 
         # Check if we're in local mode (when run_args is available and local=True)
         run_args = getattr(ctx.obj, "run_args", None) if ctx and ctx.obj else None

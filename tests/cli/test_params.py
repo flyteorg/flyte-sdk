@@ -11,7 +11,14 @@ import pytest
 from flyteidl2.core.interface_pb2 import Variable
 from flyteidl2.core.types_pb2 import LiteralType, SimpleType
 
-from flyte.cli._params import EnumParamType, JsonParamType, to_click_option
+from flyte.cli._params import (
+    DirParamType,
+    EnumParamType,
+    FileParamType,
+    JsonParamType,
+    StructuredDatasetParamType,
+    to_click_option,
+)
 from flyte.cli._run import RunArguments
 from flyte.io import DataFrame, Dir, File
 
@@ -57,6 +64,30 @@ def test_enum_param_type_passthrough_instance():
     """Passing an already-converted enum instance should be returned as-is."""
     param_type = EnumParamType(Color)
     assert param_type.convert(Color.BLUE, param=None, ctx=None) is Color.BLUE
+
+
+def test_file_param_type_passthrough_instance():
+    """FileParamType should pass through an existing File instance or None without conversion."""
+    param_type = FileParamType()
+    f = File(path="s3://my-bucket/file.txt")
+    assert param_type.convert(f, param=None, ctx=None) is f
+    assert param_type.convert(None, param=None, ctx=None) is None
+
+
+def test_dir_param_type_passthrough_instance():
+    """DirParamType should pass through an existing Dir instance or None without conversion."""
+    param_type = DirParamType()
+    d = Dir(path="s3://my-bucket/dir/")
+    assert param_type.convert(d, param=None, ctx=None) is d
+    assert param_type.convert(None, param=None, ctx=None) is None
+
+
+def test_structured_dataset_param_type_passthrough_instance():
+    """StructuredDatasetParamType should pass through an existing DataFrame instance or None without conversion."""
+    param_type = StructuredDatasetParamType()
+    df = DataFrame.from_existing_remote(remote_path="s3://my-bucket/data.parquet")
+    assert param_type.convert(df, param=None, ctx=None) is df
+    assert param_type.convert(None, param=None, ctx=None) is None
 
 
 def test_boolean_flag_false_default():

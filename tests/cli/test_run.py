@@ -26,6 +26,7 @@ TUPLE_INPUTS_PY = RUN_TESTDATA / "tuple_inputs.py"
 TYPEDDICT_INPUTS_PY = RUN_TESTDATA / "typeddict_inputs.py"
 FILE_INPUT_PY = RUN_TESTDATA / "file_input.py"
 BOOL_INPUTS_PY = RUN_TESTDATA / "bool_inputs.py"
+DEFAULT_IO_INPUTS_PY = RUN_TESTDATA / "default_io_inputs.py"
 PARQUET_FILE = RUN_TESTDATA / "df.parquet"
 
 
@@ -1911,3 +1912,8 @@ def test_run_unexpected_extra_argument_without_bool_flag_has_no_hint(runner):
     assert result.exit_code != 0
     assert "unexpected extra argument" in _flat(result.output)
     assert "boolean flag" not in _flat(result.output)
+
+
+def test_run_task_with_default_file_dir_dataframe_instances(runner):
+    result = runner.invoke(run, ["--local", str(DEFAULT_IO_INPUTS_PY), "task_with_defaults"])
+    assert result.exit_code == 0, result.output
