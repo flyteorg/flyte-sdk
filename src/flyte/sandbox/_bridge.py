@@ -254,7 +254,7 @@ class ExternalFunctionBridge:
 
         # Forward kwargs that flyte.map.aio accepts
         map_kwargs: Dict[str, Any] = {}
-        for key in ("group_name", "concurrency", "return_exceptions"):
+        for key in ("group_name", "concurrency", "return_exceptions", "name_fn"):
             if key in kwargs:
                 map_kwargs[key] = kwargs[key]
 
@@ -266,7 +266,8 @@ class ExternalFunctionBridge:
                 results.append(r)
             return results
 
-        return await self._map_callable(task, iterables, **map_kwargs)
+        callable_kwargs = {k: v for k, v in map_kwargs.items() if k != "name_fn"}
+        return await self._map_callable(task, iterables, **callable_kwargs)
 
     async def _map_callable(
         self,
@@ -276,9 +277,10 @@ class ExternalFunctionBridge:
         concurrency: int | None = None,
         return_exceptions: bool = False,
         group_name: str | None = None,
+        name_fn: Any = None,
     ) -> list[Any]:
         """Map *fn* over zipped *iterables* (for sandbox tools that are not TaskTemplates)."""
-        del group_name  # only supported for durable flyte.map over TaskTemplate
+        del group_name, name_fn  # only supported for durable flyte.map over TaskTemplate
         rows = list(zip(*iterables)) if iterables else []
 
         async def run_row(row: tuple[Any, ...]) -> Any:
