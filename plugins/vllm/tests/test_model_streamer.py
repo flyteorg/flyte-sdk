@@ -18,6 +18,8 @@ REMOTE = "s3://bucket/models/tiny"
 class _LocalObstoreFS:
     """The two private hooks flyte's streamer calls on its obstore-backed fsspec filesystem."""
 
+    protocol = "s3"
+
     def __init__(self, root: pathlib.Path):
         self.root = root
 
@@ -131,42 +133,51 @@ def _want(model):
     return {k: v for k, v in model.state_dict().items() if k != "lm_head.weight"}
 
 
+def _files(root: pathlib.Path) -> dict[str, bytes]:
+    return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+
 @pytest.mark.asyncio
-async def test_engine_args_passes_node_cache_dir(store, tmp_path):
-    args = await model_streamer.engine_args(REMOTE, local_dir=tmp_path / "meta", node_cache_dir=tmp_path / "cache")
-    assert args["model_loader_extra_config"]["flyte_node_cache_dir"] == str(tmp_path / "cache")
-    plain = await model_streamer.engine_args(REMOTE, local_dir=tmp_path / "meta2")
-    assert "flyte_node_cache_dir" not in plain["model_loader_extra_config"]
+async def test_engine_args_downloads_the_checkpoint_into_the_node_cache(store, tmp_path):
+    """With node_cache_dir, the whole checkpoint lands there and vLLM loads it the normal way."""
+    root, _ = store
+    cache = tmp_path / "cache"
+    args = await model_streamer.engine_args(REMOTE, node_cache_dir=cache)
+
+    assert args == {"model": str(cache), "load_format": "auto"}
+    remote = _files(root / "bucket/models/tiny")
+    assert any(name.endswith(".safetensors") for name in remote)
+    local = {k: v for k, v in _files(cache).items() if not k.startswith(".flyte-weights")}
+    assert local == remote
+    assert (cache / ".flyte-weights-complete").read_text() == REMOTE
 
 
-def test_node_cache_downloads_once_for_all_ranks(store, tmp_path, monkeypatch):
-    """Ranks that load at the same time share one download and get every tensor."""
+def test_node_cache_downloads_once_for_engines_on_one_node(store, tmp_path, monkeypatch):
+    """Engines that start at the same time share one download; a later one reuses it."""
     import threading
 
-    from flyte.extras.model_streamer import ModelStreamer
+    import flyte.storage as storage
 
-    _, model = store
     downloads = []
-    real_download = ModelStreamer.download
+    real_get = storage.get
 
-    async def counting_download(self, local_dir):
-        downloads.append(local_dir)
-        return await real_download(self, local_dir)
+    async def counting_get(*args, **kwargs):
+        downloads.append(args)
+        return await real_get(*args, **kwargs)
 
-    monkeypatch.setattr(ModelStreamer, "download", counting_download)
+    monkeypatch.setattr(storage, "get", counting_get)
 
     cache = tmp_path / "cache"
     results: list[dict] = []
     errors: list[BaseException] = []
 
-    def rank():
+    def engine():
         try:
-            streamer = ModelStreamer(REMOTE)
-            results.append(dict(model_streamer._weights_from_node_cache(streamer, cache)))
+            results.append(asyncio.run(model_streamer.engine_args(REMOTE, node_cache_dir=cache)))
         except BaseException as exc:
             errors.append(exc)
 
-    threads = [threading.Thread(target=rank) for _ in range(4)]
+    threads = [threading.Thread(target=engine) for _ in range(4)]
     for t in threads:
         t.start()
     for t in threads:
@@ -174,81 +185,38 @@ def test_node_cache_downloads_once_for_all_ranks(store, tmp_path, monkeypatch):
 
     assert not errors, errors
     assert len(downloads) == 1
-    want = _want(model)
-    assert len(results) == 4
-    for got in results:
-        assert got.keys() == want.keys()
-        for name, tensor in want.items():
-            assert torch.equal(got[name], tensor), name
+    assert all(r["model"] == str(cache) for r in results)
 
-    # A later engine on the same node reuses the copy.
-    dict(model_streamer._weights_from_node_cache(ModelStreamer(REMOTE), cache))
+    asyncio.run(model_streamer.engine_args(REMOTE, node_cache_dir=cache))
     assert len(downloads) == 1
 
 
-def test_node_cache_rejects_another_checkpoint(store, tmp_path):
-    from flyte.extras.model_streamer import ModelStreamer
-
+@pytest.mark.asyncio
+async def test_node_cache_rejects_another_checkpoint(store, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
     (cache / ".flyte-weights-complete").write_text("s3://bucket/models/other")
     with pytest.raises(ValueError, match="already holds the weights of s3://bucket/models/other"):
-        dict(model_streamer._weights_from_node_cache(ModelStreamer(REMOTE), cache))
+        await model_streamer.engine_args(REMOTE, node_cache_dir=cache)
 
 
-def test_node_cache_ignores_a_crashed_download_of_another_checkpoint(store, tmp_path):
-    """Shards left by an unfinished download are removed, not loaded with the new weights."""
-    from flyte.extras.model_streamer import ModelStreamer
-    from safetensors.torch import save_file
-
-    _, model = store
+@pytest.mark.asyncio
+async def test_node_cache_clears_a_download_that_died(store, tmp_path):
+    """Shards and staging folders left by an unfinished download are removed before downloading again."""
+    root, _ = store
     cache = tmp_path / "cache"
     cache.mkdir()
-    # No completion marker: another checkpoint's download died partway.
-    save_file({"stale.weight": torch.ones(2)}, str(cache / "model-00009-of-00009.safetensors"))
-    save_file({"model.norm.weight": torch.zeros(32)}, str(cache / "model-00001-of-00002.safetensors"))
+    # No completion marker: an earlier download, possibly of another checkpoint, died partway.
+    (cache / "model-00009-of-00009.safetensors").write_bytes(b"stale")
+    (cache / "stale.safetensors.index.json").write_text("{}")
+    staging = cache / ".flyte-download-abc123"
+    staging.mkdir()
+    (staging / "part").write_bytes(b"x" * 10)
 
-    got = dict(model_streamer._weights_from_node_cache(ModelStreamer(REMOTE), cache))
+    await model_streamer.engine_args(REMOTE, node_cache_dir=cache)
 
-    want = _want(model)
-    assert got.keys() == want.keys()
-    for name, tensor in want.items():
-        assert torch.equal(got[name], tensor), name
     assert not (cache / "model-00009-of-00009.safetensors").exists()
-
-
-def test_node_cache_reads_only_indexed_tensors(store, tmp_path):
-    """With an index, a tensor or file it doesn't list is never loaded."""
-    from flyte.extras.model_streamer import ModelStreamer
-    from safetensors.torch import save_file
-
-    _, model = store
-    cache = tmp_path / "cache"
-    dict(model_streamer._weights_from_node_cache(ModelStreamer(REMOTE), cache))
-    save_file({"extra.weight": torch.ones(2)}, str(cache / "zz-extra.safetensors"))
-
-    got = dict(model_streamer._weights_from_node_cache(ModelStreamer(REMOTE), cache))
-    assert got.keys() == _want(model).keys()
-
-
-def test_loader_reads_node_cache_through_vllm(store, tmp_path):
-    pytest.importorskip("vllm")
-    from vllm.config.load import LoadConfig
-    from vllm.model_executor.model_loader import get_model_loader
-
-    _, model = store
-    model_streamer.register()
-    args = asyncio.run(model_streamer.engine_args(REMOTE, node_cache_dir=tmp_path / "cache"))
-    loader = get_model_loader(
-        LoadConfig(load_format=args["load_format"], model_loader_extra_config=args["model_loader_extra_config"])
-    )
-
-    class _Model:
-        pass
-
-    got = dict(loader.get_all_weights(None, _Model()))
-    want = _want(model)
-    assert got.keys() == want.keys()
-    for name, tensor in want.items():
-        assert torch.equal(got[name], tensor), name
-    assert (tmp_path / "cache/.flyte-weights-complete").read_text() == REMOTE
+    assert not (cache / "stale.safetensors.index.json").exists()
+    assert not staging.exists()
+    local = {k: v for k, v in _files(cache).items() if not k.startswith(".flyte-weights")}
+    assert local == _files(root / "bucket/models/tiny")

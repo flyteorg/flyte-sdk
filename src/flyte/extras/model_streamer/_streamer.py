@@ -293,28 +293,6 @@ class ModelStreamer:
         await _get_obstore_bypass(self.path, str(local), recursive=True, exclude=[SAFETENSORS_PATTERN])
         return local
 
-    async def download(self, local_dir: str | pathlib.Path) -> pathlib.Path:
-        """Download every file under the prefix, weights included.
-
-        Uses the same reads as `stream`, `chunk_size` byte ranges at most
-        `max_concurrency` at a time. For when the weights have to be on local
-        disk, such as several processes on one node that should fetch the
-        checkpoint once and then read it locally.
-        """
-        from flyte.storage._storage import _get_obstore_bypass
-
-        _claim_obstore()
-        local = pathlib.Path(local_dir)
-        await asyncio.to_thread(local.mkdir, parents=True, exist_ok=True)
-        await _get_obstore_bypass(
-            self.path,
-            str(local),
-            recursive=True,
-            chunk_size=self.chunk_size,
-            max_concurrency=self.max_concurrency,
-        )
-        return local
-
 
 def _place(tensor: torch.Tensor, device, dtype) -> torch.Tensor:
     if dtype is not None and tensor.is_floating_point() and tensor.dtype != dtype:

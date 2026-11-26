@@ -22,16 +22,18 @@ written to local disk.
 
 With tensor parallelism every rank streams the full checkpoint and keeps its
 own shard, so a node with eight ranks reads the checkpoint eight times. For a
-large model, pass `node_cache_dir` to `engine_args`: the first rank on each
-node downloads the checkpoint once into that directory, and every rank on the
-node reads it from there.
+large model, pass `node_cache_dir` to `engine_args`: it downloads the
+checkpoint into that directory once, before the engine starts, and vLLM loads
+it from there with its own loader.
 """
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import os
 import pathlib
+import shutil
 import tempfile
 import time
 import typing
@@ -46,14 +48,13 @@ LOAD_FORMAT = "flyte-streaming"
 _PATH = "flyte_remote_path"
 _CHUNK_SIZE = "flyte_chunk_size"
 _MAX_CONCURRENCY = "flyte_max_concurrency"
-_NODE_CACHE_DIR = "flyte_node_cache_dir"
-_KEYS = (_PATH, _CHUNK_SIZE, _MAX_CONCURRENCY, _NODE_CACHE_DIR)
+_KEYS = (_PATH, _CHUNK_SIZE, _MAX_CONCURRENCY)
 
-# Files the node cache keeps next to the weights: a lock the ranks on a node
-# take in turn, and a marker naming the checkpoint once it is fully downloaded.
+# Files the node cache keeps next to the checkpoint: a lock that engines on the
+# same node take in turn, and a marker naming the checkpoint once it is fully
+# downloaded.
 _CACHE_LOCK = ".flyte-weights.lock"
 _CACHE_COMPLETE = ".flyte-weights-complete"
-_INDEX = "model.safetensors.index.json"
 
 
 async def engine_args(
@@ -72,12 +73,16 @@ async def engine_args(
     `model`, `load_format` and `model_loader_extra_config`; pass any other
     engine argument alongside it.
 
-    With `node_cache_dir`, the weights are not streamed: the first rank on
-    each node downloads the checkpoint into that directory and every rank
-    loads it from there, so a tensor-parallel node reads the checkpoint once
-    instead of once per rank. The directory must hold the whole checkpoint
-    (a node-local disk, or a memory-backed volume), and it can be reused by a
-    later engine on the same node, which then skips the download.
+    With `node_cache_dir`, the weights are not streamed. The whole checkpoint
+    is downloaded into that directory, which becomes `model`, and vLLM loads
+    it with its own loader, so a tensor-parallel engine reads the checkpoint
+    from object storage once instead of once per rank. `local_dir` is not
+    used. The directory must hold the whole checkpoint; a memory-backed
+    volume or a fast local disk keeps the load quick. Engines on the same
+    node can share it: the first downloads and the rest wait, and a later
+    engine, or a container restarted in the same pod, finds the copy and
+    skips the download. Every rank of the engine must see the directory, so
+    this is for engines on a single node.
 
     Also sets `VLLM_WORKER_MULTIPROC_METHOD=spawn` unless it is already set.
     This call reads object storage through obstore, whose runtime does not
@@ -86,14 +91,15 @@ async def engine_args(
     """
     os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
     streamer = ModelStreamer(path, chunk_size=chunk_size, max_concurrency=max_concurrency)
+    if node_cache_dir is not None:
+        cache = await _download_to_node_cache(streamer, pathlib.Path(node_cache_dir))
+        return {"model": str(cache), "load_format": "auto"}
     local = await streamer.download_metadata(local_dir or tempfile.mkdtemp(prefix="model-"))
     extra: dict[str, typing.Any] = {
         _PATH: streamer.path,
         _CHUNK_SIZE: streamer.chunk_size,
         _MAX_CONCURRENCY: streamer.max_concurrency,
     }
-    if node_cache_dir is not None:
-        extra[_NODE_CACHE_DIR] = str(node_cache_dir)
     return {"model": str(local), "load_format": LOAD_FORMAT, "model_loader_extra_config": extra}
 
 
@@ -133,7 +139,6 @@ def _loader_class():
                 chunk_size=options.get(_CHUNK_SIZE),
                 max_concurrency=options.get(_MAX_CONCURRENCY),
             )
-            self._node_cache_dir = options.get(_NODE_CACHE_DIR)
 
         def download_model(self, model_config) -> None:
             # Nothing to download ahead of time: engine_args() fetched the
@@ -146,102 +151,85 @@ def _loader_class():
             self.counter_before_loading_weights = time.perf_counter()
             # vLLM calls this synchronously from inside the engine, possibly on
             # a thread with a running event loop; stream_sync() handles both.
-            if self._node_cache_dir:
-                yield from _weights_from_node_cache(self._streamer, self._node_cache_dir)
-            else:
-                yield from self._streamer.stream_sync()
+            yield from self._streamer.stream_sync()
             for source in getattr(model, "secondary_weights", ()):
                 yield from self._get_weights_iterator(source)
 
     return FlyteStreamingModelLoader
 
 
-def _weights_from_node_cache(
-    streamer: ModelStreamer, cache_dir: str | pathlib.Path
-) -> typing.Iterator[tuple[str, typing.Any]]:
-    """Yield the checkpoint's tensors from a per-node copy, downloading it once.
+async def _download_to_node_cache(streamer: ModelStreamer, cache: pathlib.Path) -> pathlib.Path:
+    """Download the checkpoint into `cache` unless a complete copy is already there.
 
-    The ranks on a node take a file lock in turn. The first one finds no
-    completion marker, downloads the checkpoint and writes the marker; the
-    rest find the marker and go straight to reading. A marker naming a
-    different checkpoint is an error, so a reused directory never loads the
-    wrong weights. A download that dies leaves no marker, and the next rank
-    removes its weight files and downloads again, so shards left by a crashed
-    download of another checkpoint are never read.
+    Engines on the same node take a file lock in turn. The first finds no
+    completion marker, clears whatever an unfinished download left behind
+    and downloads; the rest find the marker and return at once. A marker
+    naming a different checkpoint is an error, so a reused directory never
+    serves the wrong weights.
+    """
+    import flyte.storage as storage
+
+    lock = await asyncio.to_thread(_lock_node_cache, cache, streamer.path)
+    if lock is None:
+        return cache
+    try:
+        await storage.get(
+            streamer.path,
+            str(cache),
+            recursive=True,
+            chunk_size=streamer.chunk_size,
+            max_concurrency=streamer.max_concurrency,
+        )
+        await asyncio.to_thread((cache / _CACHE_COMPLETE).write_text, streamer.path)
+    finally:
+        _unlock(lock)
+    return cache
+
+
+def _lock_node_cache(cache: pathlib.Path, path: str) -> typing.IO | None:
+    """Take the node cache's lock and return it, or return None if the copy is complete.
+
+    Before returning the lock, clears what an unfinished download left behind.
     """
     import fcntl
 
-    from safetensors import safe_open
-
-    cache = pathlib.Path(cache_dir)
     cache.mkdir(parents=True, exist_ok=True)
-    marker = cache / _CACHE_COMPLETE
-    with open(cache / _CACHE_LOCK, "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        try:
-            if marker.exists():
-                held = marker.read_text().strip()
-                if held != streamer.path:
-                    raise ValueError(
-                        f"{cache} already holds the weights of {held}, not {streamer.path}. "
-                        "Use a separate node_cache_dir for each checkpoint."
-                    )
-            else:
-                for stale in _weight_files(cache):
-                    stale.unlink()
-                _run_in_thread(lambda: streamer.download(cache))
-                marker.write_text(streamer.path)
-        finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
-
-    # The index, when there is one, decides which files are read and which file
-    # each tensor comes from, the same as streaming; otherwise the first copy
-    # of a name wins.
-    index = cache / _INDEX
-    owner: dict[str, str] | None = None
-    if index.exists():
-        import json
-
-        owner = json.loads(index.read_text()).get("weight_map")
-    if owner is not None:
-        files = [cache / name for name in sorted(set(owner.values()))]
-    else:
-        files = sorted(cache.glob("*.safetensors"))
-    seen: set[str] = set()
-    for file in files:
-        with safe_open(str(file), framework="pt") as f:
-            for name in f.keys():
-                if name in seen or (owner is not None and owner.get(name) != file.name):
-                    continue
-                seen.add(name)
-                yield name, f.get_tensor(name)
+    lock = open(cache / _CACHE_LOCK, "a")  # released by _unlock
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    try:
+        marker = cache / _CACHE_COMPLETE
+        if marker.exists():
+            held = marker.read_text().strip()
+            if held != path:
+                raise ValueError(
+                    f"{cache} already holds the weights of {held}, not {path}. "
+                    "Use a separate node_cache_dir for each checkpoint."
+                )
+            _unlock(lock)
+            return None
+        _clear_partial_download(cache)
+    except BaseException:
+        _unlock(lock)
+        raise
+    return lock
 
 
-def _weight_files(cache: pathlib.Path) -> list[pathlib.Path]:
-    """The files in the node cache that `_weights_from_node_cache` would read."""
-    return [*cache.glob("*.safetensors"), *cache.glob("*.safetensors.index.json")]
+def _unlock(lock: typing.IO) -> None:
+    import fcntl
+
+    fcntl.flock(lock, fcntl.LOCK_UN)
+    lock.close()
 
 
-def _run_in_thread(make_coro: typing.Callable[[], typing.Awaitable[typing.Any]]) -> typing.Any:
-    """Run a coroutine to completion on a fresh event loop in another thread.
+def _clear_partial_download(cache: pathlib.Path) -> None:
+    """Remove what a download that died partway left in `cache`.
 
-    vLLM calls the loader synchronously, possibly from a thread that already
-    runs an event loop, where `asyncio.run` would refuse to start.
+    That is weight shards and index files, which vLLM would otherwise load
+    with the new checkpoint, and the reader's `.flyte-download-*` staging
+    folders, which on a memory-backed volume hold pod memory until the pod ends.
     """
-    import asyncio
-    import threading
-
-    result: dict[str, typing.Any] = {}
-
-    def _run():
-        try:
-            result["value"] = asyncio.run(make_coro())
-        except BaseException as exc:  # re-raised on the calling thread
-            result["error"] = exc
-
-    thread = threading.Thread(target=_run, name="model-streamer-download", daemon=True)
-    thread.start()
-    thread.join()
-    if "error" in result:
-        raise result["error"]
-    return result.get("value")
+    for path in cache.iterdir():
+        if path.name.startswith(".flyte-download-") and path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+        elif path.name.endswith((".safetensors", ".safetensors.index.json")):
+            path.unlink()
