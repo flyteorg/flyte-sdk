@@ -8,9 +8,9 @@ below are absent) and the completed model turns replay from their recorded
 ``flyte.trace`` records, so the run self-heals without redoing either.
 
 What is and isn't replayed: model turns are recorded through Hermes's own
-``llm_execution`` middleware (hermes-agent >= 0.17), which sits below the agent
-loop on every provider call, so a retry replays them instead of re-calling (and
-re-billing) the model. A streamed turn is recorded once it is fully drained, so
+``llm_execution`` middleware, which sits below the agent loop on every
+provider call, so a retry replays them instead of re-calling (and re-billing)
+the model. A streamed turn is recorded once it is fully drained, so
 a replayed turn returns the completed response and does not re-emit deltas.
 Tool calls are durable regardless: each ``@tool`` task is a Flyte child action
 with retries and caching, and the enclosing task's ``retries=`` provides the
@@ -31,12 +31,25 @@ import flyte
 
 from flyteplugins.agents.hermes import run_agent, tool
 
+# hermes-agent is installed from git because upstream stopped publishing to
+# PyPI. Its setup.py only builds a wheel when HERMES_NIX_BUILD=1, and its own
+# pins conflict on Pillow, so the install overrides Pillow the same way
+# upstream's lock does.
+HERMES_AGENT_INSTALL = [
+    "echo pillow==13.0.0 > /tmp/hermes-overrides.txt",
+    "HERMES_NIX_BUILD=1 uv pip install --override /tmp/hermes-overrides.txt"
+    " 'hermes-agent @ git+https://github.com/NousResearch/hermes-agent@v0.23.4'",
+]
+
 env = flyte.TaskEnvironment(
     "hermes-crash-resume",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
-    image=flyte.Image.from_debian_base(name="hermes-crash-resume").with_local_v2_plugins(
-        ["flyteplugins-agents-core", "flyteplugins-agents-hermes"]
+    image=(
+        flyte.Image.from_debian_base(name="hermes-crash-resume", python_version=(3, 14))
+        .with_apt_packages("git")
+        .with_commands(HERMES_AGENT_INSTALL)
+        .with_local_v2_plugins(["flyteplugins-agents-core", "flyteplugins-agents-hermes"])
     ),
 )
 
