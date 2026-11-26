@@ -173,6 +173,22 @@ def _get_credentials_from_helper(helper: str, registry: str) -> tuple[str, str] 
         return None
 
 
+def _resolve_auths_key(auths: dict[str, Any], registry: str) -> str:
+    """Return the `auths` key holding `registry`'s credentials.
+
+    `docker login` stores Docker Hub as `https://index.docker.io/v1/` and some registries with a
+    scheme, so a requested `docker.io` or bare host is matched to that entry by normalized host.
+    An exact key always wins; with no match the registry is returned unchanged.
+    """
+    if registry in auths:
+        return registry
+    wanted = _normalize_registry(registry)
+    for key in auths:
+        if _normalize_registry(key) == wanted:
+            return key
+    return registry
+
+
 def create_dockerconfigjson_from_config(
     registries: list[str] | None = None,
     docker_config_path: str | Path | None = None,
@@ -203,26 +219,29 @@ def create_dockerconfigjson_from_config(
     # Create new config structure with empty auths
     new_config: dict[str, Any] = {"auths": {}}
 
+    auths = config.get("auths", {})
+
     # Use specified registries or all from config
-    target_registries = registries or list(config.get("auths", {}).keys())
+    target_registries = registries or list(auths.keys())
 
     if not target_registries:
         raise ValueError("No registries found in Docker config and none specified")
 
     for registry in target_registries:
-        registry_config = config.get("auths", {}).get(registry, {})
+        key = _resolve_auths_key(auths, registry)
+        registry_config = auths.get(key, {})
         if registry_config.get("auth"):
             # Direct auth token exists
-            new_config["auths"][registry] = {"auth": registry_config["auth"]}
+            new_config["auths"][key] = {"auth": registry_config["auth"]}
         else:
             # Try to get credentials from helper
-            helper = _get_credential_helper(config, registry)
+            helper = _get_credential_helper(config, key)
             if helper:
-                creds = _get_credentials_from_helper(helper, registry)
+                creds = _get_credentials_from_helper(helper, key)
                 if creds:
                     username, password = creds
                     auth_string = f"{username}:{password}"
-                    new_config["auths"][registry] = {"auth": base64.b64encode(auth_string.encode()).decode()}
+                    new_config["auths"][key] = {"auth": base64.b64encode(auth_string.encode()).decode()}
                 else:
                     logger.warning(f"Could not retrieve credentials for {registry} from credential helper")
             else:
