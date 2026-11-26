@@ -53,6 +53,7 @@ from flyte.remote import ActionOutputs, Run
 
 if TYPE_CHECKING:
     from flyteidl2.imagebuilder import definition_pb2 as image_definition_pb2
+    from flyteidl2.imagebuilder import payload_pb2 as image_payload__pb2
 
     from flyte._build import ImageBuild
 
@@ -126,6 +127,7 @@ class RemoteImageChecker(ImageChecker):
                 organization=cfg.org,
                 project_id=ProjectIdentifier(organization=cfg.org, domain=cfg.domain, name=cfg.project),
             )
+            _set_image_queue(req)
             # Route through the cluster-aware client so zero-trust backends resolve
             # the image lookup to the owning dataplane via SelectCluster.
             resp = await cfg.client.image_service.get_image(req)
@@ -135,6 +137,23 @@ class RemoteImageChecker(ImageChecker):
         except Exception:
             status.info(f"Image {image_name} was not found or has expired")
             return None
+
+
+def _set_image_queue(req: "image_payload__pb2.GetImageRequest") -> None:
+    """Name the queue the lookup is for (`_image_cache_queue`, set by ImageBuildEngine) on the
+    request, so the image is looked up in the registry of that queue's cluster pool, where an image
+    built for it is pushed, rather than the project/domain default pool's. A no-op on flyteidl2
+    versions without the `queue` field."""
+    from flyte._internal.imagebuild.image_builder import _image_cache_queue
+
+    queue = _image_cache_queue.get()
+    if not queue:
+        return
+    try:
+        req.queue = queue  # ty: ignore[unresolved-attribute]
+    except AttributeError:
+        # flyteidl2 predates GetImageRequest.queue (flyteorg/flyte#8483).
+        pass
 
 
 class RemoteImageBuilder(ImageBuilder):
