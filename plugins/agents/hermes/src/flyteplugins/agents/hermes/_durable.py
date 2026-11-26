@@ -30,17 +30,18 @@ passthrough.
 callback bridges with `flyte._utils.asyn.run_sync`, the same way the CrewAI
 adapter does.
 
-Downstream Hermes consumes the response purely by attribute access
+Downstream Hermes reads the response object by attribute access
 (`response.choices[0].message.content` / `.tool_calls` / `.reasoning_content`,
 `.finish_reason`, `.usage`, `.model` for the chat-completions and bedrock
 transports, `response.content` blocks for `anthropic_messages`,
-`response.output` for codex). No `isinstance` check and no method call such as
-`model_dump()` is made on the response, which was verified against the
-installed hermes-agent. A recursively rebuilt `types.SimpleNamespace` therefore
-substitutes for the provider object on replay, which is also what Hermes' own
-streaming path returns. `durable_step` round-trips the result through
-`dumps`/`loads` even on the recording pass, so the live path sees the same
-rebuilt shape as a replay and the two cannot drift.
+`response.output` for codex), with no `isinstance` check or `model_dump()` call
+on it. Some fields are plain dicts in the provider SDKs, though, and Hermes
+treats those as data: the Anthropic transport runs `json.dumps(block.input)` on
+every tool_use block. So recorded dicts are rebuilt as `_AttrDict`, a dict that
+also allows attribute access, which serves both kinds of reader.
+`durable_step` round-trips the result through `dumps`/`loads` even on the
+recording pass, so the live path sees the same rebuilt shape as a replay and
+the two cannot drift.
 
 Streaming turns are already fully drained by the time `next_call` returns, so
 they are recorded as a single completed turn. A replayed turn does not re-emit
@@ -59,7 +60,6 @@ from __future__ import annotations
 import contextvars
 import json
 import time
-import types
 import typing
 
 from flyte._logging import logger
@@ -138,15 +138,40 @@ def _to_plain(value: typing.Any) -> typing.Any:
     return jsonable(value)
 
 
-def _rebuild(value: typing.Any) -> typing.Any:
-    """Rebuild recorded plain data into the attribute shape Hermes reads.
+class _AttrDict(dict):
+    """A dict whose keys can also be read and written as attributes.
 
-    Dicts become `SimpleNamespace` so nested access such as
-    `response.choices[0].message.tool_calls[0].function.arguments` works;
-    lists stay lists; scalars pass through.
+    Hermes reads provider objects by attribute
+    (`response.choices[0].message.tool_calls[0].function.arguments`), but it
+    also treats some fields as plain data, for example `json.dumps(block.input)`
+    on an Anthropic tool_use block. A dict subclass works for both. A key named
+    like a dict method (`items`, `get`, ...) is only reachable by subscript.
+    """
+
+    def __getattr__(self, name: str) -> typing.Any:
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+    def __setattr__(self, name: str, value: typing.Any) -> None:
+        self[name] = value
+
+    def __delattr__(self, name: str) -> None:
+        try:
+            del self[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+
+def _rebuild(value: typing.Any) -> typing.Any:
+    """Rebuild recorded plain data into the shape Hermes reads.
+
+    Dicts become `_AttrDict` so both attribute access and dict use work; lists
+    stay lists; scalars pass through.
     """
     if isinstance(value, dict):
-        return types.SimpleNamespace(**{k: _rebuild(v) for k, v in value.items()})
+        return _AttrDict({k: _rebuild(v) for k, v in value.items()})
     if isinstance(value, list):
         return [_rebuild(v) for v in value]
     return value

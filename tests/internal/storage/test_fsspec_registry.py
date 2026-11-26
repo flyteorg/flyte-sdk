@@ -11,6 +11,8 @@ import sys
 
 import fsspec
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.implementations.memory import MemoryFileSystem
@@ -170,30 +172,31 @@ def test_flyte_protocol_registration_intact():
 
 
 class RejectingS3FileSystem(fsspec.AbstractFileSystem):
-    """Stand-in for s3fs.S3FileSystem that fails the test if anything resolves "s3" through the registry."""
+    """Stand-in for s3fs/adlfs that fails the test if anything resolves "s3" or "abfs" through the registry."""
 
     protocol = "s3"
     cachable = False
 
     def __init__(self, *args, **kwargs):
-        raise AssertionError(f"flyte resolved s3 through the global fsspec registry with {kwargs}")
+        raise AssertionError(f"flyte resolved a protocol through the global fsspec registry with {kwargs}")
 
 
 class InMemoryS3FileSystem(MemoryFileSystem):
-    """Stand-in for flyte's own obstore-backed S3 filesystem."""
+    """Stand-in for flyte's own obstore-backed S3 and Azure filesystems."""
 
     protocol = "s3"
     cachable = False
 
     @classmethod
     def _strip_protocol(cls, path):
-        return super()._strip_protocol(path.removeprefix("s3://"))
+        return super()._strip_protocol(path.split("://", 1)[-1])
 
 
 @pytest.fixture
 def flyte_owned_s3(restore_fsspec_registry, monkeypatch):
     """s3fs-style owns the registry; flyte's own filesystem is an in-memory stand-in."""
     fsspec.register_implementation("s3", RejectingS3FileSystem, clobber=True)
+    fsspec.register_implementation("abfs", RejectingS3FileSystem, clobber=True)
     fs = InMemoryS3FileSystem()
     calls = []
 
@@ -206,10 +209,14 @@ def flyte_owned_s3(restore_fsspec_registry, monkeypatch):
     MemoryFileSystem.store.clear()
 
 
+AZURE_URI = "abfs://ctr@acct.dfs.core.windows.net/ds"
+
+
 @pytest.mark.asyncio
-async def test_pandas_parquet_handlers_do_not_use_registry(flyte_owned_s3):
+@pytest.mark.parametrize("uri", ["s3://bkt/ds", AZURE_URI])
+async def test_pandas_parquet_handlers_do_not_use_registry(flyte_owned_s3, uri):
     """
-    The pandas handlers must reach S3 through flyte's own filesystem. Handing flyte's obstore-shaped
+    The pandas handlers must reach S3 and Azure through flyte's own filesystem. Handing flyte's obstore-shaped
     kwargs to pandas as storage_options resolves "s3" through the registry, and s3fs rejects them
     ("AioSession.__init__() got an unexpected keyword argument 'retry_config'").
     """
@@ -217,9 +224,9 @@ async def test_pandas_parquet_handlers_do_not_use_registry(flyte_owned_s3):
     df = pd.DataFrame({"a": [1, 2, 3]})
 
     sd = await basic_dfs.PandasToParquetEncodingHandler().encode(
-        DataFrame.from_df(df, uri="s3://bkt/ds"), types_pb2.StructuredDatasetType()
+        DataFrame.from_df(df, uri=uri), types_pb2.StructuredDatasetType()
     )
-    assert fs.exists("bkt/ds/00000")
+    assert fs.exists(f"{fs._strip_protocol(uri)}/00000")
 
     out = await basic_dfs.ParquetToPandasDecodingHandler().decode(sd, literals_pb2.StructuredDatasetMetadata())
     pd.testing.assert_frame_equal(out, df)
@@ -248,6 +255,19 @@ async def test_pandas_csv_handlers_do_not_use_registry(flyte_owned_s3, monkeypat
     out = await basic_dfs.CSVToPandasDecodingHandler().decode(sd, literals_pb2.StructuredDatasetMetadata())
     pd.testing.assert_frame_equal(out, df)
     assert calls[-1] == {"path": "s3://bkt/csv/data.csv", "anonymous": True}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("uri", ["s3://bkt/arrow", AZURE_URI])
+async def test_arrow_parquet_decoder_uses_flyte_filesystem(flyte_owned_s3, uri):
+    fs, calls = flyte_owned_s3
+    table = pa.table({"a": [1, 2, 3]})
+    pq.write_table(table, f"{fs._strip_protocol(uri)}/00000", filesystem=fs)
+
+    sd = literals_pb2.StructuredDataset(uri=uri)
+    out = await basic_dfs.ParquetToArrowDecodingHandler().decode(sd, literals_pb2.StructuredDatasetMetadata())
+    assert out.equals(table)
+    assert calls[-1] == {"path": uri, "anonymous": False}
 
 
 def test_pandas_handlers_leave_other_paths_to_pandas(tmp_path):

@@ -11,8 +11,24 @@ run it durably on Flyte. The adapter provides:
 
 Each tool call runs as a durable Flyte child action, each model turn is
 recorded for replay via `flyte.trace` (through Hermes's `llm_execution`
-middleware, hermes-agent >= 0.17), and the run timeline is rendered into the
-Flyte task report.
+middleware), and the run timeline is rendered into the Flyte task report.
+
+hermes-agent is not installed with this package. Upstream no longer publishes
+to PyPI, and the last release there (0.19.0) has open security advisories.
+Install it from git on Python 3.14:
+
+    echo pillow==13.0.0 > overrides.txt
+    HERMES_NIX_BUILD=1 uv pip install --override overrides.txt \\
+        "hermes-agent @ git+https://github.com/NousResearch/hermes-agent@v0.23.4"
+
+HERMES_NIX_BUILD=1 lets its setup.py build a wheel, and the override settles a
+Pillow pin conflict between hermes-agent and browser-harness, the same way
+upstream's own lock does.
+
+Recent hermes-agent releases hide plugin tools, Flyte tools included, behind a
+tool_search / tool_call bridge. Calls through the bridge still run as durable
+Flyte tasks. To show the tools to the model directly, set
+tools.tool_search.enabled to off in your hermes config.
 """
 
 from ._run import run_agent, run_agent_sync

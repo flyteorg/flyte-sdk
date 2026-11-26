@@ -351,10 +351,8 @@ def _script_dependencies(script: Path) -> List[str]:
 
 
 def _load_toml(text: str) -> dict:
-    try:
-        import tomllib
-    except ImportError:  # Python 3.10
-        raise ValueError("reading pyproject metadata needs Python 3.11+")
+    import tomllib
+
     return tomllib.loads(text)
 
 

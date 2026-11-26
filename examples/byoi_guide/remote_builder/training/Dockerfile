@@ -3,7 +3,7 @@
 # Python is at /opt/venv/bin/python.
 # No PYTHONPATH set, PATH doesn't include /opt/venv/bin.
 
-FROM python:3.10-slim
+FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN python -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir \
-        torch==2.1.2+cpu \
+        torch==2.2.0+cpu \
         numpy==1.26.4 \
     --extra-index-url https://download.pytorch.org/whl/cpu
 
