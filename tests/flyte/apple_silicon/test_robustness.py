@@ -452,6 +452,28 @@ def test_requirements_files_carry_over_to_the_mac(tmp_path):
     assert validate_pip_args(pip_args)
 
 
+def test_repeated_index_options_keep_each_flag_paired_with_its_value(tmp_path):
+    from flyte._internal.runtime.resources_serde import get_apple_silicon_execution_env
+
+    shared = "--extra-index-url https://download.pytorch.org/whl/cpu\n--pre\n"
+    (tmp_path / "common.txt").write_text(shared)
+    (tmp_path / "a.txt").write_text(shared + "-r common.txt\ntorch\n")
+    (tmp_path / "b.txt").write_text(shared + "torchvision\n")
+    image = (
+        flyte.Image.from_debian_base()
+        .with_requirements(tmp_path / "a.txt")
+        .with_requirements(tmp_path / "b.txt")
+        .with_pip_packages("torchaudio", extra_index_urls=["https://download.pytorch.org/whl/cpu"], pre=True)
+    )
+    env = get_apple_silicon_execution_env(flyte.Resources(gpu="AppleSilicon"), image, None)
+    assert json.loads(env["_F_APPLE_SILICON_HOST_PIP_ARGS"]) == [
+        "--extra-index-url",
+        "https://download.pytorch.org/whl/cpu",
+        "--prerelease",
+        "allow",
+    ]
+
+
 def test_a_remote_override_keeps_the_task_on_the_mac():
     from flyte.remote._task import _apple_silicon_env_after_override
 
