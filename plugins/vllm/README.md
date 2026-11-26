@@ -82,6 +82,8 @@ on a memory-backed volume or a fast local disk: the ranks all read from it, and 
 disk makes the load slow. The copy stays until the pod ends. Engines on the same node
 can share it, and a later engine, or a container restarted in the same pod, skips the
 download. Every rank has to see the directory, so this is for engines on a single node.
+The download keeps 256 reads of 16 MiB in flight by default, about 4 GiB of memory;
+`chunk_size` and `max_concurrency` override that.
 
 Examples: `examples/genai/vllm/vllm_task_streamed.py`,
 `examples/ml/batch_inference_streamed.py`, `examples/ml/embed_streamed.py`.

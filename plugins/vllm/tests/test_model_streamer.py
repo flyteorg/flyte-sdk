@@ -192,6 +192,24 @@ def test_node_cache_downloads_once_for_engines_on_one_node(store, tmp_path, monk
 
 
 @pytest.mark.asyncio
+async def test_node_cache_download_reads_defaults_and_overrides(store, tmp_path, monkeypatch):
+    """The node cache downloads with its own fast defaults unless the caller sets the reads."""
+    import flyte.storage as storage
+
+    seen = []
+    real_get = storage.get
+
+    async def recording_get(*args, **kwargs):
+        seen.append((kwargs["chunk_size"], kwargs["max_concurrency"]))
+        return await real_get(*args, **kwargs)
+
+    monkeypatch.setattr(storage, "get", recording_get)
+    await model_streamer.engine_args(REMOTE, node_cache_dir=tmp_path / "a")
+    await model_streamer.engine_args(REMOTE, node_cache_dir=tmp_path / "b", chunk_size=8 << 20, max_concurrency=4)
+    assert seen == [(16 << 20, 256), (8 << 20, 4)]
+
+
+@pytest.mark.asyncio
 async def test_node_cache_rejects_another_checkpoint(store, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()

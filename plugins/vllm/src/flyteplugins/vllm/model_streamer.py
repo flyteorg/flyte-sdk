@@ -56,6 +56,13 @@ _KEYS = (_PATH, _CHUNK_SIZE, _MAX_CONCURRENCY)
 _CACHE_LOCK = ".flyte-weights.lock"
 _CACHE_COMPLETE = ".flyte-weights-complete"
 
+# Default reads for the node cache download. Throughput follows the number of reads in
+# flight (each one runs at about 20 MB/s from a remote object store), and the reader holds
+# about one chunk per read in memory, so many small reads are fast and cheap: 256 x 16 MiB
+# is about 4 GiB in flight. Streaming keeps its own, lower defaults.
+_NODE_CACHE_CHUNK_SIZE = 16 * 1024 * 1024
+_NODE_CACHE_MAX_CONCURRENCY = 256
+
 
 async def engine_args(
     path: str,
@@ -82,7 +89,9 @@ async def engine_args(
     node can share it: the first downloads and the rest wait, and a later
     engine, or a container restarted in the same pod, finds the copy and
     skips the download. Every rank of the engine must see the directory, so
-    this is for engines on a single node.
+    this is for engines on a single node. The download defaults to 256 reads
+    of 16 MiB in flight (about 4 GiB of memory); `chunk_size` and
+    `max_concurrency` override them.
 
     Also sets `VLLM_WORKER_MULTIPROC_METHOD=spawn` unless it is already set.
     This call reads object storage through obstore, whose runtime does not
@@ -92,7 +101,12 @@ async def engine_args(
     os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
     streamer = ModelStreamer(path, chunk_size=chunk_size, max_concurrency=max_concurrency)
     if node_cache_dir is not None:
-        cache = await _download_to_node_cache(streamer, pathlib.Path(node_cache_dir))
+        cache = await _download_to_node_cache(
+            streamer.path,
+            pathlib.Path(node_cache_dir),
+            chunk_size=chunk_size or _NODE_CACHE_CHUNK_SIZE,
+            max_concurrency=max_concurrency or _NODE_CACHE_MAX_CONCURRENCY,
+        )
         return {"model": str(cache), "load_format": "auto"}
     local = await streamer.download_metadata(local_dir or tempfile.mkdtemp(prefix="model-"))
     extra: dict[str, typing.Any] = {
@@ -158,7 +172,9 @@ def _loader_class():
     return FlyteStreamingModelLoader
 
 
-async def _download_to_node_cache(streamer: ModelStreamer, cache: pathlib.Path) -> pathlib.Path:
+async def _download_to_node_cache(
+    path: str, cache: pathlib.Path, *, chunk_size: int, max_concurrency: int
+) -> pathlib.Path:
     """Download the checkpoint into `cache` unless a complete copy is already there.
 
     Engines on the same node take a file lock in turn. The first finds no
@@ -169,18 +185,12 @@ async def _download_to_node_cache(streamer: ModelStreamer, cache: pathlib.Path) 
     """
     import flyte.storage as storage
 
-    lock = await asyncio.to_thread(_lock_node_cache, cache, streamer.path)
+    lock = await asyncio.to_thread(_lock_node_cache, cache, path)
     if lock is None:
         return cache
     try:
-        await storage.get(
-            streamer.path,
-            str(cache),
-            recursive=True,
-            chunk_size=streamer.chunk_size,
-            max_concurrency=streamer.max_concurrency,
-        )
-        await asyncio.to_thread((cache / _CACHE_COMPLETE).write_text, streamer.path)
+        await storage.get(path, str(cache), recursive=True, chunk_size=chunk_size, max_concurrency=max_concurrency)
+        await asyncio.to_thread((cache / _CACHE_COMPLETE).write_text, path)
     finally:
         _unlock(lock)
     return cache
