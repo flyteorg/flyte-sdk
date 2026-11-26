@@ -12,6 +12,7 @@ import os
 import sys
 import textwrap
 import threading
+import types
 import typing
 from abc import ABC, abstractmethod
 from collections import OrderedDict
@@ -455,11 +456,11 @@ class RestrictedTypeTransformer(TypeTransformer[T], ABC):
 
 
 def _unwrap_optional(tp: type) -> type:
-    """Unwrap Optional[X] to X. Returns tp unchanged if not Optional."""
+    """Unwrap Optional[X], including the PEP 604 `X | None` form, to X. Returns tp unchanged otherwise."""
     origin = get_origin(tp)
-    args = get_args(tp)
-    if origin is typing.Union:
-        non_none = [a for a in args if a is not type(None)]
+    # typing.Optional reports typing.Union; `X | None` reports types.UnionType on pythons before 3.14.
+    if origin is typing.Union or origin is types.UnionType:
+        non_none = [a for a in get_args(tp) if a is not type(None)]
         if len(non_none) == 1:
             return non_none[0]
     return tp
@@ -542,6 +543,72 @@ def _walk_enum_fields(data: dict, model_type: Type[BaseModel], *, to_names: bool
     return result
 
 
+def _strip_computed_field_value(value: typing.Any, field_type: typing.Any) -> typing.Any:
+    """Recurse into a field value, stripping computed fields from nested models, lists, dicts, tuples and unions."""
+    if value is None:
+        return None
+
+    resolved = _unwrap_optional(field_type)
+
+    if isinstance(resolved, type) and issubclass(resolved, BaseModel):
+        return _strip_computed_fields(value, resolved) if isinstance(value, dict) else value
+
+    origin = get_origin(resolved)
+    args = get_args(resolved)
+
+    # A genuine multi-type union (e.g. ModelA | ModelB): strip against every model member.
+    if (origin is typing.Union or origin is types.UnionType) and isinstance(value, dict):
+        for arg in args:
+            if isinstance(arg, type) and issubclass(arg, BaseModel):
+                value = _strip_computed_fields(value, arg)
+        return value
+
+    if origin is list and args and isinstance(value, list):
+        return [_strip_computed_field_value(item, args[0]) for item in value]
+
+    if origin is dict and len(args) == 2 and isinstance(value, dict):
+        return {k: _strip_computed_field_value(v, args[1]) for k, v in value.items()}
+
+    if origin is tuple and args and isinstance(value, (list, tuple)):
+        if len(args) == 2 and args[1] is Ellipsis:
+            return [_strip_computed_field_value(item, args[0]) for item in value]
+        # Leave a wrong-length value untouched: zip would truncate it and hide the length error from validation.
+        if len(value) != len(args):
+            return value
+        return [_strip_computed_field_value(item, t) for item, t in zip(value, args)]
+
+    return value
+
+
+def _strip_computed_fields(data: typing.Any, model_type: typing.Any) -> typing.Any:
+    """Drop @computed_field keys from a serialized dict before `model_validate`.
+
+    Models are serialized with their computed fields included, so they stay in stored outputs and
+    the UI. A model with `extra="forbid"` would reject those keys on the way back, so remove them
+    here, recursing through nested models, lists and dicts. Inspecting `model_computed_fields`
+    directly keeps this working on every pydantic version and also loads outputs stored before this
+    fix. Values are never altered, so `extra="forbid"` still rejects genuinely unexpected keys.
+    """
+    if not isinstance(data, dict):
+        return data
+    if not (isinstance(model_type, type) and issubclass(model_type, BaseModel)):
+        return data
+
+    computed = set(getattr(model_type, "model_computed_fields", None) or {})
+    try:
+        hints = typing.get_type_hints(model_type)
+    except Exception:
+        hints = {}
+
+    result = {}
+    for key, value in data.items():
+        if key in computed:
+            continue
+        field_type = hints.get(key)
+        result[key] = _strip_computed_field_value(value, field_type) if field_type is not None else value
+    return result
+
+
 class CustomPydanticJsonSchemaGenerator(GenerateJsonSchema):
     """Custom JSON schema generator that uses enum member names instead of values.
 
@@ -593,7 +660,9 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         # working since UnionTransformer delegates here and catches TypeTransformerFailedError.
         if isinstance(python_val, dict):
             try:
-                python_val = python_type.model_validate(python_val, strict=False, context={"deserialize": True})
+                python_val = python_type.model_validate(
+                    _strip_computed_fields(python_val, python_type), strict=False, context={"deserialize": True}
+                )
             except Exception as e:
                 raise TypeTransformerFailedError(f"Failed to coerce dict into {python_type}: {e}") from e
 
@@ -602,6 +671,8 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         # and prevents deadlocks when @model_serializer tries to run async code via loop_manager.
         await _invoke_lazy_uploaders(python_val)
 
+        # Keep computed fields in the output so they stay in stored results and the UI; they are
+        # stripped again on the read side before validation (see _strip_computed_fields).
         json_str = python_val.model_dump_json()
         dict_obj = json.loads(json_str)
         dict_obj = _walk_enum_fields(dict_obj, type(python_val), to_names=True)
@@ -612,6 +683,7 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         if binary_idl_object.tag == MESSAGEPACK:
             dict_obj = msgpack.loads(binary_idl_object.value, strict_map_key=False)
             dict_obj = _walk_enum_fields(dict_obj, expected_python_type, to_names=False)
+            dict_obj = _strip_computed_fields(dict_obj, expected_python_type)
             python_val = expected_python_type.model_validate(dict_obj, strict=False, context={"deserialize": True})
             return python_val
         else:
@@ -630,6 +702,7 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         json_str = _json_format.MessageToJson(lv.scalar.generic)
         dict_obj = json.loads(json_str)
         dict_obj = _walk_enum_fields(dict_obj, expected_python_type, to_names=False)
+        dict_obj = _strip_computed_fields(dict_obj, expected_python_type)
         python_val = expected_python_type.model_validate(dict_obj, strict=False, context={"deserialize": True})
         return python_val
 

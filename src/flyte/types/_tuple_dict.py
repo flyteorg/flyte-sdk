@@ -224,8 +224,11 @@ class PydanticWrappingTransformer(TypeTransformer[T]):
         - Dicts containing the above
         """
         if isinstance(value, BaseModel):
-            # Convert Pydantic models to dict
-            return value.model_dump()
+            # Strip computed fields so a nested model with extra="forbid" validates; they are
+            # rebuilt when the wrapper is serialized, so they still reach stored outputs.
+            from ._type_engine import _strip_computed_fields
+
+            return _strip_computed_fields(value.model_dump(), type(value))
         elif hasattr(value, "_asdict"):
             # Convert NamedTuple to dict, recursively handling nested values
             data = value._asdict()
