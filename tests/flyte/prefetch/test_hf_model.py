@@ -539,6 +539,26 @@ def test_stream_to_remote_dir_raises_when_a_file_fails(tmp_path):
         _stream(files, str(tmp_path), concurrency=2, hfs=_FakeHubFS(files, fail="bad.safetensors"))
 
 
+def test_stream_to_remote_dir_stops_other_copies_when_one_fails(tmp_path):
+    """A failure stops the copies still in flight instead of waiting for them.
+
+    The slow file takes about 5 s to copy one byte at a time. The failing file
+    errors at once, so the call should return long before the slow copy ends.
+    """
+    import time
+
+    def slow_read():
+        time.sleep(0.005)
+
+    files = {"slow.safetensors": b"s" * 1000, "bad.safetensors": b"y" * 10}
+    hfs = _FakeHubFS(files, on_read=slow_read, fail="bad.safetensors")
+    start = time.monotonic()
+    with patch("flyte.prefetch._hf_model.STREAM_CHUNK_SIZE", 1):
+        with pytest.raises(OSError, match=r"cannot read bad\.safetensors"):
+            _stream(files, str(tmp_path), concurrency=2, hfs=hfs)
+    assert time.monotonic() - start < 2
+
+
 # =============================================================================
 # Image Package Constants Tests
 # =============================================================================

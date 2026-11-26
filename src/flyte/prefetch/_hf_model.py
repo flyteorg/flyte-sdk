@@ -426,8 +426,10 @@ def _stream_to_remote_dir(
     Stream files directly from HuggingFace to a remote directory.
 
     Files are copied `concurrency` at a time, each one in chunks, so nothing is
-    staged on local disk. If any file fails, the first error is raised once the
-    copies already in flight have finished. Progress goes to the report's
+    staged on local disk. If any file fails, or the copy is interrupted, the
+    other copies stop within one chunk and the first error is raised. Without
+    that, leaving the thread pool would wait for every copy in flight, which on
+    a large checkpoint takes minutes. Progress goes to the report's
     "Progress" tab, since a long copy is otherwise silent at the default log
     level.
 
@@ -441,6 +443,7 @@ def _stream_to_remote_dir(
     Returns:
         Tuple of (remote_dir_path, readme_content).
     """
+    import threading
     import time
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -479,6 +482,11 @@ def _stream_to_remote_dir(
         f"Streaming {len(files)} files ({total_bytes / 1e9:.1f} GB) to {remote_dir_path}, {concurrency} at a time"
     )
 
+    stop = threading.Event()
+
+    class _Stopped(Exception):
+        pass
+
     def copy(file_info: dict) -> int:
         file_name = file_info["name"].split("/")[-1]
         remote_file_path = f"{remote_dir_path}/{file_name}"
@@ -486,6 +494,8 @@ def _stream_to_remote_dir(
         with hfs.open(file_info["name"], "rb", revision=commit) as src:
             with fs.open(remote_file_path, "wb") as dst:
                 while True:
+                    if stop.is_set():
+                        raise _Stopped(file_name)
                     chunk = src.read(STREAM_CHUNK_SIZE)
                     if not chunk:
                         break
@@ -513,6 +523,7 @@ def _stream_to_remote_dir(
                     flyte.report.flush()
                     last_flush = now
         except BaseException:
+            stop.set()
             for pending in futures:
                 pending.cancel()
             raise
