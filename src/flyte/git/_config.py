@@ -241,7 +241,7 @@ class GitStatus:
         try:
             path_obj = Path(path).resolve()
             relative_path = path_obj.relative_to(self.repo_dir)
-            return str(relative_path)
+            return relative_path.as_posix()
         except Exception as e:
             logger.warning(f"Failed to get relative path for {path}: {e}")
             return ""

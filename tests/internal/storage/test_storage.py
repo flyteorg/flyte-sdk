@@ -21,6 +21,7 @@ from flyte.storage._storage import (
     _is_obstore_supported_protocol,
     _obstore_filesystem_class,
     _open_obstore_bypass,
+    strip_file_header,
 )
 
 
@@ -585,6 +586,19 @@ async def test_put_stream_uses_configured_chunk_size_without_size_hint(monkeypat
 )
 def test_is_remote(path, expected):
     assert storage.is_remote(path) == expected
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows file URIs need URL parsing for drive and UNC paths")
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("file:///tmp/a#b?c", "/tmp/a#b?c"),
+        ("file:///tmp/a%23b%3Fc", "/tmp/a#b?c"),
+        ("file://tmp/a", "tmp/a"),
+    ],
+)
+def test_strip_file_header_preserves_posix_path_characters(path, expected):
+    assert strip_file_header(path) == expected
 
 
 class TestAzureAccountFromUri:

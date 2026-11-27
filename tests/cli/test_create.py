@@ -1,6 +1,7 @@
 import re
 from unittest.mock import Mock, patch
 
+import click
 import pytest
 import yaml
 from click.testing import CliRunner
@@ -318,8 +319,8 @@ def test_create_image_pull_secret_from_file_invalid_json(
     )
 
     assert result.exit_code != 0
-    # rich wraps the error in a box; collapse the borders and line breaks before matching
-    assert "not a valid Docker config JSON file" in re.sub(r"[\s│]+", " ", result.stderr)
+    # Rich wraps the error in a box; remove its ANSI styling and collapse borders/line breaks.
+    assert "not a valid Docker config JSON file" in re.sub(r"[\s│]+", " ", click.unstyle(result.stderr))
     mock_secret_create.assert_not_called()
 
 

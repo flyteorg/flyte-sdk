@@ -16,9 +16,13 @@ def _render_command(
     inputs: dict[str, Any],
     outputs: dict[str, Any],
     flag_specs: dict[str, FlagSpec],
-    input_data_dir: pathlib.Path,
-    output_data_dir: pathlib.Path,
+    input_data_dir: pathlib.PurePath,
+    output_data_dir: pathlib.PurePath,
 ) -> Tuple[str, list[str]]:
+    # These paths are consumed by a Linux shell in the task container, even
+    # when the SDK is being invoked from a Windows host.
+    input_data_dir = pathlib.PurePosixPath(str(input_data_dir).replace("\\", "/"))
+    output_data_dir = pathlib.PurePosixPath(str(output_data_dir).replace("\\", "/"))
     kinds = {name: _classify_input(name, tp) for name, tp in inputs.items()}
     optionals = {name: _is_optional(tp)[0] for name, tp in inputs.items()}
 
@@ -147,7 +151,7 @@ def _emit_flag_setter(
     flag_var: str,
     alloc_slot,
     ensure_dict_decoded,
-    input_data_dir: pathlib.Path,
+    input_data_dir: pathlib.PurePath,
     is_optional: bool = False,
 ) -> str:
     flag = spec.flag

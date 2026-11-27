@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
+import sys
 import tempfile
 from typing import List, Optional
 
@@ -1155,6 +1156,7 @@ class TestBuildCommandArgvLayout:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="these tests execute commands through the POSIX /bin/bash shell")
 class TestEndToEndArgvComposition:
     """Actually run bash with the rendered command and verify argv tokens.
 

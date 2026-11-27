@@ -422,7 +422,7 @@ def main(
 
     command_joined = " ".join(command_list)
     logger.info(f"Serving command: {command_joined}")
-    p = Popen(command_joined, env=os.environ, shell=True)
+    p = Popen(command_joined, env=os.environ.copy(), shell=True)
 
     def handle_sigterm(signum, frame):
         p.send_signal(signum)

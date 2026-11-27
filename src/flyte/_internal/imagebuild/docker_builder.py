@@ -238,7 +238,7 @@ class PipAndRequirementsHandler:
 
             # Copy the requirements file to the context path
             requirements_path = copy_files_to_context(layer.file, context_path)
-            rel_path = str(requirements_path.relative_to(context_path))
+            rel_path = requirements_path.relative_to(context_path).as_posix()
             pip_install_args = layer.get_pip_install_args()
             pip_install_args.extend(["--requirement", "requirements.txt"])
             mount = f"--mount=type=bind,target=requirements.txt,src={rel_path}"
@@ -360,15 +360,15 @@ class UVProjectHandler:
             if layer.uvlock is not None:
                 uvlock_dst = copy_files_to_context(layer.uvlock, context_path)
                 delta = UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
-                    UV_LOCK_PATH=uvlock_dst.relative_to(context_path),
-                    PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
+                    UV_LOCK_PATH=uvlock_dst.relative_to(context_path).as_posix(),
+                    PYPROJECT_PATH=pyproject_dst.relative_to(context_path).as_posix(),
                     PIP_INSTALL_ARGS=pip_install_args,
                     SECRET_MOUNT=secret_mounts,
                     EDITABLE_INSTALL_MOUNTS=editable_install_mounts,
                 )
             else:
                 delta = UV_NO_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
-                    PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
+                    PYPROJECT_PATH=pyproject_dst.relative_to(context_path).as_posix(),
                     PIP_INSTALL_ARGS=pip_install_args,
                     SECRET_MOUNT=secret_mounts,
                     EDITABLE_INSTALL_MOUNTS=editable_install_mounts,
@@ -386,7 +386,7 @@ class UVProjectHandler:
                 shutil.copy(layer.pyproject, pyproject_dst)
 
             delta = UV_LOCK_INSTALL_TEMPLATE.substitute(
-                PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
+                PYPROJECT_PATH=pyproject_dst.relative_to(context_path).as_posix(),
                 PIP_INSTALL_ARGS=" ".join(layer.get_pip_install_args()),
                 SECRET_MOUNT=secret_mounts,
             )
@@ -412,10 +412,11 @@ class PixiProjectHandler:
         if layer.project_install_mode == "dependencies_only":
             # Only copy the manifest and pixi.lock (if present).
             manifest_dst = copy_files_to_context(layer.manifest, context_path)
-            copy_lines = [f"COPY {manifest_dst.relative_to(context_path)} {PIXI_PROJECT_DIR}/{layer.manifest.name}"]
+            manifest_rel = manifest_dst.relative_to(context_path).as_posix()
+            copy_lines = [f"COPY {manifest_rel} {PIXI_PROJECT_DIR}/{layer.manifest.name}"]
             if layer.pixi_lock is not None:
                 lock_dst = copy_files_to_context(layer.pixi_lock, context_path)
-                copy_lines.append(f"COPY {lock_dst.relative_to(context_path)} {PIXI_PROJECT_DIR}/pixi.lock")
+                copy_lines.append(f"COPY {lock_dst.relative_to(context_path).as_posix()} {PIXI_PROJECT_DIR}/pixi.lock")
         else:
             # Copy the entire project.
             project_dst = copy_files_to_context(layer.manifest.parent, context_path, docker_ignore_patterns)
@@ -428,7 +429,7 @@ class PixiProjectHandler:
             if layer.pixi_lock is not None and not pixi_lock_context_path.exists():
                 shutil.copy(layer.pixi_lock, project_dst)
 
-            copy_lines = [f"COPY {project_dst.relative_to(context_path)} {PIXI_PROJECT_DIR}"]
+            copy_lines = [f"COPY {project_dst.relative_to(context_path).as_posix()} {PIXI_PROJECT_DIR}"]
 
         delta = PIXI_INSTALL_TEMPLATE.substitute(
             PIXI_VERSION=PIXI_VERSION,
@@ -459,8 +460,8 @@ class PoetryProjectHandler:
             if "--no-root" not in extra_args:
                 extra_args += " --no-root"
             delta = POETRY_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
-                POETRY_LOCK_PATH=poetry_lock_dst.relative_to(context_path),
-                PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
+                POETRY_LOCK_PATH=poetry_lock_dst.relative_to(context_path).as_posix(),
+                PYPROJECT_PATH=pyproject_dst.relative_to(context_path).as_posix(),
                 POETRY_INSTALL_ARGS=extra_args,
                 SECRET_MOUNT=secret_mounts,
             )
@@ -477,7 +478,7 @@ class PoetryProjectHandler:
                 shutil.copy(layer.pyproject, pyproject_dst)
 
             delta = POETRY_LOCK_INSTALL_TEMPLATE.substitute(
-                PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
+                PYPROJECT_PATH=pyproject_dst.relative_to(context_path).as_posix(),
                 POETRY_INSTALL_ARGS=extra_args,
                 SECRET_MOUNT=secret_mounts,
             )
@@ -504,7 +505,7 @@ class CopyConfigHandler:
         layer: CopyConfig, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
         dst_path = copy_files_to_context(layer.src, context_path, docker_ignore_patterns)
-        dockerfile += f"\nCOPY --chown=flyte:flyte {dst_path.relative_to(context_path)} {layer.dst}\n"
+        dockerfile += f"\nCOPY --chown=flyte:flyte {dst_path.relative_to(context_path).as_posix()} {layer.dst}\n"
         return dockerfile
 
 
@@ -513,7 +514,7 @@ class _CodeBundleHandler:
     async def handle(layer: CodeBundleLayer, context_path: Path, dockerfile: str) -> str:
         assert layer.root_dir is not None
         dst_path = copy_code_bundle_to_context(layer.root_dir, layer.copy_style, context_path)
-        dockerfile += f"\nCOPY --chown=flyte:flyte {dst_path.relative_to(context_path)} {layer.dst}\n"
+        dockerfile += f"\nCOPY --chown=flyte:flyte {dst_path.relative_to(context_path).as_posix()} {layer.dst}\n"
         return dockerfile
 
 

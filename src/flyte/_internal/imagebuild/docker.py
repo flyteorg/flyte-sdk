@@ -406,7 +406,7 @@ class PatternMatcher:
                     fpath = fpath[2:]
                 match = self.matches(fpath)
                 if not match:
-                    yield fpath
+                    yield normalize_slashes(fpath)
 
                 cur = os.path.join(root, fpath)
                 if not os.path.isdir(cur) or os.path.islink(cur):

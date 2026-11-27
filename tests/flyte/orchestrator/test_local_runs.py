@@ -210,7 +210,9 @@ def test_models_are_opaque_values_equal_when_their_literals_are():
 @flyte.orchestrator.task
 def file_fields() -> list[str]:
     f = write("hi")
-    return [f.name, f.format, repr(f.hash), repr(f.path == f[0])]
+    # A local Windows URI can retain backslashes through the in-process
+    # orchestrator boundary; normalize before checking its display basename.
+    return [f.name.replace("\\", "/").rsplit("/", 1)[-1], f.format, repr(f.hash), repr(f.path == f[0])]
 
 
 def test_a_file_is_a_named_tuple_named_after_its_path():

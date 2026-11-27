@@ -33,6 +33,7 @@ from flyte._internal.imagebuild.docker_builder import (
     _get_secret_commands,
 )
 from flyte._internal.imagebuild.remote_builder import _get_build_secrets_from_image
+from flyte._internal.imagebuild.utils import copy_files_to_context
 
 
 @pytest.mark.integration
@@ -253,7 +254,8 @@ async def test_requirements_handler(monkeypatch):
                 layer=requirements, context_path=context_path, dockerfile=""
             )
             assert "--mount=type=secret" in docker_update
-            assert "_flyte_abs_context" + str(requirements_file.absolute()) in docker_update
+            expected_context_path = copy_files_to_context(requirements_file.absolute(), context_path)
+            assert expected_context_path.relative_to(context_path).as_posix() in docker_update
 
 
 @pytest.mark.asyncio
@@ -608,8 +610,8 @@ async def test_uvproject_handler_includes_editable_mounts_in_dependencies_only_m
             dockerfile=initial_dockerfile,
             docker_ignore_patterns=[],
         )
-        expected_dep_in_context = "_flyte_abs_context" + str(dep_folder)
-        expected_dep_in_container = dep_folder.relative_to(project_root)
+        expected_dep_in_context = copy_files_to_context(dep_folder, context_path).relative_to(context_path).as_posix()
+        expected_dep_in_container = dep_folder.relative_to(project_root).as_posix()
         expected_mount = f"--mount=type=bind,src={expected_dep_in_context},target={expected_dep_in_container}"
         assert expected_mount in result
 
@@ -808,7 +810,7 @@ async def test_pixi_handler_with_project_install():
         rel_path = PurePath(*src_absolute.parts[1:])
         expected_dst_path = context_path / "_flyte_abs_context" / rel_path
 
-        assert f"COPY {expected_dst_path.relative_to(context_path)} /opt/pixi-project" in result
+        assert f"COPY {expected_dst_path.relative_to(context_path).as_posix()} /opt/pixi-project" in result
         assert expected_dst_path.is_dir(), "Project directory should be copied into the context"
         assert (expected_dst_path / "main.py").exists(), "main.py should be included"
         assert (expected_dst_path / "pyproject.toml").exists(), "the manifest should survive dockerignore"

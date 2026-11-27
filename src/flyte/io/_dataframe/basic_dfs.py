@@ -66,9 +66,9 @@ class PandasToCSVEncodingHandler(DataFrameEncoder):
         path, filesystem = _get_pandas_path_and_filesystem(csv_file)
         if filesystem is not None:
             with filesystem.open(path, "wb") as f:
-                df.to_csv(f, index=False, mode="wb")
+                df.to_csv(f, index=False, mode="wb", lineterminator="\n")
         else:
-            df.to_csv(path, index=False)
+            df.to_csv(path, index=False, lineterminator="\n")
         structured_dataset_type.format = CSV
         return literals_pb2.StructuredDataset(
             uri=uri, metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type=structured_dataset_type)

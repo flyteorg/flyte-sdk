@@ -100,4 +100,4 @@ def test_delete_local_cache(mock_purge, runner: CliRunner):
     mock_purge.assert_called_once_with()
     output = _strip_ansi(result.output)
     assert "Cleared local cache directory" in output
-    assert "/home/u/.flyte/local-cache" in output
+    assert str(Path("/home/u/.flyte/local-cache")) in output

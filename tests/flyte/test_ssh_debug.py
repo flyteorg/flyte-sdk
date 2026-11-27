@@ -102,6 +102,9 @@ class TestWsFrameRoundtrip:
 
 
 class TestSshServerSetup:
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="this test asserts POSIX permission bits, which Windows does not expose"
+    )
     def test_authorized_keys_written_0600(self, tmp_path):
         server = ssh.SshServer("ssh-ed25519 AAAA... user@host", user="root", scratch_dir=tmp_path)
         p = server._write_authorized_keys()
@@ -112,6 +115,9 @@ class TestSshServerSetup:
         monkeypatch.setenv("_F_SSH_USER", "flyte")
         assert ssh.SshServer("pk", scratch_dir=tmp_path).user == "flyte"
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="this test asserts POSIX permission bits, which Windows does not expose"
+    )
     def test_host_key_generated_and_reused(self, tmp_path):
         server = ssh.SshServer("pk", scratch_dir=tmp_path)
         key1 = server._host_key()
@@ -191,11 +197,11 @@ class TestEnsureAsyncssh:
 
 @pytest.mark.asyncio
 async def test_bridge_readiness_probe_returns_200():
-    bridge_port = _free_port()
     # nothing listening on sshd_port; the probe path must not touch it
-    bridge = ssh.WsBridge(sshd_port=_free_port(), listen_port=bridge_port)
+    bridge = ssh.WsBridge(sshd_port=_free_port(), listen_port=0)
     await bridge.start()
     try:
+        bridge_port = bridge._server.sockets[0].getsockname()[1]
         reader, writer = await asyncio.open_connection("127.0.0.1", bridge_port)
         writer.write(b"GET /healthz HTTP/1.1\r\nHost: x\r\n\r\n")
         await writer.drain()

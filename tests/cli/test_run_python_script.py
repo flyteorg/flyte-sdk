@@ -90,7 +90,7 @@ def test_plugin_config_missing_plugin_key_errors(tmp_path, runner, mock_run_pyth
     )
 
     assert result.exit_code != 0
-    assert "top-level 'plugin' key" in result.output
+    assert "top-level 'plugin' key" in _normalized(result.output)
     mock_run_python_script.assert_not_called()
 
 

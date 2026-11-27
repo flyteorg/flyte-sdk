@@ -351,7 +351,8 @@ def test_load_python_modules_single_file_wraps_runtime_error(tmp_path):
     root.mkdir()
     f = root / "workflow.py"
     f.write_text(
-        "raise RuntimeError('union.sandbox default environments are unavailable — install `union-sandbox[deploy]`')\n"
+        "raise RuntimeError('union.sandbox default environments are unavailable — install `union-sandbox[deploy]`')\n",
+        encoding="utf-8",
     )
 
     sys.path.insert(0, str(root))
