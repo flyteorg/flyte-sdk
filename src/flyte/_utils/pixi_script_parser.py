@@ -28,6 +28,7 @@ import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 # PEP 723 block: `# /// script` ... `# ///`, where every line in between is either `#`
 # alone or starts with `# `.
@@ -118,6 +119,27 @@ def platforms_for(platform: Tuple[str, ...]) -> Tuple[str, ...]:
         )
 
 
+def _git_url_to_pixi(url: str) -> Dict[str, str]:
+    """Split a pip VCS URL (without its `git+` prefix) into pixi's `git`, `rev` and `subdirectory`.
+
+    The revision is the `@...` suffix of the URL *path*: an `@` in the authority is user info
+    (`ssh://git@github.com/...`), not a revision. A `#subdirectory=...` fragment selects the
+    project directory inside the repository.
+    """
+    parts = urlsplit(url)
+    path, rev = parts.path, ""
+    if "@" in path:
+        path, _, rev = path.rpartition("@")
+
+    spec = {"git": urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))}
+    if rev:
+        spec["rev"] = rev
+    subdirectory = parse_qs(parts.fragment).get("subdirectory")
+    if subdirectory:
+        spec["subdirectory"] = subdirectory[0]
+    return spec
+
+
 def _pypi_requirement_to_pixi(requirement: str) -> Tuple[str, Any]:
     """Convert one PEP 508 requirement string into a pixi `[pypi-dependencies]` entry."""
     from packaging.requirements import InvalidRequirement, Requirement
@@ -140,10 +162,7 @@ def _pypi_requirement_to_pixi(requirement: str) -> Tuple[str, Any]:
     spec: Dict[str, Any] = {}
     if req.url:
         if req.url.startswith("git+"):
-            url, _, rev = req.url[len("git+") :].partition("@")
-            spec["git"] = url
-            if rev:
-                spec["rev"] = rev
+            spec.update(_git_url_to_pixi(req.url[len("git+") :]))
         else:
             spec["url"] = req.url
     else:

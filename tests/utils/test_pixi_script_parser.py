@@ -128,6 +128,31 @@ def test_render_manifest_pypi_requirement_forms(tmp_path: pathlib.Path):
     assert pypi["othpkg"] == {"git": "https://github.com/org/othpkg", "rev": "v1.2.3"}
 
 
+def test_render_manifest_git_requirement_forms(tmp_path: pathlib.Path):
+    """The revision is split off the URL path only; user info and fragments stay out of `rev`."""
+    script = (
+        "# /// script\n"
+        "# dependencies = [\n"
+        '#   "sshpkg @ git+ssh://git@github.com/org/sshpkg.git@v1.0",\n'
+        '#   "headpkg @ git+ssh://git@github.com/org/headpkg.git",\n'
+        '#   "authpkg @ git+https://user:token@github.com/org/authpkg.git@main",\n'
+        '#   "subpkg @ git+https://github.com/org/mono.git@abc123#subdirectory=packages/subpkg",\n'
+        "# ]\n"
+        "# ///\n"
+    )
+    metadata = parse_pixi_script_file(write(tmp_path, script, name="git_forms.py"))
+    pypi = toml.loads(render_pixi_manifest(metadata, ("linux-64",)))["pypi-dependencies"]
+
+    assert pypi["sshpkg"] == {"git": "ssh://git@github.com/org/sshpkg.git", "rev": "v1.0"}
+    assert pypi["headpkg"] == {"git": "ssh://git@github.com/org/headpkg.git"}
+    assert pypi["authpkg"] == {"git": "https://user:token@github.com/org/authpkg.git", "rev": "main"}
+    assert pypi["subpkg"] == {
+        "git": "https://github.com/org/mono.git",
+        "rev": "abc123",
+        "subdirectory": "packages/subpkg",
+    }
+
+
 def test_render_manifest_pypi_dependencies_table_wins(tmp_path: pathlib.Path):
     """[tool.pixi.pypi-dependencies] is the more specific declaration, so it is not overwritten."""
     script = (
