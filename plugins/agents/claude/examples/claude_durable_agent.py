@@ -55,7 +55,7 @@ async def city_agent(question: str) -> str:
         question,
         tools=[get_weather, get_population],
         instructions="You are a concise city-facts assistant. Use the tools to answer.",
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-5-5",
     )
 
 
@@ -68,7 +68,7 @@ def city_agent_sync(question: str) -> str:
         question,
         tools=[get_weather, get_population],
         instructions="You are a concise city-facts assistant. Use the tools to answer.",
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-5-5",
     )
 
 

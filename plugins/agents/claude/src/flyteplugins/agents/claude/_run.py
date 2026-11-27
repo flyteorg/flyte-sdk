@@ -62,7 +62,7 @@ async def run_agent(
     input: str,
     *,
     tools: typing.Sequence[typing.Any] = (),
-    model: str | None = "claude-sonnet-4-5",
+    model: str | None = "claude-sonnet-5-5",
     instructions: str | None = None,
     max_turns: int | None = None,
     durable: bool = True,

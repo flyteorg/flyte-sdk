@@ -62,7 +62,7 @@ async def resilient_agent(question: str) -> str:
         question,
         tools=[get_weather, get_population],
         instructions="You are a concise city-facts assistant. Use the tools to answer.",
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-5-5",
         durable=True,  # default — mirror the session to a checkpoint and resume on retry
     )
 

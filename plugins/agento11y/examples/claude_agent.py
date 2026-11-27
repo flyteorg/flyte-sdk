@@ -89,7 +89,7 @@ async def claude_agent(question: str = "Where is order A-1001?") -> str:
     return await run_agent(
         question,
         tools=[tool(lookup_order)],
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-5-5",
         instructions="You are a support agent. Use the tools to answer.",
     )
 

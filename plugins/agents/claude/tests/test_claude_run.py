@@ -77,3 +77,8 @@ def test_no_call_wrapper_leaves_the_sync_path_untouched(monkeypatch):
     monkeypatch.setattr(run_mod, "query", fake_query)
     monkeypatch.setattr(run_mod, "ResultMessage", _FakeResultMessage)
     assert run_mod.run_agent_sync("hi", durable=False, observability=False) == "plain result"
+
+
+def test_default_model_is_not_retired():
+    # claude-sonnet-4-5 retires from the Claude API on 2026-11-30.
+    assert inspect.signature(run_mod.run_agent).parameters["model"].default == "claude-sonnet-5-5"

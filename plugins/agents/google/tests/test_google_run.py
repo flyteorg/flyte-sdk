@@ -101,3 +101,12 @@ def test_run_agent_sync_call():
         out = run_agent_sync("say hi", model="gemini-2.0-flash", durable=False, observability=False)
 
     assert out == "Hello from the sync form."
+
+
+def test_default_model_is_not_retired():
+    # gemini-2.0-flash was shut down on 2026-06-01, so a bare `run_agent(...)` must not ask for it.
+    import inspect
+
+    from flyteplugins.agents.google._run import run_agent
+
+    assert inspect.signature(run_agent).parameters["model"].default == "gemini-3.8-flash"
