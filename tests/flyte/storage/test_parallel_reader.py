@@ -2,7 +2,6 @@ import asyncio
 import filecmp
 import os
 import pathlib
-import sys
 import time
 import unittest.mock as mock
 from pathlib import Path
@@ -95,11 +94,8 @@ async def test_worker_logs_exception_before_task_received(tmp_path):
     assert "before receiving a task" in call_args
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="asyncio.TaskGroup uses ExceptionGroup on 3.11+")
 @pytest.mark.asyncio
 async def test_as_completed_unwraps_single_taskgroup_exception():
-    from builtins import BaseExceptionGroup
-
     store = mock.MagicMock()
     reader = ObstoreParallelReader(store, max_concurrency=1)
 
@@ -152,7 +148,7 @@ async def test_worker_logs_transformer_exception_with_file_context():
 
 
 @pytest.mark.asyncio
-async def test_as_completed_pre311_surfaces_worker_exception_without_hanging():
+async def test_as_completed_surfaces_worker_exception_without_hanging():
 
     store = mock.MagicMock()
     reader = ObstoreParallelReader(store, max_concurrency=1)
@@ -168,7 +164,6 @@ async def test_as_completed_pre311_surfaces_worker_exception_without_hanging():
             pass
 
     with (
-        mock.patch("flyte.storage._parallel_reader.sys.version_info", (3, 10)),
         mock.patch(
             "flyte.storage._parallel_reader.obstore.get_range_async",
             new=mock.AsyncMock(side_effect=RuntimeError("GCS 429: Too Many Requests")),
@@ -176,6 +171,97 @@ async def test_as_completed_pre311_surfaces_worker_exception_without_hanging():
     ):
         with pytest.raises(RuntimeError, match="GCS 429: Too Many Requests"):
             await asyncio.wait_for(_consume(), timeout=0.5)
+
+
+def _chunk_tasks(file_id: str, n_chunks: int, chunk_len: int = 4) -> list[DownloadTask]:
+    source = Source(id=file_id, path=Path(f"prefix/{file_id}"), length=n_chunks * chunk_len)
+    return [DownloadTask(source=source, chunk=Chunk(offset=i * chunk_len, length=chunk_len)) for i in range(n_chunks)]
+
+
+@pytest.mark.parametrize("failing_chunk", [0, 2], ids=["first-chunk", "last-chunk"])
+@pytest.mark.asyncio
+async def test_as_completed_raises_when_chunk_fails_with_idle_workers(failing_chunk):
+    """
+    With more workers than chunks, the idle workers take the sentinel and exit while the chunks are
+    still downloading. A chunk that fails after that must still raise instead of hanging forever.
+    """
+    reader = ObstoreParallelReader(mock.MagicMock(), max_concurrency=8)
+    tasks = _chunk_tasks("file", n_chunks=3)
+
+    async def _gen():
+        for task in tasks:
+            yield task
+
+    async def _get_range(store, path, *, start, end):
+        # Stay in flight long enough for the idle workers to exit first
+        await asyncio.sleep(0.05)
+        if start == tasks[failing_chunk].chunk.offset:
+            raise RuntimeError("Connection reset by peer")
+        return b"data"
+
+    async def _consume():
+        async for _ in reader._as_completed(_gen()):
+            pass
+
+    with (
+        mock.patch("flyte.storage._parallel_reader.obstore.get_range_async", side_effect=_get_range),
+    ):
+        with pytest.raises(RuntimeError, match="Connection reset by peer"):
+            await asyncio.wait_for(_consume(), timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_as_completed_raises_when_failure_and_result_arrive_together():
+    """A worker failure must not be dropped when another file completes in the same event loop wakeup."""
+    reader = ObstoreParallelReader(mock.MagicMock(), max_concurrency=2)
+    tasks = [*_chunk_tasks("good", n_chunks=1), *_chunk_tasks("bad", n_chunks=1)]
+
+    async def _gen():
+        for task in tasks:
+            yield task
+
+    async def _get_range(store, path, *, start, end):
+        await asyncio.sleep(0)
+        if path.endswith("bad"):
+            # One tick later, so the failure lands in the same wakeup as the other file's result
+            await asyncio.sleep(0)
+            raise RuntimeError("Connection reset by peer")
+        return b"data"
+
+    async def _consume():
+        async for _ in reader._as_completed(_gen()):
+            pass
+
+    with (
+        mock.patch("flyte.storage._parallel_reader.obstore.get_range_async", side_effect=_get_range),
+    ):
+        with pytest.raises(RuntimeError, match="Connection reset by peer"):
+            await asyncio.wait_for(_consume(), timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_as_completed_yields_every_file_with_idle_workers():
+    """Idle workers exiting early must not cut the download short: every file is still yielded."""
+    reader = ObstoreParallelReader(mock.MagicMock(), max_concurrency=8)
+    tasks = [task for i in range(3) for task in _chunk_tasks(f"file-{i}", n_chunks=2)]
+
+    async def _gen():
+        for task in tasks:
+            yield task
+
+    async def _get_range(store, path, *, start, end):
+        await asyncio.sleep(0.05)
+        return b"data"
+
+    async def _consume():
+        return [source_id async for source_id, _ in reader._as_completed(_gen())]
+
+    with (
+        mock.patch("flyte.storage._parallel_reader.obstore.get_range_async", side_effect=_get_range),
+    ):
+        yielded = await asyncio.wait_for(_consume(), timeout=5)
+
+    assert sorted(yielded) == ["file-0", "file-1", "file-2"]
 
 
 @pytest.mark.asyncio

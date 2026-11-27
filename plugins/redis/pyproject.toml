@@ -4,7 +4,7 @@ dynamic = ["version"]
 description = "Redis-backed metadata storage (redis:// paths) for flyte"
 readme = "README.md"
 authors = [{ name = "Ketan Umare", email = "kumare3@users.noreply.github.com" }]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "flyte",
     "redis>=5.0",

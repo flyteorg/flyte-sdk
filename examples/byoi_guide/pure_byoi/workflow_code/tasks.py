@@ -3,7 +3,7 @@ from workflow_code.envs import env_data, env_train
 
 @env_train.task
 async def train(processed: str) -> float:
-    # Runs in Team B's container: python 3.10, WORKDIR /workspace
+    # Runs in Team B's container: python 3.12, WORKDIR /workspace
     # torch is available (installed in training/Dockerfile)
     return float(len(processed))
 

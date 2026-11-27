@@ -15,12 +15,11 @@ import rich.repr
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
 
-# Supported Python versions
-PYTHON_3_10 = (3, 10)
-PYTHON_3_11 = (3, 11)
-PYTHON_3_12 = (3, 12)
-PYTHON_3_13 = (3, 13)
-PYTHON_3_14 = (3, 14)
+# Oldest Python that this version of flyte runs on. Default images are not published below it.
+_MIN_DEFAULT_IMAGE_PYTHON_VERSION = (3, 11)
+# Newest flyte release that published default images for a Python version that is no longer supported.
+# Its release line (2.14 for 2.14.1) is the last one with images for that Python.
+_LAST_RELEASE_WITH_PYTHON = {(3, 10): "2.14.1"}
 
 # 0 is a file, 1 is a directory
 CopyConfigType = Literal[0, 1]
@@ -798,14 +797,6 @@ class Image:
     # Only settable internally.
     _tag: Optional[str] = field(default=None, init=False)
 
-    _DEFAULT_IMAGE_PREFIXES: ClassVar = {
-        PYTHON_3_10: "py3.10-",
-        PYTHON_3_11: "py3.11-",
-        PYTHON_3_12: "py3.12-",
-        PYTHON_3_13: "py3.13-",
-        PYTHON_3_14: "py3.14-",
-    }
-
     # class-level token not included in __init__
     _token: ClassVar[object] = object()
 
@@ -845,6 +836,31 @@ class Image:
         # this default image definition may need to be updated once there is a released pypi version
 
         from flyte._version import __version__
+
+        # Without an explicit flyte_version the image carries this version of flyte, which neither
+        # installs on an older Python nor has a published image for it. Values that are not a
+        # (major, minor) tuple are left alone here.
+        if (
+            install_flyte
+            and not flyte_version
+            and isinstance(python_version, tuple)
+            and python_version < _MIN_DEFAULT_IMAGE_PYTHON_VERSION
+        ):
+            min_major, min_minor = _MIN_DEFAULT_IMAGE_PYTHON_VERSION
+            major, minor = python_version[0], python_version[1]
+            message = (
+                f"The default flyte image is not available for Python {major}.{minor}: flyte requires Python "
+                f"{min_major}.{min_minor} or newer. Use python_version=({min_major}, {min_minor}) or newer."
+            )
+            last_release = _LAST_RELEASE_WITH_PYTHON.get((major, minor))
+            if last_release:
+                release_line = last_release.rsplit(".", 1)[0]
+                message += (
+                    f" The {release_line} releases were the last with Python {major}.{minor} images; to keep using "
+                    f"one, pass flyte_version explicitly, for example "
+                    f'Image.from_debian_base(python_version=({major}, {minor}), flyte_version="{last_release}").'
+                )
+            raise ValueError(message)
 
         dev_mode = (__version__ and "dev" in __version__) and not flyte_version and install_flyte
         if not install_flyte:
@@ -947,7 +963,9 @@ class Image:
         Args:
             python_version: Python version for the image, as a (major, minor) tuple such as (3, 13). If not
                 specified, the version of the local interpreter is used and a one-time warning is logged.
-            flyte_version: Flyte version to use
+                Must be (3, 11) or newer, unless `flyte_version` pins an older release or `install_flyte`
+                is False.
+            flyte_version: Flyte version to use. Defaults to the installed version.
             install_flyte: If True, will install the flyte library in the image
             registry: Registry to use for the image
             registry_secret: Secret to use to pull/push the private image.

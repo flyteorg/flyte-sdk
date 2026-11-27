@@ -81,7 +81,10 @@ where
             match authenticator.get_credentials(channel.clone()).await {
                 Ok(creds) => {
                     let header_key = authenticator.get_header_key().await;
-                    let token_value = format!("Bearer {}", creds.access_token);
+                    let token_value = format!(
+                        "Bearer {}",
+                        authenticator.bearer_token(&creds, request.headers())
+                    );
 
                     warn!("Adding auth header: {}", header_key);
 
@@ -92,11 +95,6 @@ where
                             .insert(http::header::AUTHORIZATION, header_value);
                     } else {
                         warn!("Failed to parse auth token as header value");
-                    }
-                    for (name, value) in authenticator.extra_headers() {
-                        if let Ok(value) = value.parse::<http::HeaderValue>() {
-                            request.headers_mut().insert(name, value);
-                        }
                     }
                 }
                 Err(e) => {

@@ -1,24 +1,50 @@
+import enum
+import inspect
 import typing
+from dataclasses import dataclass
 from datetime import datetime
 
 import pytest
 from flyteidl2.core import interface_pb2, literals_pb2, types_pb2
 from flyteidl2.core.interface_pb2 import VariableEntry
 from flyteidl2.task import common_pb2, task_definition_pb2
+from pydantic import BaseModel
 
 from flyte import Cron, FixedRate, OnArtifact, TaskEnvironment, Trigger, TriggeredArtifact, TriggerTime
-from flyte._internal.runtime.convert import convert_upload_default_inputs
+from flyte._internal.runtime.convert import Inputs, convert_inputs_to_native, convert_upload_default_inputs
 from flyte._internal.runtime.trigger_serde import (
     KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY,
     _to_schedule,
     process_default_inputs,
     to_task_trigger,
 )
-from flyte.models import ActionPhase
+from flyte.io import File
+from flyte.models import ActionPhase, NativeInterface
 from flyte.notify import Email, Slack, Webhook
 from flyte.types import TypeEngine
 
 DEFAULT_TIMEZONE = "UTC"
+
+
+class Color(enum.Enum):
+    RED = "red"
+    GREEN = "green"
+
+
+@dataclass
+class Point:
+    x: int
+    y: str
+
+
+class Settings(BaseModel):
+    name: str
+    retries: int
+
+
+class Window(typing.NamedTuple):
+    days: int
+    region: str
 
 
 class TestToSchedule:
@@ -153,6 +179,79 @@ class TestProcessDefaultInputs:
         assert result[0].value.scalar.HasField("union"), f"{python_type} / {value!r} lost its union wrapper"
         assert result[0].value.scalar.union.type.structure.tag
         assert await TypeEngine.to_python_value(result[0].value, python_type) == value
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "python_type,value",
+        [
+            pytest.param(
+                list[Color],
+                [Color.RED, Color.GREEN],
+                id="list-enum",
+            ),
+            pytest.param(
+                dict[str, Color],
+                {"a": Color.RED},
+                id="dict-enum",
+            ),
+            pytest.param(
+                typing.Optional[Color],
+                Color.RED,
+                id="optional-enum-member",
+            ),
+            pytest.param(typing.Optional[Color], None, id="optional-enum-none"),
+            pytest.param(
+                typing.Optional[list[Color]],
+                [Color.RED],
+                id="optional-list-enum-value",
+            ),
+            pytest.param(typing.Optional[list[Color]], None, id="optional-list-enum-none"),
+            pytest.param(
+                typing.Optional[float],
+                3,
+                id="optional-float-given-int",
+            ),
+            pytest.param(typing.Optional[float], 3.5, id="optional-float-given-float"),
+            pytest.param(typing.Optional[int], 3, id="optional-int-given-int"),
+            pytest.param(Point, Point(x=1, y="a"), id="dataclass"),
+            pytest.param(Settings, Settings(name="n", retries=2), id="pydantic-model"),
+            pytest.param(File, File(path="s3://bucket/key/data.csv"), id="flyte-file-remote-uri"),
+            pytest.param(list[dict[str, int]], [{"a": 1}, {"b": 2}], id="nested-list-dict"),
+            pytest.param(Window, Window(days=7, region="us"), id="namedtuple"),
+        ],
+    )
+    async def test_default_input_round_trips_to_task(self, python_type, value):
+        """A trigger default input must decode, in the task pod, to the value the trigger declared.
+
+        Serializes the input with `process_default_inputs` as `flyte deploy` does, then decodes the
+        resulting literals with `convert_inputs_to_native`, the decoder the task runner uses.
+        """
+        literal_type = TypeEngine.to_literal_type(python_type)
+        task_inputs = interface_pb2.VariableMap(
+            variables=[VariableEntry(key="data", value=interface_pb2.Variable(type=literal_type))]
+        )
+
+        result = await process_default_inputs({"data": value}, "test_task", task_inputs, [])
+
+        interface = NativeInterface.from_types({"data": (python_type, inspect.Parameter.empty)}, {})
+        decoded = await convert_inputs_to_native(Inputs(proto_inputs=common_pb2.Inputs(literals=result)), interface)
+        assert decoded["data"] == value
+
+    @pytest.mark.asyncio
+    async def test_tuple_for_list_input_round_trips_as_list(self):
+        """A tuple given for a `list[int]` input converts under the declared type, not as a pickle."""
+        python_type = list[int]
+        literal_type = TypeEngine.to_literal_type(python_type)
+        task_inputs = interface_pb2.VariableMap(
+            variables=[VariableEntry(key="data", value=interface_pb2.Variable(type=literal_type))]
+        )
+
+        result = await process_default_inputs({"data": (1, 2)}, "test_task", task_inputs, [])
+
+        assert result[0].value.HasField("collection")
+        interface = NativeInterface.from_types({"data": (python_type, inspect.Parameter.empty)}, {})
+        decoded = await convert_inputs_to_native(Inputs(proto_inputs=common_pb2.Inputs(literals=result)), interface)
+        assert decoded["data"] == [1, 2]
 
     @pytest.mark.asyncio
     async def test_empty_default_inputs(self):

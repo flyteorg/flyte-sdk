@@ -4,8 +4,10 @@ on:
   push:
     branches:
       - main
-      - 'release-v**'
   pull_request:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
@@ -18,9 +20,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch the code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up Python 3.12
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
         with:
           python-version: '3.12'
       - name: Lint
@@ -32,7 +36,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch the code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Check flyteidl2 version consistency
         run: |
           # Extract flyteidl2 version from root pyproject.toml
@@ -61,9 +67,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch the code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Cache Cargo registry and build
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -84,9 +92,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch the code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Cache Cargo registry and build
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -106,9 +116,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch the code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up Python 3.12
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
         with:
           python-version: '3.12'
       - name: mypy
@@ -119,9 +131,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch the code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up Python 3.12
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
         with:
           python-version: '3.12'
       - name: ty
@@ -132,9 +146,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch the code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up Python 3.12
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
         with:
           python-version: '3.12'
       - name: Check docstring style
@@ -145,9 +161,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch the code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up Python 3.12
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
         with:
           python-version: '3.12'
       - name: Generate docs
@@ -158,9 +176,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch the code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up Python 3.12
-        uses: ./.github/actions/setup-python-env
+        uses: $/.github/actions/setup-python-env
       - name: Check root uv.lock
         run: |
           uv lock --check
@@ -177,13 +197,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch the code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up Python 3.13
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.13'
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.0
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           # Keep in sync with .github/actions/setup-python-env
           version: "0.13.4"

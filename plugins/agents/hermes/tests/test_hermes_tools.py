@@ -1,6 +1,7 @@
 """Unit tests for the Hermes adapter's tool bridge (no network / no controller)."""
 
 import inspect
+import json
 from unittest.mock import AsyncMock, patch
 
 import flyte
@@ -78,7 +79,13 @@ def test_hermes_agent_exposes_the_tool():
         quiet_mode=True,
         enabled_toolsets=[FLYTE_TOOLSET],
     )
-    assert "get_sunshine" in [t["function"]["name"] for t in agent.tools]
+    names = [t["function"]["name"] for t in agent.tools]
+    if "tool_call" in names:
+        # Newer hermes-agent releases defer plugin tools behind its tool_search
+        # bridge and lists them in the bridge tool's description instead.
+        assert "get_sunshine" in json.dumps(agent.tools)
+    else:
+        assert "get_sunshine" in names
 
 
 @pytest.mark.asyncio

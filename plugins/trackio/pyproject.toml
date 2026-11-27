@@ -4,7 +4,7 @@ dynamic = ["version"]
 description = "Trackio plugin for Flyte"
 readme = "README.md"
 authors = [{ name = "Parag Ekbote", email = "23150020.dypsst@dpu.edu.in" }]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "trackio",
     "flyte"

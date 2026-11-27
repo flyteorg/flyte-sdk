@@ -42,17 +42,40 @@ use crate::{
         AuthConfig, AuthLayer, Authenticator, ClientCredentialsAuthenticator,
         WorkloadTokenAuthenticator,
     },
-    error::{ControllerError, InformerError},
+    error::{org_limit_message, ControllerError, InformerError},
     informer::{Informer, InformerCache},
 };
+
+/// HTTP/2 PING interval for every controller channel. 30s, as the Python
+/// client pings.
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
+/// How long a PING may go unanswered before the connection is closed.
+const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Ping the server so a connection the network drops silently is detected.
+///
+/// `keep_alive_while_idle` alone does nothing: tonic sends no PINGs until an
+/// interval is set. Without them a watch on a dropped connection waits
+/// forever, and no informer error or reconnect ever happens.
+fn with_keepalive(endpoint: Endpoint) -> Endpoint {
+    keepalive(endpoint, KEEPALIVE_INTERVAL, KEEPALIVE_TIMEOUT)
+}
+
+fn keepalive(endpoint: Endpoint, interval: Duration, timeout: Duration) -> Endpoint {
+    endpoint
+        .keep_alive_while_idle(true)
+        .http2_keep_alive_interval(interval)
+        .keep_alive_timeout(timeout)
+}
 
 // Helper to create TLS-configured channel
 // todo: support no verify https://github.com/flyteorg/flyte-sdk/pull/299/files
 pub async fn create_tls_channel(url: &'static str) -> Result<Channel, ControllerError> {
-    let endpoint = Endpoint::from_static(url)
-        .tls_config(ClientTlsConfig::new().with_native_roots())
-        .map_err(|e| ControllerError::SystemError(format!("TLS config error: {}", e)))?
-        .keep_alive_while_idle(true);
+    let endpoint = with_keepalive(
+        Endpoint::from_static(url)
+            .tls_config(ClientTlsConfig::new().with_native_roots())
+            .map_err(|e| ControllerError::SystemError(format!("TLS config error: {}", e)))?,
+    );
 
     let channel = endpoint.connect().await.map_err(ControllerError::from)?;
 
@@ -150,11 +173,16 @@ impl ActionsClient {
 }
 
 /// Check if the unified ActionsService should be used instead of QueueService + StateService.
-/// Mirrors `flyte._internal.controllers.remote._service_protocol.use_actions_service`.
+/// Mirrors `flyte._internal.controllers.remote._service_protocol.use_actions_service`: a reusable
+/// worker pod that authenticates as itself (a `pod/` workload in `_U_WORKLOAD`) always uses it,
+/// since its workload credential names each request's action from the ActionsService metadata.
 pub fn use_actions_service() -> bool {
     std::env::var("_U_USE_ACTIONS")
         .map(|v| v == "1")
         .unwrap_or(false)
+        || std::env::var("_U_WORKLOAD")
+            .map(|w| w.starts_with("pod/"))
+            .unwrap_or(false)
 }
 
 /// Build the metadata headers for ActionsService RPC calls.
@@ -177,6 +205,26 @@ pub fn actions_metadata(
     if let Ok(v) = parent_action_name.parse() {
         metadata.insert("x-actions-parent-action", v);
     }
+    metadata
+}
+
+/// Header an enqueue declares the controller's capabilities in. `org-limit-exceeded`: this controller fails a
+/// refusal carrying OrgLimitExceeded as a user error, without retrying (`map_enqueue_error`), so the backend may
+/// refuse a child of a run over an org limit before storing it. It describes this controller, not the SDK that built
+/// the task.
+pub const CAPABILITIES_HEADER: &str = "x-actions-capabilities";
+pub const CAPABILITY_ORG_LIMIT_EXCEEDED: &str = "org-limit-exceeded";
+
+/// `actions_metadata` plus the capabilities this controller declares, for an ActionsService enqueue.
+pub fn enqueue_metadata(
+    run: Option<&RunIdentifier>,
+    parent_action_name: &str,
+) -> tonic::metadata::MetadataMap {
+    let mut metadata = actions_metadata(run, parent_action_name);
+    metadata.insert(
+        CAPABILITIES_HEADER,
+        tonic::metadata::MetadataValue::from_static(CAPABILITY_ORG_LIMIT_EXCEEDED),
+    );
     metadata
 }
 
@@ -234,8 +282,7 @@ impl CoreBaseController {
         let rt = get_runtime();
         let channel = rt.block_on(async {
             let channel = if endpoint.starts_with("http://") {
-                Endpoint::from_static(endpoint_static)
-                    .keep_alive_while_idle(true)
+                with_keepalive(Endpoint::from_static(endpoint_static))
                     .connect()
                     .await
                     .map_err(ControllerError::from)?
@@ -322,7 +369,7 @@ impl CoreBaseController {
         let rt = get_runtime();
         let channel = rt.block_on(async {
             let chan = if endpoint.starts_with("http://") {
-                let endpoint = Endpoint::from_static(endpoint_static).keep_alive_while_idle(true);
+                let endpoint = with_keepalive(Endpoint::from_static(endpoint_static));
                 endpoint.connect().await.map_err(ControllerError::from)?
             } else if endpoint.starts_with("https://") {
                 // Create TLS-configured channel
@@ -864,6 +911,11 @@ impl CoreBaseController {
             // Set server-side when an action is recovered from a prior run; never set by
             // clients on enqueue.
             recovered_from: None,
+            // This controller does not apply overrides to an action's inputs or code.
+            override_applied: false,
+            // Set server-side on the root action only; never set by clients on enqueue.
+            created_by: None,
+            trigger: None,
             spec: Some(spec),
         };
         Ok(EnqueueRequest {
@@ -875,7 +927,10 @@ impl CoreBaseController {
     /// Map a tonic Status from an enqueue RPC into a ControllerError, applying the same
     /// retry/non-retry policy regardless of which underlying service was called.
     fn map_enqueue_error(action_name: &str, e: tonic::Status) -> Result<(), ControllerError> {
-        if e.code() == tonic::Code::AlreadyExists {
+        if let Some(msg) = org_limit_message(&e) {
+            // The org is at a limit (e.g. max_actions_per_run): no retry can clear it.
+            Err(ControllerError::OrgLimitExceeded(msg))
+        } else if e.code() == tonic::Code::AlreadyExists {
             info!(
                 "Action {} already exists, continuing to monitor.",
                 action_name
@@ -913,7 +968,7 @@ impl CoreBaseController {
                 let enqueue_request = self.create_actions_enqueue_request(action)?;
                 let mut req = tonic::Request::new(enqueue_request);
                 *req.metadata_mut() =
-                    actions_metadata(action.action_id.run.as_ref(), &action.parent_action_name);
+                    enqueue_metadata(action.action_id.run.as_ref(), &action.parent_action_name);
                 let mut client = actions_client.clone();
                 match client.enqueue(req).await {
                     Ok(_) => {
@@ -1215,5 +1270,224 @@ impl CoreBaseController {
                 "watch_for_errors already called or resources not available".to_string(),
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod map_enqueue_error_tests {
+    use prost::Message;
+
+    use super::*;
+    use crate::error::RpcStatus;
+
+    #[test]
+    fn enqueue_declares_it_handles_org_limit_refusals() {
+        let run = RunIdentifier {
+            name: "r1".to_string(),
+            ..Default::default()
+        };
+        let metadata = enqueue_metadata(Some(&run), "parent");
+        assert_eq!(
+            metadata.get(CAPABILITIES_HEADER).unwrap().to_str().unwrap(),
+            CAPABILITY_ORG_LIMIT_EXCEEDED
+        );
+        assert_eq!(
+            metadata.get("x-actions-run").unwrap().to_str().unwrap(),
+            "r1",
+            "the routing headers are still sent"
+        );
+    }
+
+    #[test]
+    fn org_limit_refusal_is_not_retried_as_a_precondition_failure() {
+        let details = RpcStatus {
+            code: tonic::Code::FailedPrecondition as i32,
+            message: "over".to_string(),
+            details: vec![prost_types::Any {
+                type_url: "type.googleapis.com/cloudidl.common.OrgLimitExceeded".to_string(),
+                value: vec![],
+            }],
+        }
+        .encode_to_vec();
+        let status = tonic::Status::with_details(
+            tonic::Code::FailedPrecondition,
+            "over the cap",
+            details.into(),
+        );
+
+        let err = CoreBaseController::map_enqueue_error("a1", status).unwrap_err();
+
+        assert!(matches!(err, ControllerError::OrgLimitExceeded(ref m) if m == "over the cap"));
+    }
+
+    #[test]
+    fn plain_precondition_failure_is_unchanged() {
+        let err = CoreBaseController::map_enqueue_error(
+            "a1",
+            tonic::Status::failed_precondition("wrong shard"),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ControllerError::RuntimeError(_)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
+    use flyteidl2::flyteidl::workflow::{
+        state_service_server::{StateService, StateServiceServer},
+        watch_response, ControlMessage, GetRequest, GetResponse, PutRequest, PutResponse,
+        WatchRequest, WatchResponse,
+    };
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::{TcpListener, TcpStream},
+    };
+    use tonic::codegen::tokio_stream::{self, Stream, StreamExt};
+
+    use super::*;
+
+    /// Sends one message, then holds the stream open, as a live server does
+    /// while no child changes state.
+    struct QuietWatch;
+
+    #[tonic::async_trait]
+    impl StateService for QuietWatch {
+        async fn put(
+            &self,
+            _: tonic::Request<PutRequest>,
+        ) -> Result<tonic::Response<PutResponse>, tonic::Status> {
+            Err(tonic::Status::unimplemented("put"))
+        }
+        async fn get(
+            &self,
+            _: tonic::Request<GetRequest>,
+        ) -> Result<tonic::Response<GetResponse>, tonic::Status> {
+            Err(tonic::Status::unimplemented("get"))
+        }
+        type WatchStream =
+            std::pin::Pin<Box<dyn Stream<Item = Result<WatchResponse, tonic::Status>> + Send>>;
+        async fn watch(
+            &self,
+            _: tonic::Request<WatchRequest>,
+        ) -> Result<tonic::Response<Self::WatchStream>, tonic::Status> {
+            let sentinel = WatchResponse {
+                message: Some(watch_response::Message::ControlMessage(
+                    ControlMessage::default(),
+                )),
+            };
+            Ok(tonic::Response::new(Box::pin(
+                tokio_stream::once(Ok(sentinel)).chain(tokio_stream::pending()),
+            )))
+        }
+    }
+
+    /// Copy one direction until `dropped` is set, then swallow everything: the
+    /// connection stays open but nothing gets through, as when a NAT or load
+    /// balancer forgets it without sending a FIN or RST.
+    async fn pipe(
+        mut from: tokio::net::tcp::OwnedReadHalf,
+        mut to: tokio::net::tcp::OwnedWriteHalf,
+        dropped: Arc<AtomicBool>,
+    ) {
+        let mut buf = [0u8; 16 * 1024];
+        while let Ok(n) = from.read(&mut buf).await {
+            if n == 0 {
+                return;
+            }
+            if !dropped.load(Ordering::SeqCst) && to.write_all(&buf[..n]).await.is_err() {
+                return;
+            }
+        }
+    }
+
+    /// A proxy to `upstream` that can be made to drop traffic silently.
+    async fn droppable_proxy(
+        upstream: std::net::SocketAddr,
+    ) -> (std::net::SocketAddr, Arc<AtomicBool>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let flag = dropped.clone();
+        tokio::spawn(async move {
+            while let Ok((client, _)) = listener.accept().await {
+                let server = TcpStream::connect(upstream).await.unwrap();
+                let (cr, cw) = client.into_split();
+                let (sr, sw) = server.into_split();
+                tokio::spawn(pipe(cr, sw, flag.clone()));
+                tokio::spawn(pipe(sr, cw, flag.clone()));
+            }
+        });
+        (addr, dropped)
+    }
+
+    /// Open a watch through a proxy, receive its first message, then drop the
+    /// connection silently. Returns whether the next `message()` failed within
+    /// `wait` (true) or was still pending (false).
+    async fn watch_notices_a_silent_drop(
+        endpoint: impl Fn(String) -> Endpoint,
+        wait: Duration,
+    ) -> bool {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server_addr = listener.local_addr().unwrap();
+        tokio::spawn(
+            tonic::transport::Server::builder()
+                .add_service(StateServiceServer::new(QuietWatch))
+                .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
+        );
+        let (proxy, dropped) = droppable_proxy(server_addr).await;
+
+        let channel = endpoint(format!("http://{proxy}")).connect().await.unwrap();
+        let mut client =
+            flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient::new(channel);
+        let mut stream = client
+            .watch(WatchRequest::default())
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(stream.message().await.unwrap().is_some());
+
+        dropped.store(true, Ordering::SeqCst);
+        match tokio::time::timeout(wait, stream.message()).await {
+            Ok(r) => {
+                assert!(
+                    r.is_err(),
+                    "a dropped connection must surface as an error: {r:?}"
+                );
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    #[tokio::test]
+    async fn keepalive_detects_a_connection_dropped_silently() {
+        let short = |url: String| {
+            keepalive(
+                Endpoint::from_shared(url).unwrap(),
+                Duration::from_millis(200),
+                Duration::from_millis(500),
+            )
+        };
+        assert!(
+            watch_notices_a_silent_drop(short, Duration::from_secs(5)).await,
+            "with keepalive, the watch must fail once PINGs go unanswered"
+        );
+    }
+
+    /// The control: what every channel did before. Without an interval,
+    /// `keep_alive_while_idle` sends nothing, and the watch waits forever.
+    #[tokio::test]
+    async fn without_an_interval_a_dropped_connection_hangs_the_watch() {
+        let idle_only = |url: String| {
+            Endpoint::from_shared(url)
+                .unwrap()
+                .keep_alive_while_idle(true)
+        };
+        assert!(!watch_notices_a_silent_drop(idle_only, Duration::from_secs(3)).await);
     }
 }

@@ -6,7 +6,6 @@ import io
 import json
 import os
 import pathlib
-import sys
 import tarfile
 import tempfile
 from unittest.mock import AsyncMock, patch
@@ -172,12 +171,9 @@ async def test_checkpoint_load_treats_empty_remote_as_no_checkpoint() -> None:
         assert restored is None
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="asyncio.TaskGroup uses ExceptionGroup on 3.11+")
 @pytest.mark.asyncio
 async def test_checkpoint_load_treats_exception_group_download_queue_empty() -> None:
     """Obstore uses TaskGroup; empty listing becomes ExceptionGroup(DownloadQueueEmpty(...))."""
-    from builtins import BaseExceptionGroup
-
     eg = BaseExceptionGroup("unhandled errors in a TaskGroup", [DownloadQueueEmpty()])
     with patch("flyte.storage.get", new_callable=AsyncMock) as mock_get:
         mock_get.side_effect = eg
@@ -192,10 +188,7 @@ def test_checkpoint_load_sync_treats_sync_get_errors_as_no_checkpoint() -> None:
         assert cp.load_sync() is None
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="asyncio.TaskGroup uses ExceptionGroup on 3.11+")
 def test_checkpoint_load_sync_treats_exception_group_download_queue_empty() -> None:
-    from builtins import BaseExceptionGroup
-
     eg = BaseExceptionGroup("unhandled errors in a TaskGroup", [DownloadQueueEmpty()])
     with patch("flyte.io._file.File.download_sync", side_effect=eg):
         cp = Checkpoint("s3://bucket/out", "s3://bucket/prev_checkpoint_file")

@@ -9,7 +9,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
 from types import FunctionType
-from typing import Any, DefaultDict, Tuple, TypeVar, cast
+from typing import TYPE_CHECKING, Any, DefaultDict, Tuple, TypeVar, cast
 
 from flyte_controller_base import Action, BaseController
 from flyteidl2.common import identifier_pb2, phase_pb2
@@ -21,6 +21,8 @@ from flyte._code_bundle import build_pkl_bundle
 from flyte._context import internal_ctx
 from flyte._internal.controllers import TraceInfo
 from flyte._internal.controllers.remote._action import TERMINAL_PHASES
+from flyte._internal.controllers.remote._controller import child_overrides
+from flyte._internal.controllers.remote._org_limits import rust_client_error
 from flyte._internal.controllers.remote._service_protocol import use_actions_service
 from flyte._internal.runtime import convert, io
 from flyte._internal.runtime.task_serde import translate_task_to_wire
@@ -30,6 +32,9 @@ from flyte._task import TaskTemplate
 from flyte._utils.helpers import _selector_policy
 from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext, TaskContext
 from flyte.remote._task import TaskDetails
+
+if TYPE_CHECKING:
+    from flyte._internal.controllers.remote._input_overrides import ChildOverrides
 
 R = TypeVar("R")
 
@@ -86,7 +91,7 @@ async def handle_action_failure(action: Action, task_name: str) -> Exception:
     # tonic Status, not an ExecutionError or Exception. Wrap it so downstream conversion
     # sees something with `.code` (or short-circuits via `isinstance(Exception)`).
     if isinstance(err, str):
-        err = flyte.errors.RuntimeSystemError("RustControllerError", err)
+        err = rust_client_error(err)
     if not err and action.phase_value == phase_pb2.ACTION_PHASE_FAILED:
         logger.error(f"Server reported failure for action {action.name}, checking error file.")
         try:
@@ -127,8 +132,32 @@ async def load_and_convert_outputs(iface: NativeInterface, realized_outputs_uri:
     return await convert.convert_outputs_to_native(iface, outputs)
 
 
+def _reject_applied_overrides(overrides: ChildOverrides | None, action_name: str) -> None:
+    """Fail an override this controller cannot record.
+
+    It enqueues through the queue service, whose EnqueueActionRequest has no override_applied
+    field, so the fork would run the override without recording it on the action. Ancestors of
+    an overridden action only need the skipped cache key, which it does apply.
+    """
+    if overrides and overrides.applied:
+        raise flyte.errors.RuntimeSystemError(
+            "ActionOverrideUnsupportedError",
+            f"Action {action_name} has an input or code override, but the Rust controller enqueues through the "
+            f"queue service, which cannot record it. Fork this run with the Python controller.",
+        )
+
+
 def unique_action_name(action_id: ActionID) -> str:
     return f"{action_id.name}_{action_id.run_name}"
+
+
+def _running_task(tctx):
+    """
+    The action of the task running in this pod. Inside a @trace, `tctx.action` is the trace's pseudo-action;
+    sub-actions, trace records and lookups nest under the real task (`task_action`), as the Python controller does. A
+    reusable pod's workload credential names this action, so naming the trace would fail authentication.
+    """
+    return tctx.task_action or tctx.action
 
 
 class RemoteController(BaseController):
@@ -244,12 +273,21 @@ class RemoteController(BaseController):
         )
         logger.info(f"Sub action {sub_action_id} output path {sub_action_output_path}")
 
+        overrides = await child_overrides(
+            tctx, sub_action_id.name, _task.name, inputs.proto_inputs, _task.native_interface.inputs, code_bundle
+        )
+        _reject_applied_overrides(overrides, sub_action_id.name)
+
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
         inputs_uri = io.inputs_path(sub_action_output_path)
         await upload_inputs_with_retry(serialized_inputs, inputs_uri, max_bytes=_task.max_inline_io_bytes)
 
         cache_key = None
-        if task_spec.task_template.metadata and task_spec.task_template.metadata.discoverable:
+        if (
+            not (overrides and overrides.skip_cache)
+            and task_spec.task_template.metadata
+            and task_spec.task_template.metadata.discoverable
+        ):
             discovery_version = task_spec.task_template.metadata.discovery_version
             cache_key = convert.generate_cache_key_hash(
                 _task.name,
@@ -277,7 +315,7 @@ class RemoteController(BaseController):
 
         action = Action.from_task(
             sub_action_id_bytes=sub_action_id_pb.SerializeToString(),
-            parent_action_name=current_action_id.name,
+            parent_action_name=_running_task(tctx).name,
             group_data=tctx.group_data.name if tctx.group_data else None,
             task_spec_bytes=task_spec.SerializeToString(),
             inputs_uri=inputs_uri,
@@ -488,7 +526,7 @@ class RemoteController(BaseController):
 
         prev_action = await self.get_action(
             sub_action_id_pb.SerializeToString(),
-            current_action_id.name,
+            _running_task(tctx).name,
         )
 
         if prev_action is None:
@@ -566,7 +604,7 @@ class RemoteController(BaseController):
         )
 
         trace_action = Action.from_trace(
-            parent_action_name=current_action_id.name,
+            parent_action_name=_running_task(tctx).name,
             action_id_bytes=action_id_pb.SerializeToString(),
             inputs_uri=info.inputs_path,
             outputs_uri=outputs_file_path,
@@ -626,12 +664,17 @@ class RemoteController(BaseController):
             tctx, task_identity, name_inputs_hash, invoke_seq_num
         )
 
+        overrides = await child_overrides(
+            tctx, sub_action_id.name, task_name, inputs.proto_inputs, native_interface.inputs, task_ref=True
+        )
+        _reject_applied_overrides(overrides, sub_action_id.name)
+
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
         inputs_uri = io.inputs_path(sub_action_output_path)
         await upload_inputs_with_retry(serialized_inputs, inputs_uri, _task.max_inline_io_bytes)
         # cache key - task name, task signature, inputs, cache version
         cache_key = None
-        if md and md.discoverable:
+        if md and md.discoverable and not (overrides and overrides.skip_cache):
             discovery_version = md.discovery_version
             cache_key = convert.generate_cache_key_hash(
                 task_name,
@@ -659,7 +702,7 @@ class RemoteController(BaseController):
 
         action = Action.from_task(
             sub_action_id_bytes=sub_action_id_pb.SerializeToString(),
-            parent_action_name=current_action_id.name,
+            parent_action_name=_running_task(tctx).name,
             group_data=tctx.group_data.name if tctx.group_data else None,
             task_spec_bytes=_task.pb2.spec.SerializeToString(),
             inputs_uri=inputs_uri,

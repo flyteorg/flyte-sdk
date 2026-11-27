@@ -1,13 +1,18 @@
 from pathlib import Path
 
 import flyte
+import flyte.errors
 import pytest
 from flyte import PodTemplate, Resources
+from flyte.extend import AsyncFunctionTaskTemplate
 from flyte.models import SerializationContext
 from flyteidl2.core import tasks_pb2
 from flyteidl2.plugins.ray_pb2 import AutoscalerOptions, RayJob
 from google.protobuf.json_format import MessageToDict, ParseDict
 from kubernetes.client import V1Container, V1PodSpec, V1ResourceRequirements
+from ray._raylet import ActorID
+from ray.core.generated.common_pb2 import ActorDiedErrorContext, NodeDeathInfo
+from ray.exceptions import ActorDiedError, RayTaskError
 
 from flyteplugins.ray.task import (
     AutoscalerOptionsConfig,
@@ -344,3 +349,79 @@ def test_no_autoscaler_options_when_absent(sctx):
     ray_job = _to_ray_job(ray_task.custom_config(sctx))
 
     assert not ray_job.ray_cluster.HasField("autoscaler_options")
+
+
+def _actor_died_error(reason: int) -> ActorDiedError:
+    return ActorDiedError(
+        cause=ActorDiedErrorContext(
+            actor_id=b"\x01" * ActorID.size(),
+            node_death_info=NodeDeathInfo(reason=reason),
+        )
+    )
+
+
+def _wrapped_in_task_error(error: ActorDiedError) -> RayTaskError:
+    return RayTaskError(function_name="train", traceback_str="", cause=error)
+
+
+def _patch_base_execute(monkeypatch: pytest.MonkeyPatch, error: BaseException) -> None:
+    async def _raise(self, *args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(AsyncFunctionTaskTemplate, "execute", _raise)
+
+
+def _ray_task() -> RayFunctionTask:
+    return _build_ray_task(RayJobConfig(worker_node_config=[WorkerNodeConfig(group_name="grp", replicas=1)]))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "build_error",
+    [
+        pytest.param(lambda e: e, id="actor_died"),
+        pytest.param(_wrapped_in_task_error, id="ray_task_error"),
+        pytest.param(lambda e: _wrapped_in_task_error(e).as_instanceof_cause(), id="as_instanceof_cause"),
+    ],
+)
+async def test_execute_raises_system_error_on_node_preemption(monkeypatch, build_error):
+    error = build_error(_actor_died_error(reason=NodeDeathInfo.AUTOSCALER_DRAIN_PREEMPTED))
+    _patch_base_execute(monkeypatch=monkeypatch, error=error)
+
+    with pytest.raises(flyte.errors.RuntimeSystemError) as exc_info:
+        await _ray_task().execute()
+
+    assert exc_info.value.code == "NodeDisrupted"
+    assert exc_info.value.kind == "system"
+    assert exc_info.value.__cause__ is error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(_actor_died_error(reason=NodeDeathInfo.UNEXPECTED_TERMINATION), id="node_crash"),
+        pytest.param(ValueError("bad input"), id="user_error"),
+    ],
+)
+async def test_execute_reraises_other_errors(monkeypatch, error):
+    _patch_base_execute(monkeypatch=monkeypatch, error=error)
+
+    with pytest.raises(type(error)) as exc_info:
+        await _ray_task().execute()
+
+    assert exc_info.value is error
+
+
+@pytest.mark.asyncio
+async def test_execute_stops_on_cyclic_cause_chain(monkeypatch):
+    first = RuntimeError("first")
+    second = RuntimeError("second")
+    first.__cause__ = second
+    second.__cause__ = first
+    _patch_base_execute(monkeypatch=monkeypatch, error=first)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await _ray_task().execute()
+
+    assert exc_info.value is first

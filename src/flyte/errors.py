@@ -5,6 +5,7 @@ These errors are raised when the underlying task execution fails, either because
 unknown error.
 """
 
+from dataclasses import dataclass
 from typing import Literal
 
 ErrorKind = Literal["system", "unknown", "user"]
@@ -410,6 +411,61 @@ class ActionAbortedError(RuntimeUserError):
         super().__init__("ActionAbortedError", message, "user")
 
 
+@dataclass(frozen=True)
+class OrgLimit:
+    """
+    The org limit a request was refused at, as the server reported it.
+
+    Attributes:
+        limit: The limit's name, e.g. `max_concurrent_runs`.
+        ceiling: The org's current value for the limit.
+        current: The org's usage before the request.
+        requested: How much the request would have added.
+        tier_default: The limit's default for the org's tier; None when the server didn't say or the org's plan has
+            no tier defaults. It differs from `ceiling` when the org's limit was raised (or lowered) for it.
+        upgrade_url: Where to ask for the limit to be raised; empty when the server didn't say.
+        tier: The tier `tier_default` belongs to, e.g. `Teams` or `Enterprise`; empty when the server didn't say.
+    """
+
+    limit: str
+    ceiling: int
+    current: int
+    requested: int
+    tier_default: int | None = None
+    upgrade_url: str = ""
+    tier: str = ""
+
+
+class OrgLimitExceededError(RuntimeUserError):
+    """
+    This error is raised when the server refuses a request because the organization is at one of its limits, for
+    example `max_actions_per_run` or `max_clusters`. Retrying does not help: the limit has to be raised. `org_limit`
+    holds the limit's name and numbers, when the server sent them.
+    """
+
+    def __init__(self, message: str, org_limit: OrgLimit | None = None):
+        super().__init__("OrgLimitExceeded", message, "user")
+        self.org_limit = org_limit
+
+
+class OrgEntitlementRequiredError(RuntimeUserError):
+    """
+    This error is raised when the server refuses a request because the organization isn't entitled to a capability,
+    for example a private control plane endpoint. Retrying does not help: the org's plan has to include it.
+
+    Attributes:
+        entitlement: The entitlement's name, e.g. `private_control_plane_endpoint`.
+        values: For a list entitlement (e.g. `allowed_clouds`), the requested values the org isn't entitled to.
+        upgrade_url: Where to ask for the entitlement; empty when the server didn't say.
+    """
+
+    def __init__(self, message: str, entitlement: str = "", values: list[str] | None = None, upgrade_url: str = ""):
+        super().__init__("OrgEntitlementRequired", message, "user")
+        self.entitlement = entitlement
+        self.values = list(values or [])
+        self.upgrade_url = upgrade_url
+
+
 class SlowDownError(RuntimeUserError):
     """
     This error is raised when the user tries to access a resource that does not exist or is invalid.
@@ -420,7 +476,15 @@ class SlowDownError(RuntimeUserError):
 
 
 class ResourceExhaustedError(SlowDownError):
-    pass
+    """
+    This error is raised when the server refuses a request for now, for example because the organization is at its
+    `max_concurrent_runs` or `max_queue_depth`: it succeeds once running work finishes. `org_limit` holds the limit's
+    name and numbers, when the server sent them.
+    """
+
+    def __init__(self, message: str, org_limit: OrgLimit | None = None):
+        super().__init__(message)
+        self.org_limit = org_limit
 
 
 class OnlyAsyncIOSupportedError(RuntimeUserError):

@@ -18,8 +18,8 @@ Basic usage:
 
     env = flyte.TaskEnvironment(
         name="train",
-        image=flyte.Image.from_base("nvcr.io/nvidia/pytorch:24.08-py3")
-            .clone(extendable=True, name="train", python_version=(3, 10))
+        image=flyte.Image.from_base("nvcr.io/nvidia/pytorch:24.11-py3")
+            .clone(extendable=True, name="train", python_version=(3, 12))
             .with_pip_packages("flyte", "uv"),
         resources=flyte.Resources(gpu="L4:1"),
         # osrt tracing and GPU counters need CAP_SYS_ADMIN + unconfined AppArmor.

@@ -1,5 +1,6 @@
 """Tests for durable (record/replay) Hermes model turns (mocked — no network)."""
 
+import json
 import types
 
 import pytest
@@ -148,7 +149,42 @@ def test_anthropic_shape_round_trips(durable_gate):
 
     assert out.stop_reason == "tool_use"
     assert out.content[0].type == "text"
-    assert out.content[1].input.city == "Paris"
+    # tool_use input is a plain dict in the Anthropic SDK and must stay usable as one.
+    assert out.content[1].input == {"city": "Paris"}
+    assert json.loads(json.dumps(out.content[1].input)) == {"city": "Paris"}
+
+
+def test_recorded_anthropic_turn_normalizes_in_hermes(durable_gate):
+    """Hermes' own Anthropic transport accepts a recorded tool_use turn."""
+    transports = pytest.importorskip("agent.transports.anthropic")
+
+    response = types.SimpleNamespace(
+        id="msg_2",
+        type="message",
+        role="assistant",
+        model="claude-test",
+        stop_reason="tool_use",
+        usage=types.SimpleNamespace(input_tokens=5, output_tokens=2),
+        content=[
+            types.SimpleNamespace(type="tool_use", id="tu_2", name="get_weather", input={"city": "Paris"}),
+        ],
+    )
+    request = {"model": "claude-test", "messages": [{"role": "user", "content": "weather?"}]}
+    out = _durable.durable_llm_execution(request, lambda r: response, api_mode="anthropic_messages")
+
+    normalized = transports.AnthropicTransport().normalize_response(out)
+    assert [(c.name, json.loads(c.arguments)) for c in normalized.tool_calls] == [("get_weather", {"city": "Paris"})]
+
+
+def test_recorded_chat_completion_normalizes_in_hermes(durable_gate):
+    """Hermes' own chat-completions transport accepts a recorded tool-call turn."""
+    transports = pytest.importorskip("agent.transports.chat_completions")
+
+    request = {"model": "gpt-test", "messages": [{"role": "user", "content": "weather?"}]}
+    out = _durable.durable_llm_execution(request, lambda r: _chat_completion_namespace(), api_mode="chat_completions")
+
+    normalized = transports.ChatCompletionsTransport().normalize_response(out)
+    assert [(c.name, json.loads(c.arguments)) for c in normalized.tool_calls] == [("get_weather", {"city": "Paris"})]
 
 
 def test_pydantic_chat_completion_round_trips():

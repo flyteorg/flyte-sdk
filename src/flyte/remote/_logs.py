@@ -9,6 +9,7 @@ from flyteidl2.app import app_definition_pb2, app_logs_payload_pb2, replica_defi
 from flyteidl2.common import identifier_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.logs.dataplane import payload_pb2
+from flyteidl2.workflow import run_service_pb2
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
@@ -51,6 +52,27 @@ def _format_line(logline: payload_pb2.LogLine, show_ts: bool, filter_system: boo
     if show_ts:
         ts = f"[{logline.timestamp.ToDatetime().isoformat()}]"
     return Text(f"{ts} {logline.message}", style=style)
+
+
+async def _connector_endpoint(client, action_id: identifier_pb2.ActionIdentifier, attempt: int) -> str:
+    """
+    The log connector that serves an action's logs, or "" for pod logs.
+
+    An action run by a connector (a GPU task on the Union On-Demand queue, for one) has no pod:
+    its log context names the connector instead, and the log plane only streams from it when the
+    request carries that endpoint. Asked again on every attempt, since the context appears once the
+    action starts; any failure falls back to pod logs.
+    """
+    try:
+        resp = await client.run_service.get_action_log_context(
+            run_service_pb2.GetActionLogContextRequest(action_id=action_id, attempt=attempt)
+        )
+    except Exception as e:  # an older backend, no context yet, or a test double
+        logger.debug(f"No log context for action {action_id.name}: {e}")
+        return ""
+
+    log_context = resp.log_context
+    return log_context.connector.endpoint if log_context.HasField("connector") else ""
 
 
 class AsyncLogViewer:
@@ -147,6 +169,7 @@ class Logs:
                     dataproxy_service_pb2.TailLogsRequest(
                         action_id=action_id,
                         attempt=attempt,
+                        connector_endpoint=await _connector_endpoint(client, action_id, attempt),
                     )
                 )
                 stream = resp.__aiter__()

@@ -104,14 +104,11 @@ flyte.config._config
 flyte.config._internal
 flyte.config._reader
 flyte.errors
-flyte.io
-flyte.io._dir
-flyte.io._file
-flyte.io._hashing_io
 flyte.models
 flyte.remote
 flyte.remote._action
 flyte.remote._client
+flyte.remote._client._connect_compat
 flyte.remote._client._protocols
 flyte.remote._client.auth
 flyte.remote._client.auth._authenticators
@@ -172,7 +169,6 @@ h11
 httpcore
 httpx
 idna
-importlib_metadata
 mashumaro
 mashumaro.codecs
 mashumaro.config
@@ -196,4 +192,3 @@ six
 typing_extensions
 typing_inspection
 yaml
-zipp

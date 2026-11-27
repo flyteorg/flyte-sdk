@@ -11,13 +11,28 @@ from flyte._logging import logger
 RETRYABLE_CODES = frozenset({Code.UNAVAILABLE, Code.INTERNAL})
 
 
-def _log_retry(ctx, e: ConnectError, delay: float, attempt: int, max_attempts: int) -> None:
+def _is_retryable(e: Exception) -> bool:
+    """Whether an error raised through the interceptor chain is transient and worth retrying.
+
+    Besides transient RPC codes, this covers AuthenticationTransientError: the token endpoint answered 5xx/429
+    while the auth interceptor (which sits inside this one) was refreshing credentials.
+    """
+    from ..errors import AuthenticationTransientError
+
+    if isinstance(e, ConnectError):
+        return e.code in RETRYABLE_CODES
+    return isinstance(e, AuthenticationTransientError)
+
+
+def _log_retry(ctx, e: Exception, delay: float, attempt: int, max_attempts: int) -> None:
     method = getattr(getattr(ctx, "method", None), "name", "rpc")
+    code = e.code if isinstance(e, ConnectError) else type(e).__name__
+    message = e.message if isinstance(e, ConnectError) else str(e)
     logger.debug(
         "%s failed (code=%s): %s; retrying in %.1fs (attempt %d/%d)",
         method,
-        e.code,
-        e.message,
+        code,
+        message,
         delay,
         attempt + 1,
         max_attempts,
@@ -44,8 +59,8 @@ class RetryUnaryInterceptor:
         for attempt in range(self._max_attempts):
             try:
                 return await call_next(request, ctx)
-            except ConnectError as e:
-                if e.code not in RETRYABLE_CODES or attempt == self._max_attempts - 1:
+            except Exception as e:
+                if not _is_retryable(e) or attempt == self._max_attempts - 1:
                     raise
                 delay = backoff * (0.5 + random.random())
                 _log_retry(ctx, e, delay, attempt, self._max_attempts)
@@ -75,8 +90,8 @@ class RetryServerStreamInterceptor:
                 async for response in call_next(request, ctx):
                     yield response
                 return  # Stream completed successfully
-            except ConnectError as e:
-                if e.code not in RETRYABLE_CODES or attempt == self._max_attempts - 1:
+            except Exception as e:
+                if not _is_retryable(e) or attempt == self._max_attempts - 1:
                     raise
                 delay = backoff * (0.5 + random.random())
                 _log_retry(ctx, e, delay, attempt, self._max_attempts)

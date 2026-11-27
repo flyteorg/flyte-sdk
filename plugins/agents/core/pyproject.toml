@@ -4,7 +4,7 @@ dynamic = ["version"]
 description = "Shared contract for Flyte agent-SDK adapters."
 readme = "README.md"
 authors = [{ name = "Samhita Alla", email = "samhita@union.ai" }]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["flyte"]
 
 [build-system]

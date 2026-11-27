@@ -194,3 +194,21 @@ async def test_local_interface_keeps_declared_types():
     with mock.patch.object(TypeEngine, "to_literal", side_effect=spy):
         await convert.convert_from_native_to_inputs(iface, p=Point(x=1))
     assert seen == [Point]
+
+
+def test_describe_literal_type():
+    from flyteidl2.core import types_pb2
+
+    from flyte.types._interface import describe_literal_type
+
+    lt_int = types_pb2.LiteralType(simple=types_pb2.INTEGER)
+    file = types_pb2.LiteralType(blob=types_pb2.BlobType(dimensionality=types_pb2.BlobType.BlobDimensionality.SINGLE))
+    union = types_pb2.LiteralType(
+        union_type=types_pb2.UnionType(variants=[lt_int, types_pb2.LiteralType(simple=types_pb2.NONE)])
+    )
+    assert describe_literal_type(types_pb2.LiteralType(collection_type=lt_int)) == "list[integer]"
+    assert describe_literal_type(types_pb2.LiteralType(map_value_type=file)) == "dict[str, File]"
+    assert describe_literal_type(union) == "integer | none"
+    # Metadata a rebuild may change is not part of the description.
+    tagged = types_pb2.LiteralType(simple=types_pb2.INTEGER, structure=types_pb2.TypeStructure(tag="x"))
+    assert describe_literal_type(tagged) == describe_literal_type(lt_int)

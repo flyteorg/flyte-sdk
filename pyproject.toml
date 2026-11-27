@@ -4,16 +4,16 @@ dynamic = ["version"]
 description = "The open source durable AI runtime for model training and batch/online inference."
 readme = "README.md"
 authors = [{ name = "Flyte Contributors", email = "admin@flyte.org" }]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "aiofiles>=24.1.0",
     "click>=8.2.1",
     "cloudpickle>=3.1.1",
     "docstring_parser>=0.16",
     "fsspec>=2025.3.0",
-    # Cap below 0.11: connectrpc 0.11.0 made RequestContext.request_headers a property
-    # (was a method), breaking the auth interceptor with "'Headers' object is not callable".
-    "connectrpc>=0.9.0,<0.11",
+    # Capped at the minor version: connectrpc breaks its API in minor releases, and
+    # flyte.remote._client._connect_compat covers the differences only up to 0.11.
+    "connectrpc>=0.9.0,<0.12",
     "obstore>=0.7.3",
     "protobuf>=6.30.1",
     "pydantic>=2.10.6",
@@ -26,7 +26,7 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro>=3.15",
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.54",
+    "flyteidl2==2.0.57",
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
@@ -218,7 +218,7 @@ select = [
     "FURB",
     "RUF",
 ]
-ignore = ["PGH003", "PLC0415", "ASYNC210", "ASYNC240", "FURB122"]
+ignore = ["PGH003", "PLC0415", "ASYNC109", "ASYNC210", "ASYNC240", "FURB122"]
 
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]
@@ -237,6 +237,7 @@ mypy_path = ["src"]
 
 [tool.uv]
 exclude-newer = "5 days"
+constraint-dependencies = ["soupsieve>=4.0.0"]
 # Opt flyteorg packages out of the global recency cutoff so freshly published
 # flyteidl2/flyte_controller_base releases can be picked up immediately.
 [tool.uv.exclude-newer-package]

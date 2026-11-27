@@ -13,13 +13,20 @@ agent audience: when to reach for the tool, and what it hands back.
 from __future__ import annotations
 
 import asyncio
+import logging
 import pathlib
 import time
+from collections import deque
+from dataclasses import dataclass
 from datetime import timedelta, timezone
 from typing import TYPE_CHECKING, Any, Callable, cast
 
+from connectrpc.errors import ConnectError
+
 import flyte
 import flyte.remote
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from flyte.ai.mcp._flyte_mcp_app import FlyteMCPAppEnvironment
@@ -27,8 +34,26 @@ if TYPE_CHECKING:
 #: Hard ceiling on ``get_logs(max_lines=...)`` so a chatty action cannot blow the context window.
 MAX_LOG_LINES = 2000
 
-#: Overall budget for collecting log lines before returning what we have.
+#: Default budget for collecting log lines before returning what we have. Callers can pass their
+#: own `timeout_s`, clamped to [`MIN_LOG_COLLECT_TIMEOUT_S`, the server's
+#: `log_read_timeout_ceiling_s`].
 LOG_COLLECT_TIMEOUT_S = 30.0
+MIN_LOG_COLLECT_TIMEOUT_S = 1.0
+
+#: Default for `FlyteMCPAppEnvironment.log_read_timeout_ceiling_s`, the most a caller's
+#: `timeout_s` can buy.
+LOG_READ_TIMEOUT_CEILING_S = 120.0
+
+#: Default for `FlyteMCPAppEnvironment.log_idle_timeout_s`. Once lines are flowing, a gap this long
+#: is taken as the end of the stream. The log plane keeps the stream open after a pod exits, so
+#: without this every read would run the full budget.
+LOG_IDLE_TIMEOUT_S = 5.0
+
+#: How many condition-details requests `list_conditions` keeps in flight at once.
+CONDITION_DETAILS_CONCURRENCY = 8
+
+#: Ceiling on the characters of log text in one `get_logs` response; the oldest lines go first.
+MAX_LOG_CHARS = 100_000
 
 #: How many server-side entries the ``list_*`` tools scan when an allowlist is configured.
 #: The allowlist is applied client-side, so passing the caller's ``limit`` straight through would
@@ -156,6 +181,22 @@ def _pb_to_dict(message: Any) -> dict | None:
     from google.protobuf.json_format import MessageToDict
 
     return MessageToDict(message, preserving_proto_field_name=True)
+
+
+def _condition_dict(c: Any) -> dict:
+    """Serialize a `flyte.remote.Condition`; the detail fields are null until `fetch_details` has run."""
+    expected = c.expected_type
+    return {
+        "name": c.name,
+        "action_name": c.action_name,
+        "run_name": c.run_name,
+        "phase": c.phase,
+        "expected_type": expected.__name__ if expected is not None else None,
+        "prompt": c.prompt,
+        "prompt_type": c.prompt_type,
+        "description": c.description,
+        "timeout_s": _seconds(c.timeout),
+    }
 
 
 # ------------------------------
@@ -342,38 +383,103 @@ def _search_files_blocking(
 # ------------------------------
 
 
-async def _collect_log_lines(source: Any, max_lines: int, timeout_s: float) -> str:
-    """Drain at most `max_lines` lines from an async log iterator within `timeout_s`.
+@dataclass
+class _LogWindow:
+    """A contiguous run of log lines, addressed by their position in the stream (0 = oldest)."""
 
-    Returns the joined lines with a trailing marker when the stream was cut short, so the caller
-    can tell "that's all of it" apart from "there is more". Partial output survives the timeout:
-    lines land in a list owned by this function, not by the cancelled inner coroutine.
+    lines: list[str]
+    first_line: int
+    #: Why reading stopped: "end_of_stream", "idle", "time_limit" or "before_line".
+    stopped: str
+    size_capped: bool = False
+
+    @property
+    def end_line(self) -> int:
+        return self.first_line + len(self.lines)
+
+
+async def _read_log_window(
+    source: Any,
+    max_lines: int,
+    before_line: int | None,
+    timeout_s: float,
+    idle_s: float,
+) -> _LogWindow:
+    """Read the last `max_lines` lines of an async log iterator that precede `before_line`.
+
+    With `before_line=None` that is the newest lines: the log service streams from the start
+    and has no offset or tail request, so the whole stream has to be read to find its end.
+    Memory stays bounded because only a `max_lines` ring buffer is kept, never the stream. With
+    a `before_line` the read stops as soon as it gets there.
+
+    The log plane holds the stream open after a pod exits, and a running action never closes it,
+    so "the end" is decided by time: once lines have started arriving, a gap of `idle_s` ends
+    the read, and `timeout_s` bounds the whole call. Lines collected so far survive either.
     """
-    lines: list[str] = []
-    truncated = False
-
-    async def _drain() -> None:
-        nonlocal truncated
-        async for line in source:
-            lines.append(line)
-            if len(lines) >= max_lines:
-                truncated = True
-                return
-
-    timed_out = False
+    window: deque[str] = deque(maxlen=max_lines)
+    seen = 0
+    stream = source.__aiter__()
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
     try:
-        await asyncio.wait_for(_drain(), timeout=timeout_s)
-    except asyncio.TimeoutError:
-        timed_out = True
+        while True:
+            if before_line is not None and seen >= before_line:
+                stopped = "before_line"
+                break
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                stopped = "time_limit"
+                break
+            # Before the first line the stream may still be connecting (the SDK retries a missing
+            # stream for several seconds), so only the overall budget applies until something arrives.
+            wait_s = remaining if seen == 0 else min(idle_s, remaining)
+            try:
+                line = await asyncio.wait_for(stream.__anext__(), timeout=wait_s)
+            except StopAsyncIteration:
+                stopped = "end_of_stream"
+                break
+            except asyncio.TimeoutError:
+                stopped = "idle" if seen > 0 and wait_s < remaining else "time_limit"
+                break
+            window.append(line)
+            seen += 1
+    finally:
+        # Stopping early leaves the generator suspended with its log stream still open until
+        # garbage collection; close it now.
+        aclose = getattr(stream, "aclose", None)
+        if aclose is not None:
+            await aclose()
+    return _LogWindow(lines=list(window), first_line=seen - len(window), stopped=stopped)
 
-    body = "\n".join(lines)
-    if truncated:
-        body += f"\n...truncated at {max_lines} lines"
-    if timed_out:
-        body += f"\n...stopped after {timeout_s:g}s; {len(lines)} lines collected so far"
-    if not lines and not timed_out:
-        return "No log lines were returned."
-    return body
+
+def _cap_log_window(window: _LogWindow, max_chars: int) -> _LogWindow:
+    """Drop the oldest lines until the joined text fits in `max_chars`.
+
+    Cutting from the old end keeps the paging cursor exact: the dropped lines are simply the
+    next page back. A single line longer than the cap is cut to its last `max_chars` characters,
+    since there is no smaller unit to page by.
+    """
+    kept: list[str] = []
+    total = 0
+    capped = False
+    for line in reversed(window.lines):
+        cost = len(line) + (1 if kept else 0)  # +1 for the joining newline
+        if total + cost > max_chars:
+            if not kept:
+                kept.append(line[-max_chars:])
+            capped = True
+            break
+        kept.append(line)
+        total += cost
+    if not capped:
+        return window
+    kept.reverse()
+    return _LogWindow(
+        lines=kept,
+        first_line=window.end_line - len(kept),
+        stopped=window.stopped,
+        size_capped=True,
+    )
 
 
 # ------------------------------
@@ -388,6 +494,14 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
     register (see `FlyteMCPAppEnvironment._create_mcp_server`). Building them all keeps the
     "declared in TOOL_REGISTRY but never implemented" check meaningful.
     """
+    # The sibling modules take ToolError, MCPContext and friends from this one, so they can only be
+    # imported once this module is fully loaded.
+    from flyte.ai.mcp import _diagnose, _operate_tools, _secret_tools
+
+    # `run_task` and `rerun_run` have a parameter called `env` (the new run's environment
+    # variables), which hides the server environment closed over here; keep a second name for it.
+    tool_env = env
+
     # ------------------------------
     # task
     # ------------------------------
@@ -398,6 +512,16 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         name: str,
         inputs: dict,
         version: str | None = None,
+        run_name: str | None = None,
+        labels: dict[str, str] | None = None,
+        env: dict[str, str] | None = None,
+        queue: str | None = None,
+        service_account: str | None = None,
+        max_action_concurrency: int | None = None,
+        raw_data_path: str | None = None,
+        custom_context: dict[str, str] | None = None,
+        run_project: str | None = None,
+        run_domain: str | None = None,
         ctx: MCPContext | None = None,
     ) -> dict:
         """Launch a registered task and return immediately with the new run's name and URL.
@@ -405,10 +529,34 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         Use this to start work; poll `get_run` or block with `wait_for_run` to see the
         outcome. `inputs` is a dict of the task's input names to values. Omit `version` to
         use the latest registered version.
+
+        Optional run settings, each applied only when given (otherwise the task's and the
+        platform's defaults apply): `run_name` names the run (random if omitted); `labels`
+        attaches key/value labels; `env` sets environment variables for the run's actions;
+        `queue` picks the execution queue; `service_account` the Kubernetes service account;
+        `max_action_concurrency` caps how many of the run's actions execute at once (0 is the
+        platform default, otherwise at least 2); `raw_data_path` is the storage prefix for
+        offloaded data, e.g. "s3://bucket/"; `custom_context` is key/value metadata every
+        task in the run can read. `project` and `domain` say where the *task* is registered;
+        set `run_project` / `run_domain` to create the run in a different project or domain.
         """
-        if not _is_task_allowed(env.task_allowlist, domain, project, name):
+        if not _is_task_allowed(tool_env.task_allowlist, domain, project, name):
             raise ToolError(f"Task {domain}/{project}/{name} is not allowlisted.")
-        with env._scoped(project, domain):
+
+        runner = _operate_tools.run_context(
+            run_name,
+            labels,
+            env,
+            queue,
+            service_account,
+            max_action_concurrency,
+            raw_data_path,
+            custom_context,
+            run_project,
+            run_domain,
+        )
+
+        with tool_env._scoped(project, domain):
             tk = flyte.remote.Task.get(
                 project=project,
                 domain=domain,
@@ -416,7 +564,10 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
                 version=version,
                 auto_version="latest" if version is None else None,
             )  # type: ignore[arg-type]
-            r = await flyte.run.aio(tk, **inputs)
+            if runner is None:
+                r = await flyte.run.aio(tk, **inputs)
+            else:
+                r = await runner.run.aio(tk, **inputs)
             return {"url": r.url, "name": r.name}
 
     async def get_task(
@@ -465,18 +616,23 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         domain: str | None = None,
         limit: int = 100,
         entrypoint: bool | None = None,
+        name: str | None = None,
         ctx: MCPContext | None = None,
     ) -> list[dict]:
         """List the tasks registered in a project/domain.
 
         Use this to discover what can be run. Set `entrypoint=True` to see only top-level
-        tasks (the ones normally launched directly) rather than every sub-task. Only
-        allowlisted tasks are listed, so this matches what `run_task` will accept.
+        tasks (the ones normally launched directly) rather than every sub-task. Pass `name`
+        to list every registered version of that one task, newest first, e.g. to pick a
+        `version` for `run_task` or to see what a rollback target is. Only allowlisted
+        tasks are listed, so this matches what `run_task` will accept.
         """
         allowlist = env.task_allowlist
         # The allowlist is applied here, not by the server, so ask for more than `limit` when one
         # is configured -- otherwise the server truncates first and allowed tasks disappear.
         scan_limit = limit if allowlist is None else max(limit, ALLOWLIST_SCAN_LIMIT)
+        # Only passed when set, so an unfiltered call reaches the SDK as it always did.
+        by_name: dict[str, Any] = {"by_task_name": name} if name else {}
         with env._scoped(project, domain) as (resolved_project, resolved_domain):
             tasks = cast(Any, flyte.remote.Task.listall).aio(
                 project=resolved_project,
@@ -484,16 +640,17 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
                 sort_by=("created_at", "desc"),
                 limit=scan_limit,
                 entrypoint=entrypoint,
+                **by_name,
             )
             out: list[dict] = []
             async for t in tasks:
-                name = getattr(t, "name", None)
-                if not _is_task_allowed(allowlist, resolved_domain, resolved_project, name or ""):
+                task_name = getattr(t, "name", None)
+                if not _is_task_allowed(allowlist, resolved_domain, resolved_project, task_name or ""):
                     continue
                 if hasattr(t, "to_dict"):
                     out.append(t.to_dict())
                 else:
-                    out.append({"name": name, "version": getattr(t, "version", None)})
+                    out.append({"name": task_name, "version": getattr(t, "version", None)})
                 if len(out) >= limit:
                     break
             return out
@@ -508,11 +665,22 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         """Get a run's current phase plus its console URL.
 
         This is the cheap status check — it does not fetch inputs, outputs or logs. Use
-        `get_run_io` for data and `get_logs` for output.
+        `get_run_io` for data and `get_logs` for output. It also reports the root task's
+        `task_name`, `started_at`/`ended_at`, `duration_s` (elapsed so far while running),
+        the run's `labels`, and for a failed run `error` (`kind`, `message` cut at 2000
+        characters) — usually enough to say why it failed without a second call. For the
+        failing step inside a multi-step run, use `list_actions` with `in_phase=["failed"]`.
         """
         with env._scoped(project, domain):
             run = await flyte.remote.Run.get.aio(name=name)
-            return {"name": run.name, "phase": _phase_str(run.phase), "url": run.url, "done": run.done()}
+            result: dict[str, Any] = {
+                "name": run.name,
+                "phase": _phase_str(run.phase),
+                "url": run.url,
+                "done": run.done(),
+            }
+            await _diagnose.add_run_details(run, result)
+            return result
 
     async def wait_for_run(
         name: str,
@@ -554,22 +722,34 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
             return result
 
     async def get_run_io(
-        name: str, project: str | None = None, domain: str | None = None, ctx: MCPContext | None = None
+        name: str,
+        action_name: str | None = None,
+        inputs_only: bool = False,
+        outputs_only: bool = False,
+        project: str | None = None,
+        domain: str | None = None,
+        ctx: MCPContext | None = None,
     ) -> dict:
         """Get a run's inputs, and its outputs once it has finished.
 
         `outputs` is null while the run is still going. If the outputs exist but cannot be
         decoded (an unreconstructable output type, for example), `outputs_error` explains
         why instead of the outputs silently coming back null.
+
+        Pass `action_name` (from `list_actions`) for a nested action's data instead of the
+        root's — a failure is usually in a child, and its inputs are what you need to
+        reproduce it. Set `inputs_only` or `outputs_only` (not both) to leave the other
+        out of the response when it is large.
         """
+        _diagnose.check_io_selection(inputs_only, outputs_only)
         with env._scoped(project, domain):
-            run = await flyte.remote.Run.get.aio(name=name)
-            inputs = await run.inputs.aio()
+            target, run_name = await _diagnose.io_target(name, action_name)
+            inputs: Any = None if outputs_only else await target.inputs.aio()
             outputs = None
             outputs_error: str | None = None
-            if run.done():
+            if not inputs_only and target.done():
                 try:
-                    outputs = await run.outputs.aio()
+                    outputs = await target.outputs.aio()
                 except Exception as e:
                     outputs_error = f"{type(e).__name__}: {e}"
             inputs_dict = (
@@ -584,7 +764,7 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
                     if hasattr(outputs, "named_outputs")
                     else (outputs.to_dict() if hasattr(outputs, "to_dict") else list(outputs))
                 )
-            result = {"name": run.name, "inputs": inputs_dict, "outputs": outputs_dict}
+            result = _diagnose.io_result(run_name, action_name, inputs_only, outputs_only, inputs_dict, outputs_dict)
             if outputs_error is not None:
                 result["outputs_error"] = outputs_error
             return result
@@ -611,6 +791,16 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
     async def list_runs(
         task_name: str | None = None,
         limit: int = 100,
+        in_phase: list[str] | None = None,
+        only_mine: bool = False,
+        paused_only: bool = False,
+        task_version: str | None = None,
+        created_after: str | None = None,
+        created_before: str | None = None,
+        updated_after: str | None = None,
+        updated_before: str | None = None,
+        with_labels: dict[str, str] | None = None,
+        with_label_keys: list[str] | None = None,
         project: str | None = None,
         domain: str | None = None,
         ctx: MCPContext | None = None,
@@ -618,49 +808,79 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         """List recent runs in a project/domain, newest first.
 
         Pass `task_name` to see only the runs of one task — useful for "did my last run of
-        X succeed?" questions.
+        X succeed?" questions. To answer "what failed in the last hour?" narrow server-side
+        instead of scanning: `in_phase` (e.g. ["failed", "timed_out"]), `created_after` /
+        `created_before` / `updated_after` / `updated_before` (ISO-8601, e.g.
+        "2025-01-31T12:00:00Z"; no zone means UTC), and `task_version`. `only_mine` keeps
+        runs started by the identity this server acts as (see `whoami`). `paused_only` keeps
+        runs waiting on a condition — follow up with `list_conditions`. `with_labels` needs
+        every key=value pair to match; `with_label_keys` needs every key to be present.
+        Each entry also carries `task_name`, `started_at` and `ended_at` when known.
         """
+        filters = _diagnose.run_filters(
+            in_phase,
+            paused_only,
+            task_version,
+            created_after,
+            created_before,
+            updated_after,
+            updated_before,
+            with_labels,
+            with_label_keys,
+        )
         with env._scoped(project, domain) as (resolved_project, resolved_domain):
+            if only_mine:
+                await _diagnose.filter_to_caller(filters)
             runs = cast(Any, flyte.remote.Run.listall).aio(
                 task_name=task_name,
                 sort_by=("created_at", "desc"),
                 limit=limit,
                 project=resolved_project,
                 domain=resolved_domain,
+                **filters,
             )
             out: list[dict] = []
             async for r in runs:
-                if hasattr(r, "to_dict"):
-                    out.append(r.to_dict())
-                else:
-                    out.append({"name": getattr(r, "name", None), "url": getattr(r, "url", None)})
+                out.append(_diagnose.run_entry(r))
                 if len(out) >= limit:
                     break
             return out
 
     async def rerun_run(
-        run_name: str, project: str | None = None, domain: str | None = None, ctx: MCPContext | None = None
+        run_name: str,
+        recover: bool = False,
+        action_name: str | None = None,
+        force_rerun_actions: list[str] | None = None,
+        allow_missing_outputs: bool = False,
+        name: str | None = None,
+        labels: dict[str, str] | None = None,
+        env: dict[str, str] | None = None,
+        project: str | None = None,
+        domain: str | None = None,
+        ctx: MCPContext | None = None,
     ) -> dict:
         """Re-run a previous run's root action with exactly the same inputs and code.
 
         Use this to retry a failed run without knowing its inputs or having the source
         locally. Returns the *new* run's name and URL; the original is untouched. The task
         behind the run must be allowlisted, exactly as it would be for `run_task`.
+
+        Options, for after you have diagnosed a failure: `recover=true` reuses the actions
+        that already succeeded and re-executes only what failed or never ran (the usual
+        way to resume a failed pipeline); `force_rerun_actions` (needs `recover`) names
+        succeeded actions to re-execute anyway, children included. `action_name` re-runs
+        just that one action as a new run with the inputs it received (cannot be combined
+        with `recover`). `allow_missing_outputs` proceeds when the source run's outputs
+        were cleaned up; the new run fails if its inputs are gone too. `name`, `labels` and
+        `env` set the new run's name, labels and environment variables. Per-input overrides
+        are not supported; the inputs are always the original run's.
         """
-        with env._scoped(project, domain) as (resolved_project, resolved_domain):
-            # A rerun launches the prior run's task, so it has to clear the same gate as run_task.
-            # Only pay for the lookup when there is an allowlist to check against.
-            if env.task_allowlist is not None:
-                prior = await flyte.remote.Run.get.aio(name=run_name)
-                task_name = getattr(prior.action, "task_name", None)
-                if task_name is None:
-                    raise ToolError(
-                        f"Cannot determine which task run '{run_name}' launched, so it cannot be "
-                        f"checked against the task allowlist."
-                    )
-                if not _is_task_allowed(env.task_allowlist, resolved_domain, resolved_project, task_name):
-                    raise ToolError(f"Task {resolved_domain}/{resolved_project}/{task_name} is not allowlisted.")
-            r = await flyte.rerun.aio(run_name)
+        new_labels, env_vars = _diagnose.check_rerun_args(recover, action_name, force_rerun_actions, labels, env)
+        with tool_env._scoped(project, domain) as (resolved_project, resolved_domain):
+            await _diagnose.check_rerun_allowed(tool_env, run_name, action_name, resolved_domain, resolved_project)
+            r = await _diagnose.rerun(
+                run_name, recover, action_name, force_rerun_actions, allow_missing_outputs, name, new_labels, env_vars
+            )
             return {"url": r.url, "name": r.name}
 
     # ------------------------------
@@ -670,6 +890,7 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
     async def list_actions(
         run_name: str,
         limit: int = 100,
+        in_phase: list[str] | None = None,
         project: str | None = None,
         domain: str | None = None,
         ctx: MCPContext | None = None,
@@ -677,11 +898,15 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         """List the actions (individual task executions) inside a run.
 
         This is how you find which step of a multi-step run failed: scan the phases, then
-        call `get_action` or `get_logs` on the interesting one.
+        call `get_action` or `get_logs` on the interesting one. Pass `in_phase` (e.g.
+        ["failed", "timed_out"]) to have the server return only those, which is much
+        shorter for a run with hundreds of actions.
         """
+        phases = _diagnose.parse_phases(in_phase)
         with env._scoped(project, domain):
             out: list[dict] = []
-            async for a in cast(Any, flyte.remote.Action.listall).aio(for_run_name=run_name):
+            filters = {"in_phase": phases} if phases else {}
+            async for a in cast(Any, flyte.remote.Action.listall).aio(for_run_name=run_name, **filters):
                 started_at = _ts(a.pb2.status, "start_time")
                 ended_at = _ts(a.pb2.status, "end_time")
                 out.append(
@@ -789,20 +1014,38 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         action_name: str | None = None,
         attempt: int | None = None,
         max_lines: int = 200,
+        before_line: int | None = None,
+        timeout_s: float = LOG_COLLECT_TIMEOUT_S,
         filter_system: bool = True,
+        show_ts: bool = False,
         wait_for_logs: bool = False,
         project: str | None = None,
         domain: str | None = None,
         ctx: MCPContext | None = None,
-    ) -> str:
-        """Read an action's logs as text. Omit `action_name` for the run's root action.
+    ) -> dict:
+        """Read the newest lines of an action's logs. Omit `action_name` for the run's root action.
 
-        Returns at most `max_lines` lines (hard cap 2000) and gives up after ~30s, marking
-        the output when it was cut short. If the logs are not up yet this returns a short
-        status string right away rather than blocking; pass `wait_for_logs=True` only when
-        you actually want to wait for a queued action to start.
+        Returns the last `max_lines` lines, oldest first, (hard cap 2000, and at most ~100k characters, cut
+        from the oldest end). Lines are numbered from 0 at the start of the log; `first_line`
+        and `end_line` give the returned range. To step back, call again with
+        `before_line=next_before_line` while `has_more_before` is true, keeping `attempt` and
+        `filter_system` the same so the numbering does not shift. `before_line=max_lines`
+        reads the log from the start.
+
+        Reading stops when the stream goes quiet or after `timeout_s` seconds (default 30,
+        clamped to at least 1 and at most the server's ceiling, 120 unless configured otherwise);
+        `stopped` says which, and `timeout_s` in the response is the budget actually used. The
+        log service has no tail request, so finding the newest lines means reading the whole
+        log: on a large log a larger `timeout_s` gets closer to the true newest lines. When
+        `stopped` is "time_limit", newer lines may exist; retry with more time. Many MCP
+        clients cancel a tool call at around 60s, so stay under that unless yours allows more.
+        If the logs are not up yet this returns `available: false` right away rather than blocking;
+        pass `wait_for_logs=True` only when you actually want to wait for a queued action to
+        start. Set `show_ts=true` to prefix each line with its timestamp, for working out what
+        happened when or how long a step took.
         """
         bounded_lines = max(1, min(int(max_lines), MAX_LOG_LINES))
+        budget_s = float(max(MIN_LOG_COLLECT_TIMEOUT_S, min(float(timeout_s), env.log_read_timeout_ceiling_s)))
         with env._scoped(project, domain):
             if action_name is None:
                 target: Any = await flyte.remote.Run.get.aio(name=run_name)
@@ -813,14 +1056,74 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
                 details = await target.details.aio()
                 label = f"action '{action_name}' in run '{run_name}'"
 
-            if not wait_for_logs and not details.logs_available(attempt):
-                return (
-                    f"Logs are not available yet for {label} (phase {_phase_str(details.phase)}). "
-                    f"Call get_logs again once it is running, or pass wait_for_logs=true to block."
-                )
+            # Pinning the attempt in the response lets a client keep paging the same log after a
+            # retry starts and "latest" moves on.
+            resolved_attempt = attempt if attempt is not None else details.attempts
+            response: dict = {
+                "run_name": run_name,
+                "action_name": action_name,
+                "attempt": resolved_attempt,
+                "timeout_s": budget_s,
+            }
 
-            source = cast(Any, target.get_logs).aio(attempt=attempt, filter_system=filter_system)
-            return await _collect_log_lines(source, bounded_lines, LOG_COLLECT_TIMEOUT_S)
+            if not wait_for_logs and not details.logs_available(attempt):
+                response.update(
+                    available=False,
+                    logs="",
+                    message=(
+                        f"Logs are not available yet for {label} (phase {_phase_str(details.phase)}). "
+                        f"Call get_logs again once it is running, or pass wait_for_logs=true to block."
+                    ),
+                )
+                return response
+
+            # Only passed when set, so the default call to the SDK is unchanged.
+            ts_args = {"show_ts": True} if show_ts else {}
+            source = cast(Any, target.get_logs).aio(attempt=attempt, filter_system=filter_system, **ts_args)
+            window = await _read_log_window(
+                source,
+                bounded_lines,
+                None if before_line is None else max(0, int(before_line)),
+                budget_s,
+                env.log_idle_timeout_s,
+            )
+            window = _cap_log_window(window, MAX_LOG_CHARS)
+
+            has_more_before = window.first_line > 0
+            if not window.lines:
+                message = (
+                    f"No log lines arrived within {budget_s:g}s."
+                    if window.stopped == "time_limit"
+                    else "No log lines were returned."
+                )
+            else:
+                message = f"Lines {window.first_line}-{window.end_line - 1}."
+                if window.stopped == "time_limit":
+                    message += (
+                        f" Reading stopped after {budget_s:g}s while lines were still arriving,"
+                        " so newer lines may exist."
+                    )
+                if window.size_capped:
+                    message += f" Older lines were dropped to stay under {MAX_LOG_CHARS} characters."
+                if has_more_before:
+                    message += (
+                        f" Older lines exist: call get_logs with before_line={window.first_line}"
+                        f" and attempt={resolved_attempt}."
+                    )
+
+            response.update(
+                available=True,
+                logs="\n".join(window.lines),
+                first_line=window.first_line,
+                end_line=window.end_line,
+                lines_returned=len(window.lines),
+                has_more_before=has_more_before,
+                next_before_line=window.first_line if has_more_before else None,
+                size_capped=window.size_capped,
+                stopped=window.stopped,
+                message=message,
+            )
+            return response
 
     # ------------------------------
     # app
@@ -842,26 +1145,39 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
 
     async def list_apps(
         limit: int = 100,
+        only_mine: bool = False,
+        status: list[str] | None = None,
         project: str | None = None,
         domain: str | None = None,
         ctx: MCPContext | None = None,
     ) -> list[dict]:
         """List deployed apps with their deployment status and public endpoints.
 
-        Use this to find an app's name before calling `get_app`, `activate_app` or
-        `deactivate_app`.
+        Use this to find an app's name before calling `get_app`, `activate_app`,
+        `deactivate_app` or `delete_app`. `only_mine` keeps apps created by the identity this
+        server acts as (see `whoami`). `status` keeps apps in any of the given deployment
+        statuses (case-insensitive, e.g. ["active", "failed"]); an unknown status is an
+        error that lists the valid ones.
         """
         from flyteidl2.app import app_definition_pb2
+
+        statuses = _operate_tools.check_app_statuses(status)
+        # Only the filters actually set are passed, so an unfiltered call reaches the SDK as it always did.
+        filters: dict[str, Any] = {"in_status": statuses} if statuses else {}
 
         allowlist = env.app_allowlist
         # See list_tasks: the server truncates before the allowlist is applied, so scan wider.
         scan_limit = limit if allowlist is None else max(limit, ALLOWLIST_SCAN_LIMIT)
         with env._scoped(project, domain):
+            if only_mine:
+                await _diagnose.filter_to_caller(filters)
             out: list[dict] = []
-            async for app in cast(Any, flyte.remote.App.listall).aio(sort_by=("created_at", "desc"), limit=scan_limit):
+            async for app in cast(Any, flyte.remote.App.listall).aio(
+                sort_by=("created_at", "desc"), limit=scan_limit, **filters
+            ):
                 if not _is_app_allowed(allowlist, app.name):
                     continue
-                status = app_definition_pb2.Status.DeploymentStatus.Name(app.deployment_status)
+                deployment_status = app_definition_pb2.Status.DeploymentStatus.Name(app.deployment_status)
                 url = None
                 try:
                     url = app.url
@@ -870,7 +1186,7 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
                 out.append(
                     {
                         "name": app.name,
-                        "status": status.removeprefix("DEPLOYMENT_STATUS_"),
+                        "status": deployment_status.removeprefix("DEPLOYMENT_STATUS_"),
                         "endpoint": app.endpoint,
                         "url": url,
                     }
@@ -1082,39 +1398,17 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
                     break
             return out
 
-    async def create_secret(
-        name: str,
-        value: str,
-        type: str = "regular",
-        project: str | None = None,
-        domain: str | None = None,
-        ctx: MCPContext | None = None,
-    ) -> dict:
-        """Create a secret in a project/domain. The value is written, never echoed back.
-
-        `type` must be "regular"; "image_pull" secrets are scoped to a cluster pool rather
-        than to a project/domain and cannot be created here. Creating a secret that already
-        exists fails — delete it first if you mean to replace it.
-        """
-        # Secret.create treats *anything* that is not "regular" as an image_pull secret, which
-        # then fails deeper down on the project/domain scope this server always sets. Reject the
-        # typo here so the caller gets a sentence they can act on.
-        if type != "regular":
-            raise ToolError(
-                f"Unsupported secret type '{type}'. Only 'regular' secrets can be created through this "
-                f"server; image_pull secrets are scoped to a cluster pool, not to a project/domain."
-            )
-        with env._scoped(project, domain):
-            await cast(Any, flyte.remote.Secret.create).aio(name=name, value=value, type=type)
-            return {"name": name, "created": True}
-
     async def delete_secret(
         name: str,
         project: str | None = None,
         domain: str | None = None,
         ctx: MCPContext | None = None,
     ) -> dict:
-        """Delete a secret from a project/domain. Tasks still referencing it will fail to start."""
+        """Delete a secret from a project/domain. Tasks still referencing it will fail to start.
+
+        The deletion can take up to ~30 s to show in `get_secret` and `list_secrets`; until then
+        they may still report the secret, and creating it again is refused.
+        """
         with env._scoped(project, domain):
             await cast(Any, flyte.remote.Secret.delete).aio(name)
             return {"name": name, "deleted": True}
@@ -1126,33 +1420,72 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
     async def list_conditions(
         run_name: str,
         limit: int = 50,
+        action_name: str | None = None,
         project: str | None = None,
         domain: str | None = None,
         ctx: MCPContext | None = None,
     ) -> list[dict]:
         """List the conditions of a run — the points where it is paused for external input.
 
-        `expected_type` is the payload type `signal_condition` will coerce to. A run stuck in
-        a paused phase usually has an unsignalled condition here.
-        """
-        from flyte.remote._condition import resolve_condition_expected_type
+        Each entry carries what the condition is asking: `prompt` (render as markdown when
+        `prompt_type` is "markdown"), `description`, `timeout_s` (null when it waits forever)
+        and `expected_type`, the payload type `signal_condition` will coerce to. A run stuck
+        in a paused phase usually has an unsignalled condition here. Pass `action_name` to list
+        only the conditions under one action.
 
+        Those details are loaded per condition. When loading one fails, its entry still comes
+        back with the listing fields, null `prompt`/`prompt_type`/`description`/`timeout_s`, and
+        `details_error` saying why; `details_error` is null on every other entry. Call
+        `get_condition` to retry that one.
+        """
         with env._scoped(project, domain):
-            out: list[dict] = []
-            async for c in cast(Any, flyte.remote.Condition.listall).aio(run_name=run_name, limit=limit):
-                expected = resolve_condition_expected_type(c.pb2)
-                out.append(
-                    {
-                        "name": c.name,
-                        "action_name": c.action_name,
-                        "run_name": c.run_name,
-                        "phase": c.phase,
-                        "expected_type": expected.__name__ if expected is not None else None,
-                    }
-                )
-                if len(out) >= limit:
+            conditions: list[Any] = []
+            scope = {"action_name": action_name} if action_name is not None else {}
+            async for c in cast(Any, flyte.remote.Condition.listall).aio(run_name=run_name, limit=limit, **scope):
+                conditions.append(c)
+                if len(conditions) >= limit:
                     break
-            return out
+
+            # The prompt and timeout are only on the action-details RPC, one call per condition.
+            # Bounded so a large `limit` does not open that many requests at once.
+            slots = asyncio.Semaphore(CONDITION_DETAILS_CONCURRENCY)
+
+            async def _with_details(c: Any) -> dict:
+                # One failed lookup must not cost the caller the whole list, so the entry keeps
+                # what the listing already had and says why the rest is missing.
+                try:
+                    async with slots:
+                        detailed = await c.fetch_details.aio()
+                except Exception as e:
+                    logger.exception("Could not load condition details.")
+                    error = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+                    return {**_condition_dict(c), "details_error": error}
+                return {**_condition_dict(detailed), "details_error": None}
+
+            return list(await asyncio.gather(*(_with_details(c) for c in conditions)))
+
+    async def get_condition(
+        name: str,
+        run_name: str,
+        project: str | None = None,
+        domain: str | None = None,
+        ctx: MCPContext | None = None,
+    ) -> dict:
+        """Get one condition of a run by name: what it asks, its payload type and its timeout.
+
+        Same fields as a `list_conditions` entry except `details_error`: a failure to load the
+        details is raised as an error here. Use it before `signal_condition` to read the
+        prompt the signal is answering.
+        """
+        with env._scoped(project, domain):
+            condition = await cast(Any, flyte.remote.Condition.get).aio(name, run_name=run_name)
+            if condition is None:
+                raise ToolError(f"Condition '{name}' was not found in run '{run_name}'.")
+            try:
+                detailed = await condition.fetch_details.aio()
+            except (ConnectError, RuntimeError) as e:
+                raise ToolError(f"Could not load the details of condition '{name}' in run '{run_name}': {e}") from e
+            return _condition_dict(detailed)
 
     async def signal_condition(
         name: str,
@@ -1272,6 +1605,7 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
 
     # The registration table: tool name -> handler. Paired with ``TOOL_REGISTRY`` (group +
     # annotations) in ``_flyte_mcp_app.py``, which is what decides what actually gets registered.
+    operate_tools = _operate_tools.build_operate_tools(env)
     tool_functions: dict[str, Any] = {
         "run_task": run_task,
         "get_task": get_task,
@@ -1290,16 +1624,20 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         "list_apps": list_apps,
         "activate_app": activate_app,
         "deactivate_app": deactivate_app,
+        "delete_app": operate_tools["delete_app"],
         "list_triggers": list_triggers,
         "get_trigger": get_trigger,
         "activate_trigger": activate_trigger,
         "deactivate_trigger": deactivate_trigger,
+        "create_trigger": operate_tools["create_trigger"],
+        "delete_trigger": operate_tools["delete_trigger"],
         "list_projects": list_projects,
         "get_project": get_project,
         "list_secrets": list_secrets,
-        "create_secret": create_secret,
+        **_secret_tools.build_secret_tools(env),
         "delete_secret": delete_secret,
         "list_conditions": list_conditions,
+        "get_condition": get_condition,
         "signal_condition": signal_condition,
         "whoami": whoami,
         "search_flyte_sdk_examples": search_flyte_sdk_examples,

@@ -1,5 +1,6 @@
 import flyte
 
+# AMD GPUs take 1 or a full 8-GPU node per task, e.g. gpu="MI355X:8" or gpu=flyte.AMD_GPU("MI355X", 8).
 acc_env = flyte.TaskEnvironment("amd", resources=flyte.Resources(gpu="MI350X:1"))
 
 

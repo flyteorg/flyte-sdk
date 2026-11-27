@@ -10,19 +10,18 @@ import re
 import sys
 import typing
 import typing as t
-from typing import Any, get_args
+from functools import lru_cache
+from typing import TYPE_CHECKING, Any, get_args
 
 import rich_click as click
 from click import Context, Parameter
-from flyteidl2.core.interface_pb2 import Variable
-from flyteidl2.core.literals_pb2 import Literal
-from flyteidl2.core.types_pb2 import BlobType, LiteralType, SimpleType
-from google.protobuf.json_format import MessageToDict
-from mashumaro.codecs.json import JSONEncoder
 
 from flyte._logging import logger
-from flyte.io import Dir, File
-from flyte.types._pickle import FlytePickleTransformer
+
+if TYPE_CHECKING:
+    from flyteidl2.core.interface_pb2 import Variable
+    from flyteidl2.core.literals_pb2 import Literal
+    from flyteidl2.core.types_pb2 import LiteralType
 
 # ---------------------------------------------------
 
@@ -68,6 +67,7 @@ class DirParamType(click.ParamType):
         self, value: typing.Any, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
     ) -> typing.Any:
         import flyte.remote as remote
+        from flyte.io import Dir
         from flyte.storage import is_remote
 
         # Check if we're in local mode (when run_args is available and local=True)
@@ -148,6 +148,7 @@ class FileParamType(click.ParamType):
         self, value: typing.Any, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
     ) -> typing.Any:
         import flyte.remote as remote
+        from flyte.io import File
         from flyte.storage import is_remote
 
         # Check if we're in local mode (when run_args is available and local=True)
@@ -693,29 +694,38 @@ class JsonParamType(click.ParamType):
         return value
 
 
-SIMPLE_TYPE_CONVERTER = {
-    SimpleType.FLOAT: click.FLOAT,
-    SimpleType.INTEGER: click.INT,
-    SimpleType.STRING: click.STRING,
-    SimpleType.BOOLEAN: click.BOOL,
-    SimpleType.DURATION: DurationParamType(),
-    SimpleType.DATETIME: DateTimeType(),
-}
+@lru_cache(maxsize=1)
+def _simple_type_converter() -> typing.Dict[int, click.ParamType]:
+    from flyteidl2.core.types_pb2 import SimpleType
+
+    return {
+        SimpleType.FLOAT: click.FLOAT,
+        SimpleType.INTEGER: click.INT,
+        SimpleType.STRING: click.STRING,
+        SimpleType.BOOLEAN: click.BOOL,
+        SimpleType.DURATION: DurationParamType(),
+        SimpleType.DATETIME: DateTimeType(),
+    }
 
 
 def literal_type_to_click_type(
-    lt: LiteralType, python_type: typing.Type, default_value: typing.Any = None
+    lt: "LiteralType", python_type: typing.Type, default_value: typing.Any = None
 ) -> click.ParamType:
     """
     Converts a Flyte LiteralType given a python_type to a click.ParamType
     """
+    from flyteidl2.core.types_pb2 import BlobType, SimpleType
+
+    from flyte.types._pickle import FlytePickleTransformer
+
     if lt.HasField("simple"):
         if lt.simple == SimpleType.STRUCT:
             ct = JsonParamType(python_type, default_value=default_value)
             ct.name = f"JSON object {python_type.__name__}"
             return ct
-        if lt.simple in SIMPLE_TYPE_CONVERTER:
-            return SIMPLE_TYPE_CONVERTER[lt.simple]
+        simple_converters = _simple_type_converter()
+        if lt.simple in simple_converters:
+            return simple_converters[lt.simple]
         raise NotImplementedError(f"Type {lt.simple} is not supported in `flyte run`")
 
     if lt.HasField("structured_dataset_type"):
@@ -764,7 +774,7 @@ class FlyteLiteralConverter(object):
 
     def __init__(
         self,
-        literal_type: LiteralType,
+        literal_type: "LiteralType",
         python_type: typing.Type,
         default_value: typing.Any = None,
     ):
@@ -784,7 +794,7 @@ class FlyteLiteralConverter(object):
 
     def convert(
         self, ctx: click.Context, param: typing.Optional[click.Parameter], value: typing.Any
-    ) -> typing.Union[Literal, typing.Any]:
+    ) -> typing.Union["Literal", typing.Any]:
         """
         Convert the value to a python native type. This is used by click to convert the input.
         """
@@ -807,7 +817,7 @@ class FlyteLiteralConverter(object):
 
 def to_click_option(
     input_name: str,
-    literal_var: Variable,
+    literal_var: "Variable",
     python_type: typing.Type,
     default_val: typing.Any,
 ) -> click.Option:
@@ -816,6 +826,7 @@ def to_click_option(
     the input values to their expected types.
     """
     from flyteidl2.core.types_pb2 import SimpleType
+    from google.protobuf.json_format import MessageToDict
 
     from flyte.models import NativeInterface
 
@@ -848,6 +859,8 @@ def to_click_option(
             if hasattr(default_val, "model_dump_json"):
                 default_val = default_val.model_dump_json()
             else:
+                from mashumaro.codecs.json import JSONEncoder
+
                 encoder = JSONEncoder(python_type)
                 default_val = encoder.encode(default_val)
         if literal_var.type.metadata:

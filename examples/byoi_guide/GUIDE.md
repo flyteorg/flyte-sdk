@@ -14,8 +14,8 @@ Two teams. Two images. One workflow.
 
 | | Team A (data-prep) | Team B (training) |
 |---|---|---|
-| Base | `python:3.11-slim` | `python:3.10-slim` (prod: CUDA) |
-| Python | 3.11 | 3.10 |
+| Base | `python:3.11-slim` | `python:3.12-slim` (prod: CUDA) |
+| Python | 3.11 | 3.12 |
 | WORKDIR | `/app` | `/workspace` |
 | PYTHONPATH | `/app` | `/workspace` |
 | Packages | pandas, pyarrow | torch, numpy |
@@ -68,7 +68,7 @@ ENV PYTHONPATH=/app
 **training/Dockerfile** (Team B):
 
 ```dockerfile
-FROM python:3.10-slim   # prod: nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+FROM python:3.12-slim   # prod: nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -76,7 +76,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /workspace
 
-RUN pip install --no-cache-dir flyte torch==2.1.2 numpy==1.26.4
+RUN pip install --no-cache-dir flyte torch==2.2.0 numpy==1.26.4
 
 # /workspace/workflow_code/ — same import path as Team A despite different WORKDIR.
 COPY workflow_code/ /workspace/workflow_code/
@@ -162,7 +162,7 @@ purposes — Flyte was never a consideration. Your job is to adapt them.
 - No PYTHONPATH set
 - WORKDIR `/app`
 
-**Team B** uses `python:3.10-slim` with a pip venv at `/opt/venv`. Their image has:
+**Team B** uses `python:3.12-slim` with a pip venv at `/opt/venv`. Their image has:
 - Python at `/opt/venv/bin/python`
 - `PATH` does **not** include `/opt/venv/bin` — the venv was created but never
   activated in the Dockerfile. Without activation, `python` on PATH resolves to
@@ -184,14 +184,14 @@ WORKDIR /app
 **training/Dockerfile** (Team B's base — no Flyte, no workflow code):
 
 ```dockerfile
-FROM python:3.10-slim   # prod: nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+FROM python:3.12-slim   # prod: nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python -m venv /opt/venv && \
-    /opt/venv/bin/pip install --no-cache-dir torch==2.1.2+cpu numpy==1.26.4
+    /opt/venv/bin/pip install --no-cache-dir torch==2.2.0+cpu numpy==1.26.4
 
 WORKDIR /workspace
 # PATH does not include /opt/venv/bin — venv is not activated

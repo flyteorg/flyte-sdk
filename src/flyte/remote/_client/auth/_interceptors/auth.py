@@ -6,6 +6,7 @@ from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 
 from flyte._logging import logger
+from flyte.remote._client._connect_compat import request_headers
 
 if typing.TYPE_CHECKING:
     from flyte.remote._client.auth._authenticators.base import Authenticator, AuthHeaders
@@ -32,13 +33,20 @@ class _BaseAuthInterceptor:
         # before injecting fresh ones — otherwise a header key change (e.g. "authorization" →
         # "flyte-authorization") leaves the stale key behind.
         if previous is not None:
-            headers = ctx.request_headers()
+            headers = request_headers(ctx)
             for key in previous.headers:
                 headers.pop(key, None)
 
-        auth_headers = await self.authenticator.get_auth_headers()
+        # A workload token's credential names the action the request is made for, taken from the request's own
+        # metadata or the calling context (see flyte._workload_credential), so it is built from the request headers.
+        from flyte.remote._client.auth._authenticators.workload_token import WorkloadTokenAuthenticator
+
+        if isinstance(self.authenticator, WorkloadTokenAuthenticator):
+            auth_headers = await self.authenticator.get_auth_headers(request_headers(ctx))
+        else:
+            auth_headers = await self.authenticator.get_auth_headers()
         if auth_headers:
-            ctx.request_headers().update(auth_headers.headers)
+            request_headers(ctx).update(auth_headers.headers)
         return auth_headers
 
     async def _refresh_and_reinject(self, previous: AuthHeaders | None, ctx, error: ConnectError | None = None) -> None:
