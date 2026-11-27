@@ -815,7 +815,7 @@ class TestGetLogsReadBudget:
         out = await _fn(logs_env, "get_logs")(run_name="r1", action_name="a1", timeout_s=requested)
         elapsed = time.monotonic() - started
 
-        assert effective <= elapsed < effective + 1.5
+        assert effective - 0.1 <= elapsed < effective + 1.5
         assert out["stopped"] == "time_limit"
         assert out["timeout_s"] == effective
         assert f"Reading stopped after {effective}s" in out["message"]

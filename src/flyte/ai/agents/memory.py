@@ -41,6 +41,7 @@ import flyte.storage as storage
 from flyte._context import internal_ctx
 from flyte.io import Dir
 from flyte.models import PathRewrite
+from flyte.storage._storage import strip_file_header
 from flyte.syncify import syncify
 
 logger = logging.getLogger(__name__)
@@ -981,7 +982,8 @@ class MemoryStore(SerializableType):
         # working root's *contents* into the destination instead, keeping ``messages.json`` at
         # a stable path the next run can reload. Existing files are overwritten in place.
         if not storage.is_remote(remote_destination):
-            shutil.copytree(self._root, remote_destination, dirs_exist_ok=True)
+            local_destination = strip_file_header(remote_destination)
+            await asyncio.to_thread(shutil.copytree, self._root, local_destination, dirs_exist_ok=True)
         else:
             from_path = os.path.join(str(self._root), "")
             to_path = remote_destination.rstrip("/") + "/"

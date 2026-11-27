@@ -973,6 +973,15 @@ class TestMemoryStore:
         assert memory.root is not None and memory.root.exists()
         assert memory.messages == []
 
+    async def test_save_to_file_uri_uses_its_local_path(self, tmp_path: pathlib.Path):
+        destination = tmp_path / "memory#one"
+        memory = MemoryStore(key="test", remote_path=destination.as_uri())
+        memory.append({"role": "user", "content": "hello"})
+
+        await memory.save.aio()
+
+        assert (destination / MESSAGES_PATH).exists()
+
     async def test_key_is_required(self):
         with pytest.raises(TypeError):
             MemoryStore()  # type: ignore[call-arg]

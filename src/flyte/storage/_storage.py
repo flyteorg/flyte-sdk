@@ -4,6 +4,7 @@ import functools
 import importlib.util
 import os
 import pathlib
+import platform
 import random
 import tempfile
 import typing
@@ -136,17 +137,29 @@ def is_remote(path: typing.Union[pathlib.Path | str]) -> bool:
 
 def strip_file_header(path: str) -> str:
     """Convert a file URI to a local path, including Windows drive letters."""
-    if path.startswith("file://"):
-        parsed = urlsplit(path)
-        local_path = unquote(parsed.path)
-        if os.name == "nt":
-            if parsed.netloc and parsed.netloc != "localhost":
-                return "\\\\" + parsed.netloc + local_path.replace("/", "\\")
-            if len(local_path) >= 3 and local_path[0] == "/" and local_path[2] == ":":
-                local_path = local_path[1:]
-            return local_path.replace("/", "\\")
-        return local_path
-    return path
+    if not path.startswith("file://"):
+        return path
+
+    if platform.system() == "Windows":
+        return _strip_windows_file_header(path)
+
+    # Preserve literal ``#`` and ``?`` characters in POSIX paths. URL parsing
+    # would treat them as a fragment or query (and ``file://tmp`` as a host).
+    return unquote(path.replace("file://", "", 1))
+
+
+def _strip_windows_file_header(path: str) -> str:
+    """Convert a file URI to a Windows drive or UNC path."""
+    parsed = urlsplit(path)
+    local_path = unquote(parsed.path)
+
+    if parsed.netloc and parsed.netloc != "localhost":
+        return "\\\\" + parsed.netloc + local_path.replace("/", "\\")
+
+    if len(local_path) >= 3 and local_path[0] == "/" and local_path[2] == ":":
+        local_path = local_path[1:]
+
+    return local_path.replace("/", "\\")
 
 
 def get_random_local_path(file_path_or_file_name: pathlib.Path | str | None = None) -> pathlib.Path:
