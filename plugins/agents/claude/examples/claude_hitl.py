@@ -62,7 +62,7 @@ async def support_agent(request: str, account_id: str) -> str:
             "You are a billing support agent. Look up the account, then if a refund is "
             "warranted call issue_refund. Be concise and state the outcome."
         ),
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-5-5",
     )
 
 

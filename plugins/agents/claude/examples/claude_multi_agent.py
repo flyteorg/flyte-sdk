@@ -62,7 +62,7 @@ async def plan(topic: str) -> list[str]:
     text = await run_agent(
         f"Break the topic '{topic}' into exactly 3 focused, distinct research subtopics.",
         instructions="Reply with only a comma-separated list of 3 short subtopics. No numbering, no prose.",
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-5-5",
     )
     # Forgiving parse: accept commas or newlines, strip bullets/numbering.
     raw = [part.strip(" -•0123456789.").strip() for chunk in text.splitlines() for part in chunk.split(",")]
@@ -83,7 +83,7 @@ async def research(subtopic: str) -> str:
             "subtopic, then STOP searching and write exactly 3 concise bullet points from the "
             "result (rely on general knowledge if the search was unhelpful). Do not search again."
         ),
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-5-5",
     )
 
 
@@ -94,7 +94,7 @@ async def synthesize(topic: str, findings: list[str]) -> str:
     return await run_agent(
         f"Topic: {topic}\n\nResearch notes:\n{notes}\n\nWrite a tight one-paragraph executive briefing.",
         instructions="You are a sharp editor. Synthesize the notes faithfully; do not invent facts.",
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-5-5",
     )
 
 

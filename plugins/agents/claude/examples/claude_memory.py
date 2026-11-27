@@ -44,7 +44,7 @@ async def chat(message: str, memory_key: str) -> str:
     return await run_agent(
         message,
         instructions="You are a friendly assistant. Use the conversation history to stay consistent.",
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-5-5",
         memory_key=memory_key,
     )
 

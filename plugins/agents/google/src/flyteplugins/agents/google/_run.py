@@ -120,7 +120,7 @@ async def run_agent(
     *,
     agent: typing.Any = None,
     tools: typing.Sequence[typing.Any] = (),
-    model: str = "gemini-2.0-flash",
+    model: str = "gemini-3.8-flash",
     instructions: str | None = None,
     name: str = "assistant",
     max_llm_calls: int | None = None,
@@ -144,7 +144,7 @@ async def run_agent(
         input: The user prompt.
         agent: A pre-built ADK agent. Mutually exclusive with `tools`.
         tools: `tool`-wrapped tools or bare `@env.task` templates.
-        model: Model name for the built agent (e.g. `gemini-2.0-flash`).
+        model: Model name for the built agent (e.g. `gemini-3.8-flash`).
         instructions: System instruction for the built agent.
         name: Agent name (a valid Python identifier). ADK injects this into the system
             prompt as the model's "internal name", so it can surface in replies — keep it

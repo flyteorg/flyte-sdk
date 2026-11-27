@@ -15,7 +15,7 @@ from claude_agent_sdk import AgentDefinition, ClaudeAgentOptions
 
 from flyteplugins.agents.claude import run_agent
 
-_MODEL = "claude-sonnet-4-5"
+_MODEL = "claude-sonnet-5-5"
 
 env = flyte.TaskEnvironment(
     "claude-handoffs",
