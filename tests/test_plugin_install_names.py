@@ -54,7 +54,7 @@ def _declared_distributions() -> set[str]:
     for pyproject in (REPO_ROOT / "plugins").rglob("pyproject.toml"):
         if ".venv" in pyproject.parts or "site-packages" in pyproject.parts:
             continue
-        match = re.search(r'^name\s*=\s*"(flyteplugins[^"]*)"', pyproject.read_text(), re.MULTILINE)
+        match = re.search(r'^name\s*=\s*"(flyteplugins[^"]*)"', pyproject.read_text(encoding="utf-8"), re.MULTILINE)
         if match:
             names.add(match.group(1))
     return names
