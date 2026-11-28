@@ -571,6 +571,13 @@ def test_guess_content_type(name, expected):
     assert guess_content_type(name) == expected
 
 
+def test_guess_content_type_consistent():
+    """Office registers .csv as Excel in the Windows registry.
+    This makes sure guess_content_type is not affected by it."""
+    with patch("mimetypes.guess_type", return_value=("application/vnd.ms-excel", None)):
+        assert guess_content_type("data.csv") == "text/csv"
+
+
 @pytest.mark.asyncio
 async def test_lazy_uploader_sends_content_type():
     """Without a Content-Type the object is stored as binary/octet-stream and a browser
