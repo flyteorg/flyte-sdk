@@ -112,7 +112,7 @@ def guess_content_type(local_path: Union[str, Path]) -> Optional[str]:
     """
     import mimetypes
 
-    content_type, encoding = mimetypes.guess_type(str(local_path))
+    content_type, encoding = mimetypes.MimeTypes().guess_type(str(local_path))
     return None if encoding else content_type
 
 
